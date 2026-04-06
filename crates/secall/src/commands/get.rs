@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use secall_core::{
-    store::{get_default_db_path, Database},
+    store::{get_default_db_path, Database, SessionRepo},
     vault::Config,
 };
 
@@ -43,10 +43,16 @@ pub fn run(id: String, full: bool) -> Result<()> {
         // Summary
         println!("Session: {}", session_id);
         println!("Agent:   {}", meta.agent);
-        if let Some(m) = &meta.model { println!("Model:   {}", m); }
-        if let Some(p) = &meta.project { println!("Project: {}", p); }
+        if let Some(m) = &meta.model {
+            println!("Model:   {}", m);
+        }
+        if let Some(p) = &meta.project {
+            println!("Project: {}", p);
+        }
         println!("Date:    {}", meta.date);
-        if let Some(v) = &meta.vault_path { println!("File:    {}", v); }
+        if let Some(v) = &meta.vault_path {
+            println!("File:    {}", v);
+        }
     }
 
     Ok(())

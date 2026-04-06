@@ -1,11 +1,12 @@
 use std::path::Path;
 
-use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::error::{Result, SecallError};
+
 use super::schema::{
-    CURRENT_SCHEMA_VERSION, CREATE_CONFIG, CREATE_INDEXES, CREATE_INGEST_LOG,
-    CREATE_SESSIONS, CREATE_TURNS, CREATE_TURNS_FTS,
+    CREATE_CONFIG, CREATE_INDEXES, CREATE_INGEST_LOG, CREATE_QUERY_CACHE, CREATE_SESSIONS,
+    CREATE_TURNS, CREATE_TURNS_FTS, CURRENT_SCHEMA_VERSION,
 };
 
 pub struct Database {
@@ -58,7 +59,25 @@ impl Database {
             )?;
         }
 
+        // Non-versioned additions: always apply (CREATE IF NOT EXISTS)
+        self.conn.execute_batch(CREATE_QUERY_CACHE)?;
+
+        // Column migrations: host
+        if !self.column_exists("sessions", "host")? {
+            self.conn
+                .execute("ALTER TABLE sessions ADD COLUMN host TEXT", [])?;
+        }
+
         Ok(())
+    }
+
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+            rusqlite::params![table, column],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     fn apply_v1(&self) -> Result<()> {
@@ -108,7 +127,8 @@ impl Database {
                 |r| r.get(0),
             )?;
             if exists > 0 {
-                self.conn.query_row("SELECT COUNT(*) FROM turn_vectors", [], |r| r.get(0))?
+                self.conn
+                    .query_row("SELECT COUNT(*) FROM turn_vectors", [], |r| r.get(0))?
             } else {
                 0
             }
@@ -145,18 +165,25 @@ impl Database {
 
     /// Get a specific turn by session_id and turn_index
     pub fn get_turn(&self, session_id: &str, turn_index: u32) -> Result<TurnRow> {
-        self.conn.query_row(
-            "SELECT turn_index, role, content FROM turns WHERE session_id = ?1 AND turn_index = ?2",
-            rusqlite::params![session_id, turn_index as i64],
-            |row| {
-                Ok(TurnRow {
-                    turn_index: row.get::<_, i64>(0)? as u32,
-                    role: row.get(1)?,
-                    content: row.get(2)?,
-                })
-            },
-        )
-        .map_err(Into::into)
+        self.conn
+            .query_row(
+                "SELECT turn_index, role, content FROM turns WHERE session_id = ?1 AND turn_index = ?2",
+                rusqlite::params![session_id, turn_index as i64],
+                |row| {
+                    Ok(TurnRow {
+                        turn_index: row.get::<_, i64>(0)? as u32,
+                        role: row.get(1)?,
+                        content: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => SecallError::TurnNotFound {
+                    session_id: session_id.to_string(),
+                    turn_index,
+                },
+                _ => SecallError::Database(e),
+            })
     }
 
     pub fn count_sessions(&self) -> Result<i64> {
@@ -167,9 +194,9 @@ impl Database {
     }
 
     pub fn list_projects(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT project FROM sessions WHERE project IS NOT NULL")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
@@ -292,9 +319,9 @@ impl Database {
         let vault_root_str = vault_root.to_string_lossy();
         let prefix = format!("{}/", vault_root_str.trim_end_matches('/'));
 
-        let mut stmt = self.conn.prepare(
-            "SELECT id, vault_path FROM sessions WHERE vault_path IS NOT NULL",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, vault_path FROM sessions WHERE vault_path IS NOT NULL")?;
         let rows: Vec<(String, String)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .filter_map(|r| r.ok())
@@ -314,6 +341,85 @@ impl Database {
         Ok(migrated)
     }
 
+    /// vault 마크다운의 frontmatter로 sessions 테이블에 insert.
+    /// turns 테이블에는 본문 전체를 단일 FTS 청크로 저장.
+    pub fn insert_session_from_vault(
+        &self,
+        fm: &crate::ingest::markdown::SessionFrontmatter,
+        body_text: &str,
+        vault_path: &str,
+    ) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO sessions(
+                id, agent, model, project, cwd, git_branch, host,
+                start_time, end_time, turn_count, tokens_in, tokens_out,
+                tools_used, vault_path, ingested_at, status
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, NULL, ?6,
+                ?7, ?8, ?9, ?10, ?11,
+                ?12, ?13, datetime('now'), 'reindexed'
+            )",
+            rusqlite::params![
+                fm.session_id,
+                fm.agent,
+                fm.model,
+                fm.project,
+                fm.cwd,
+                fm.host,
+                fm.start_time,
+                fm.end_time,
+                fm.turns.unwrap_or(0),
+                fm.tokens_in.unwrap_or(0),
+                fm.tokens_out.unwrap_or(0),
+                fm.tools_used.as_ref().map(|t| t.join(",")),
+                vault_path,
+            ],
+        )?;
+
+        // FTS 인덱싱 — 본문 전체를 하나의 청크로
+        if !body_text.trim().is_empty() {
+            self.conn().execute(
+                "INSERT INTO turns_fts(content, session_id, turn_id) VALUES (?1, ?2, 0)",
+                rusqlite::params![body_text, fm.session_id],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// 캐시에서 확장된 쿼리 조회. TTL 7일 초과 시 None.
+    pub fn get_query_cache(&self, query: &str) -> Option<String> {
+        let hash = Self::query_hash(query);
+        self.conn
+            .query_row(
+                "SELECT expanded FROM query_cache
+                 WHERE query_hash = ?1
+                   AND datetime(created_at, '+7 days') > datetime('now')",
+                [&hash],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    /// 확장 결과를 캐시에 저장.
+    pub fn set_query_cache(&self, query: &str, expanded: &str) -> Result<()> {
+        let hash = Self::query_hash(query);
+        self.conn.execute(
+            "INSERT OR REPLACE INTO query_cache(query_hash, original, expanded, created_at)
+             VALUES (?1, ?2, ?3, datetime('now'))",
+            rusqlite::params![hash, query, expanded],
+        )?;
+        Ok(())
+    }
+
+    fn query_hash(query: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        query.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
     #[cfg(test)]
     pub fn schema_version(&self) -> Result<u32> {
         let v: String = self.conn.query_row(
@@ -321,7 +427,8 @@ impl Database {
             [],
             |row| row.get(0),
         )?;
-        Ok(v.parse()?)
+        v.parse()
+            .map_err(|e: std::num::ParseIntError| SecallError::Other(e.into()))
     }
 
     #[cfg(test)]

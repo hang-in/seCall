@@ -7,13 +7,19 @@ use secall_core::{
         detect_parser, find_claude_sessions, find_codex_sessions, find_gemini_sessions,
         find_sessions_for_cwd,
     },
-    search::{Bm25Indexer, SearchEngine},
     search::tokenizer::create_tokenizer,
-    store::{get_default_db_path, Database},
+    search::{Bm25Indexer, SearchEngine},
+    store::{get_default_db_path, Database, SessionRepo},
     vault::{Config, Vault},
 };
 
 use crate::output::{print_ingest_result, OutputFormat};
+
+pub struct IngestStats {
+    pub ingested: usize,
+    pub skipped: usize,
+    pub errors: usize,
+}
 
 pub async fn run(
     path: Option<String>,
@@ -41,9 +47,30 @@ pub async fn run(
         return Ok(());
     }
 
-    let mut ingested = 0;
-    let mut skipped = 0;
-    let mut errors = 0;
+    let stats = ingest_sessions(&config, &db, paths, &engine, &vault, format).await?;
+
+    if stats.ingested > 0 || stats.skipped > 0 || stats.errors > 0 {
+        eprintln!(
+            "\nSummary: {} ingested, {} skipped (duplicate), {} errors",
+            stats.ingested, stats.skipped, stats.errors
+        );
+    }
+
+    Ok(())
+}
+
+/// ingest 핵심 로직 — sync.rs에서도 재사용
+pub async fn ingest_sessions(
+    config: &Config,
+    db: &Database,
+    paths: Vec<PathBuf>,
+    engine: &SearchEngine,
+    vault: &Vault,
+    format: &OutputFormat,
+) -> Result<IngestStats> {
+    let mut ingested = 0usize;
+    let mut skipped = 0usize;
+    let mut errors = 0usize;
 
     for session_path in &paths {
         // Quick duplicate check by filename stem
@@ -95,17 +122,19 @@ pub async fn run(
 
                 // 2. BM25 인덱싱 + vault_path 저장을 트랜잭션으로 래핑
                 let bm25_result = db.with_transaction(|| {
-                    let stats = engine.index_session_bm25(&db, &session)?;
+                    let stats = engine.index_session_bm25(db, &session)?;
                     db.update_session_vault_path(&session.id, &vault_path_str)?;
                     Ok(stats)
                 });
 
-                let stats = match bm25_result {
+                let index_stats = match bm25_result {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(path = %session_path.display(), error = %e, "indexing failed, rolling back");
                         // Cleanup: vault 파일 삭제
-                        if let Err(rm_err) = std::fs::remove_file(&config.vault.path.join(&rel_path)) {
+                        if let Err(rm_err) =
+                            std::fs::remove_file(config.vault.path.join(&rel_path))
+                        {
                             tracing::warn!(error = %rm_err, "failed to cleanup vault file");
                         }
                         errors += 1;
@@ -115,7 +144,7 @@ pub async fn run(
 
                 // 3. 벡터 인덱싱 (비동기, 트랜잭션 밖 — 실패해도 데이터 정합성에 영향 없음)
                 {
-                    let vec_stats = engine.index_session_vectors(&db, &session).await;
+                    let vec_stats = engine.index_session_vectors(db, &session).await;
                     if let Err(e) = vec_stats {
                         tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "vector embedding failed");
                     }
@@ -123,11 +152,11 @@ pub async fn run(
 
                 // Compute abs_path for display and hooks
                 let abs_path = config.vault.path.join(&rel_path);
-                print_ingest_result(&session, &abs_path, &stats, format);
+                print_ingest_result(&session, &abs_path, &index_stats, format);
                 ingested += 1;
 
                 // Run post-ingest hook (트랜잭션 밖, 비치명적)
-                if let Err(e) = run_post_ingest_hook(&config, &session, &abs_path) {
+                if let Err(e) = run_post_ingest_hook(config, &session, &abs_path) {
                     tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "post-ingest hook failed");
                 }
             }
@@ -138,21 +167,14 @@ pub async fn run(
         }
     }
 
-    if ingested > 0 || skipped > 0 || errors > 0 {
-        eprintln!(
-            "\nSummary: {} ingested, {} skipped (duplicate), {} errors",
-            ingested, skipped, errors
-        );
-    }
-
-    Ok(())
+    Ok(IngestStats {
+        ingested,
+        skipped,
+        errors,
+    })
 }
 
-fn collect_paths(
-    path: Option<&str>,
-    auto: bool,
-    cwd: Option<&Path>,
-) -> Result<Vec<PathBuf>> {
+fn collect_paths(path: Option<&str>, auto: bool, cwd: Option<&Path>) -> Result<Vec<PathBuf>> {
     if auto {
         if let Some(cwd) = cwd {
             find_sessions_for_cwd(cwd)
@@ -192,11 +214,17 @@ fn find_session_by_id(id: &str) -> Result<Vec<PathBuf>> {
     }
 
     let mut found = Vec::new();
-    for entry in walkdir::WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&base)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if p.extension().map(|e| e == "jsonl").unwrap_or(false) {
-            let fname = p.file_name().unwrap_or_default().to_string_lossy();
-            if fname.contains(id) {
+            let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+            if stem == id
+                || stem.starts_with(&format!("{id}_"))
+                || stem.starts_with(&format!("{id}-"))
+            {
                 found.push(p.to_path_buf());
             }
         }
@@ -206,5 +234,5 @@ fn find_session_by_id(id: &str) -> Result<Vec<PathBuf>> {
 
 fn parse_file(path: &Path) -> Result<secall_core::ingest::Session> {
     let parser = detect_parser(path)?;
-    parser.parse(path)
+    Ok(parser.parse(path)?)
 }

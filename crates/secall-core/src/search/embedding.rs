@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -57,7 +57,9 @@ impl OllamaEmbedder {
 impl Embedder for OllamaEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let mut batch = self.embed_batch(&[text]).await?;
-        batch.pop().ok_or_else(|| anyhow!("empty embedding response"))
+        batch
+            .pop()
+            .ok_or_else(|| anyhow!("empty embedding response"))
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -69,7 +71,7 @@ impl Embedder for OllamaEmbedder {
 
         let resp = self
             .client
-            .post(&format!("{}/api/embed", self.base_url))
+            .post(format!("{}/api/embed", self.base_url))
             .json(&req)
             .send()
             .await?;
@@ -86,7 +88,7 @@ impl Embedder for OllamaEmbedder {
 
     async fn is_available(&self) -> bool {
         self.client
-            .get(&format!("{}/api/tags", self.base_url))
+            .get(format!("{}/api/tags", self.base_url))
             .send()
             .await
             .is_ok()
@@ -106,9 +108,9 @@ impl Embedder for OllamaEmbedder {
 /// Local ONNX-based embedder using ort + tokenizers.
 /// Requires model files at `model_dir/model.onnx` and `model_dir/tokenizer.json`.
 pub struct OrtEmbedder {
-    // session.run() takes &mut self, so we use a Mutex for interior mutability
-    session: Mutex<ort::session::Session>,
-    tokenizer: tokenizers::Tokenizer,
+    // Arc allows cloning the handle into spawn_blocking closures
+    session: Arc<Mutex<ort::session::Session>>,
+    tokenizer: Arc<tokenizers::Tokenizer>,
     dim: usize,
 }
 
@@ -128,13 +130,16 @@ impl OrtEmbedder {
         let dim = Self::probe_dim(&mut sess, &tokenizer).unwrap_or(1024);
 
         Ok(Self {
-            session: Mutex::new(sess),
-            tokenizer,
+            session: Arc::new(Mutex::new(sess)),
+            tokenizer: Arc::new(tokenizer),
             dim,
         })
     }
 
-    fn probe_dim(session: &mut ort::session::Session, tokenizer: &tokenizers::Tokenizer) -> Result<usize> {
+    fn probe_dim(
+        session: &mut ort::session::Session,
+        tokenizer: &tokenizers::Tokenizer,
+    ) -> Result<usize> {
         let embedding = Self::run_inference(session, tokenizer, "test")?;
         Ok(embedding.len())
     }
@@ -210,22 +215,35 @@ impl OrtEmbedder {
 #[async_trait]
 impl Embedder for OrtEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|_| anyhow!("ort session lock poisoned"))?;
-        Self::run_inference(&mut session, &self.tokenizer, text)
+        let session = Arc::clone(&self.session);
+        let tokenizer = Arc::clone(&self.tokenizer);
+        let text = text.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut session = session
+                .lock()
+                .map_err(|_| anyhow!("ort session lock poisoned"))?;
+            Self::run_inference(&mut session, &tokenizer, &text)
+        })
+        .await
+        .map_err(|e| anyhow!("spawn_blocking join error: {e}"))?
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|_| anyhow!("ort session lock poisoned"))?;
-        texts
-            .iter()
-            .map(|t| Self::run_inference(&mut session, &self.tokenizer, t))
-            .collect()
+        let session = Arc::clone(&self.session);
+        let tokenizer = Arc::clone(&self.tokenizer);
+        let texts: Vec<String> = texts.iter().map(|t| t.to_string()).collect();
+        tokio::task::spawn_blocking(move || {
+            let mut session = session
+                .lock()
+                .map_err(|_| anyhow!("ort session lock poisoned"))?;
+            let mut results = Vec::with_capacity(texts.len());
+            for text in &texts {
+                results.push(Self::run_inference(&mut session, &tokenizer, text)?);
+            }
+            Ok(results)
+        })
+        .await
+        .map_err(|e| anyhow!("spawn_blocking join error: {e}"))?
     }
 
     async fn is_available(&self) -> bool {
@@ -399,6 +417,9 @@ mod tests {
         let embedding = rt.block_on(embedder.embed("hello world")).expect("embed");
         assert!(!embedding.is_empty());
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 0.01, "L2 norm should be ~1.0, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 0.01,
+            "L2 norm should be ~1.0, got {norm}"
+        );
     }
 }

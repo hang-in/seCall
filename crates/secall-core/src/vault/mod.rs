@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 pub mod config;
+pub mod git;
 pub mod index;
 pub mod init;
 pub mod log;
@@ -99,6 +100,7 @@ mod tests {
             project: Some("seCall".to_string()),
             cwd: Some(PathBuf::from("/Users/user/seCall")),
             git_branch: Some("main".to_string()),
+            host: None,
             start_time: chrono::Utc.with_ymd_and_hms(2026, 4, 5, 5, 30, 0).unwrap(),
             end_time: None,
             turns: vec![Turn {
@@ -111,7 +113,11 @@ mod tests {
                 thinking: None,
                 is_sidechain: false,
             }],
-            total_tokens: TokenUsage { input: 100, output: 50, cached: 0 },
+            total_tokens: TokenUsage {
+                input: 100,
+                output: 50,
+                cached: 0,
+            },
         }
     }
 
@@ -163,9 +169,18 @@ mod tests {
         let schema_path = dir.path().join("SCHEMA.md");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
-        assert!(content.contains("title:"), "SCHEMA.md should document 'title' frontmatter field");
-        assert!(content.contains("sources:"), "SCHEMA.md should document 'sources' frontmatter field");
-        assert!(content.contains("wiki/projects/"), "SCHEMA.md should describe directory rules");
+        assert!(
+            content.contains("title:"),
+            "SCHEMA.md should document 'title' frontmatter field"
+        );
+        assert!(
+            content.contains("sources:"),
+            "SCHEMA.md should document 'sources' frontmatter field"
+        );
+        assert!(
+            content.contains("wiki/projects/"),
+            "SCHEMA.md should describe directory rules"
+        );
     }
 
     #[test]
@@ -270,7 +285,10 @@ pub mod integration {
                 project: Some("testproject".to_string()),
                 cwd: None,
                 git_branch: None,
-                start_time: chrono::Utc.with_ymd_and_hms(2026, 4, 5 + i, 0, 0, 0).unwrap(),
+                host: None,
+                start_time: chrono::Utc
+                    .with_ymd_and_hms(2026, 4, 5 + i, 0, 0, 0)
+                    .unwrap(),
                 end_time: None,
                 turns: vec![Turn {
                     index: 0,

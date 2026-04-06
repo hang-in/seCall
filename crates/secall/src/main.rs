@@ -24,6 +24,9 @@ enum Commands {
         /// Vault path
         #[arg(short, long)]
         vault: Option<PathBuf>,
+        /// Git remote URL for vault sync
+        #[arg(long)]
+        git: Option<String>,
     },
 
     /// Ingest agent session logs
@@ -118,6 +121,24 @@ enum Commands {
         action: ModelAction,
     },
 
+    /// Sync vault with remote (git pull -> reindex -> ingest -> git push)
+    Sync {
+        /// Skip git pull/push (local-only reindex + ingest)
+        #[arg(long)]
+        local_only: bool,
+
+        /// Dry run — show what would happen without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Rebuild DB index from vault markdown files
+    Reindex {
+        /// Rebuild from vault markdown files
+        #[arg(long)]
+        from_vault: bool,
+    },
+
     /// Manage wiki generation via Claude Code meta-agent
     Wiki {
         #[command(subcommand)]
@@ -180,14 +201,34 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { vault } => {
-            commands::init::run(vault)?;
+        Commands::Init { vault, git } => {
+            commands::init::run(vault, git)?;
         }
         Commands::Ingest { path, auto, cwd } => {
             commands::ingest::run(path, auto, cwd, &cli.format).await?;
         }
-        Commands::Recall { query, since, project, agent, limit, lex, vec, expand } => {
-            commands::recall::run(query, since, project, agent, limit, lex, vec, expand, &cli.format).await?;
+        Commands::Recall {
+            query,
+            since,
+            project,
+            agent,
+            limit,
+            lex,
+            vec,
+            expand,
+        } => {
+            commands::recall::run(
+                query,
+                since,
+                project,
+                agent,
+                limit,
+                lex,
+                vec,
+                expand,
+                &cli.format,
+            )
+            .await?;
         }
         Commands::Get { id, full } => {
             commands::get::run(id, full)?;
@@ -218,15 +259,24 @@ async fn main() -> anyhow::Result<()> {
                 commands::model::run_info()?;
             }
         },
+        Commands::Sync {
+            local_only,
+            dry_run,
+        } => {
+            commands::sync::run(local_only, dry_run).await?;
+        }
+        Commands::Reindex { from_vault } => {
+            commands::reindex::run(from_vault)?;
+        }
         Commands::Wiki { action } => match action {
-            WikiAction::Update { model, since, session, dry_run } => {
-                commands::wiki::run_update(
-                    &model,
-                    since.as_deref(),
-                    session.as_deref(),
-                    dry_run,
-                )
-                .await?;
+            WikiAction::Update {
+                model,
+                since,
+                session,
+                dry_run,
+            } => {
+                commands::wiki::run_update(&model, since.as_deref(), session.as_deref(), dry_run)
+                    .await?;
             }
             WikiAction::Status => {
                 commands::wiki::run_status()?;

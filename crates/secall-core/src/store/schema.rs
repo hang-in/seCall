@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     tools_used  TEXT,
     tags        TEXT,
     vault_path  TEXT,
+    host        TEXT,
     ingested_at TEXT NOT NULL,
     status      TEXT DEFAULT 'raw'
 );
@@ -69,4 +70,13 @@ CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
 CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(start_time);
+";
+
+pub const CREATE_QUERY_CACHE: &str = "
+CREATE TABLE IF NOT EXISTS query_cache (
+    query_hash  TEXT PRIMARY KEY,
+    original    TEXT NOT NULL,
+    expanded    TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ";

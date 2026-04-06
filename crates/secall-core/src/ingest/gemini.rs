@@ -16,8 +16,11 @@ impl SessionParser for GeminiParser {
             && path.extension().map(|e| e == "json").unwrap_or(false)
     }
 
-    fn parse(&self, path: &Path) -> Result<Session> {
-        parse_gemini_json(path)
+    fn parse(&self, path: &Path) -> crate::error::Result<Session> {
+        parse_gemini_json(path).map_err(|e| crate::error::SecallError::Parse {
+            path: path.to_string_lossy().into_owned(),
+            source: e,
+        })
     }
 
     fn agent_kind(&self) -> AgentKind {
@@ -255,6 +258,7 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
         project,
         cwd: None,
         git_branch: None,
+        host: Some(gethostname::gethostname().to_string_lossy().to_string()),
         start_time,
         end_time,
         turns,
@@ -284,9 +288,7 @@ fn extract_project_id(path: &Path) -> Option<String> {
         if let Some(pos) = path_str.find(marker) {
             let after = &path_str[pos + marker.len()..];
             // Split on either separator
-            let end = after
-                .find(|c| c == '/' || c == '\\')
-                .unwrap_or(after.len());
+            let end = after.find(['/', '\\']).unwrap_or(after.len());
             let project_id = &after[..end];
             if !project_id.is_empty() {
                 return Some(project_id.to_string());
@@ -350,12 +352,23 @@ mod tests {
         }"#;
         let f = make_gemini_file(json);
         let session = parse_gemini_json(f.path()).unwrap();
-        let asst = session.turns.iter().find(|t| t.role == Role::Assistant).unwrap();
+        let asst = session
+            .turns
+            .iter()
+            .find(|t| t.role == Role::Assistant)
+            .unwrap();
         assert_eq!(asst.actions.len(), 1);
         match &asst.actions[0] {
-            Action::ToolUse { name, output_summary, .. } => {
+            Action::ToolUse {
+                name,
+                output_summary,
+                ..
+            } => {
                 assert_eq!(name, "read_file");
-                assert!(output_summary.contains("fn main()"), "got: {output_summary}");
+                assert!(
+                    output_summary.contains("fn main()"),
+                    "got: {output_summary}"
+                );
             }
             _ => panic!("expected ToolUse"),
         }
@@ -376,7 +389,11 @@ mod tests {
         }"#;
         let f = make_gemini_file(json);
         let session = parse_gemini_json(f.path()).unwrap();
-        let asst = session.turns.iter().find(|t| t.role == Role::Assistant).unwrap();
+        let asst = session
+            .turns
+            .iter()
+            .find(|t| t.role == Role::Assistant)
+            .unwrap();
         let thinking = asst.thinking.as_ref().expect("thinking should be Some");
         assert!(thinking.contains("코드를 분석"), "got: {thinking}");
         assert!(thinking.contains("구현 계획"), "got: {thinking}");
@@ -386,7 +403,11 @@ mod tests {
     fn test_gemini_tokens() {
         let f = make_gemini_file(BASIC_SESSION);
         let session = parse_gemini_json(f.path()).unwrap();
-        let asst = session.turns.iter().find(|t| t.role == Role::Assistant).unwrap();
+        let asst = session
+            .turns
+            .iter()
+            .find(|t| t.role == Role::Assistant)
+            .unwrap();
         let tokens = asst.tokens.as_ref().expect("tokens should be Some");
         assert_eq!(tokens.input, 100);
         assert_eq!(tokens.output, 50);

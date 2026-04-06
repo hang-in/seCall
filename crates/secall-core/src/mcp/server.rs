@@ -1,17 +1,31 @@
 use std::sync::{Arc, Mutex};
 
 use rmcp::{
-    ErrorData as McpError, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 
-use crate::search::bm25::{SearchFilters, SearchResult};
-use crate::search::hybrid::{SearchEngine, parse_temporal_filter};
-use crate::store::db::Database;
 use super::instructions::build_instructions;
 use super::tools::{GetParams, QueryType, RecallParams, StatusParams};
+use crate::error::SecallError;
+use crate::search::bm25::{SearchFilters, SearchResult};
+use crate::search::hybrid::{parse_temporal_filter, SearchEngine};
+use crate::store::db::Database;
+use crate::store::SessionRepo;
+
+fn to_mcp_error(e: SecallError) -> McpError {
+    match &e {
+        SecallError::SessionNotFound(_) | SecallError::TurnNotFound { .. } => {
+            McpError::invalid_params(e.to_string(), None)
+        }
+        SecallError::DatabaseNotInitialized => McpError::internal_error(e.to_string(), None),
+        SecallError::Parse { .. } | SecallError::UnsupportedFormat(_) => {
+            McpError::invalid_params(e.to_string(), None)
+        }
+        _ => McpError::internal_error(e.to_string(), None),
+    }
+}
 
 #[derive(Clone)]
 pub struct SeCallMcpServer {
@@ -31,7 +45,9 @@ impl SeCallMcpServer {
     }
 
     /// Search agent session history
-    #[tool(description = "Search agent session history. Use keyword queries for exact terms, semantic queries for conceptual search, or temporal queries for time-based filtering.")]
+    #[tool(
+        description = "Search agent session history. Use keyword queries for exact terms, semantic queries for conceptual search, or temporal queries for time-based filtering."
+    )]
     async fn recall(
         &self,
         Parameters(params): Parameters<RecallParams>,
@@ -85,7 +101,7 @@ impl SeCallMcpServer {
                                 })?;
                                 self.search
                                     .search_with_embedding(&db, &embedding, limit, &base_filters)
-                                    .unwrap_or_default()
+                                    .map_err(|e| McpError::internal_error(e.to_string(), None))?
                             };
                             all_results.extend(results);
                         }
@@ -93,7 +109,10 @@ impl SeCallMcpServer {
                             tracing::info!("vector search disabled (Ollama not available)");
                         }
                         Err(e) => {
-                            tracing::warn!(error = %e, "embedding failed");
+                            return Err(McpError::internal_error(
+                                format!("embedding failed: {e}"),
+                                None,
+                            ));
                         }
                     }
                 }
@@ -139,9 +158,10 @@ impl SeCallMcpServer {
         description = "Retrieve a specific session or turn. Use session_id for full session metadata, session_id:N for a specific turn."
     )]
     fn get(&self, Parameters(params): Parameters<GetParams>) -> Result<CallToolResult, McpError> {
-        let db = self.db.lock().map_err(|e| {
-            McpError::internal_error(format!("DB lock error: {e}"), None)
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("DB lock error: {e}"), None))?;
 
         // Parse "session_id:turn_index" or just "session_id"
         let (session_id, turn_index) = if let Some(colon_pos) = params.id.rfind(':') {
@@ -168,10 +188,7 @@ impl SeCallMcpServer {
                         serde_json::to_string_pretty(&json_val).unwrap_or_default(),
                     )]))
                 }
-                Err(e) => Err(McpError::invalid_params(
-                    format!("Turn not found: {e}"),
-                    None,
-                )),
+                Err(e) => Err(to_mcp_error(e)),
             }
         } else {
             match db.get_session_meta(&session_id) {
@@ -188,10 +205,7 @@ impl SeCallMcpServer {
                         serde_json::to_string_pretty(&json_val).unwrap_or_default(),
                     )]))
                 }
-                Err(e) => Err(McpError::invalid_params(
-                    format!("Session not found: {e}"),
-                    None,
-                )),
+                Err(e) => Err(to_mcp_error(e)),
             }
         }
     }
@@ -230,53 +244,8 @@ impl ServerHandler for SeCallMcpServer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use rmcp::handler::server::wrapper::Parameters;
-
-    use super::SeCallMcpServer;
-    use crate::search::bm25::Bm25Indexer;
-    use crate::search::hybrid::SearchEngine;
-    use crate::search::tokenizer::LinderaKoTokenizer;
-    use crate::store::db::Database;
-    use super::super::tools::{QueryItem, QueryType, RecallParams, StatusParams};
-
-    fn make_server() -> SeCallMcpServer {
-        let db = Database::open_memory().unwrap();
-        let tok = LinderaKoTokenizer::new().unwrap();
-        let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
-        SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(engine))
-    }
-
-    #[test]
-    fn test_status_tool() {
-        let server = make_server();
-        let result = server.status(Parameters(StatusParams {}));
-        assert!(result.contains("session") || result.contains("Session") || result.contains("error"));
-    }
-
-    #[tokio::test]
-    async fn test_recall_empty_db() {
-        let server = make_server();
-        let params = RecallParams {
-            queries: vec![QueryItem {
-                query_type: QueryType::Keyword,
-                query: "테스트 검색어".to_string(),
-            }],
-            project: None,
-            agent: None,
-            limit: Some(5),
-        };
-        let result = server.recall(Parameters(params)).await;
-        assert!(result.is_ok());
-    }
-}
-
 pub async fn start_mcp_server(db: Database, search: SearchEngine) -> anyhow::Result<()> {
-    let server =
-        SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(search));
+    let server = SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(search));
     let (stdin, stdout) = rmcp::transport::io::stdio();
     let service = server.serve((stdin, stdout)).await?;
     service.waiting().await?;
@@ -290,8 +259,7 @@ pub async fn start_mcp_http_server(
     bind_addr: &str,
 ) -> anyhow::Result<()> {
     use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService,
-        session::local::LocalSessionManager,
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
     };
 
     let db_arc = Arc::new(Mutex::new(db));
@@ -327,4 +295,50 @@ pub async fn start_mcp_http_server(
 
     axum::serve(tcp_listener, router).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rmcp::handler::server::wrapper::Parameters;
+
+    use super::super::tools::{QueryItem, QueryType, RecallParams, StatusParams};
+    use super::SeCallMcpServer;
+    use crate::search::bm25::Bm25Indexer;
+    use crate::search::hybrid::SearchEngine;
+    use crate::search::tokenizer::LinderaKoTokenizer;
+    use crate::store::db::Database;
+
+    fn make_server() -> SeCallMcpServer {
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
+        SeCallMcpServer::new(Arc::new(Mutex::new(db)), Arc::new(engine))
+    }
+
+    #[test]
+    fn test_status_tool() {
+        let server = make_server();
+        let result = server.status(Parameters(StatusParams {}));
+        assert!(
+            result.contains("session") || result.contains("Session") || result.contains("error")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recall_empty_db() {
+        let server = make_server();
+        let params = RecallParams {
+            queries: vec![QueryItem {
+                query_type: QueryType::Keyword,
+                query: "테스트 검색어".to_string(),
+            }],
+            project: None,
+            agent: None,
+            limit: Some(5),
+        };
+        let result = server.recall(Parameters(params)).await;
+        assert!(result.is_ok());
+    }
 }

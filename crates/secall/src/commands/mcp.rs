@@ -1,9 +1,9 @@
 use anyhow::Result;
 use secall_core::{
     mcp::{start_mcp_http_server, start_mcp_server},
-    search::{Bm25Indexer, SearchEngine},
     search::tokenizer::create_tokenizer,
     search::vector::create_vector_indexer,
+    search::{Bm25Indexer, SearchEngine},
     store::get_default_db_path,
     store::Database,
     vault::Config,

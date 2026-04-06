@@ -18,8 +18,11 @@ impl SessionParser for CodexParser {
             && path.extension().map(|e| e == "jsonl").unwrap_or(false)
     }
 
-    fn parse(&self, path: &Path) -> Result<Session> {
-        parse_codex_jsonl(path)
+    fn parse(&self, path: &Path) -> crate::error::Result<Session> {
+        parse_codex_jsonl(path).map_err(|e| crate::error::SecallError::Parse {
+            path: path.to_string_lossy().into_owned(),
+            source: e,
+        })
     }
 
     fn agent_kind(&self) -> AgentKind {
@@ -178,8 +181,7 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
                                 tool_use_id: Some(call_id.clone()),
                             });
                             if !call_id.is_empty() {
-                                pending_calls
-                                    .insert(call_id, (turns.len() - 1, action_idx));
+                                pending_calls.insert(call_id, (turns.len() - 1, action_idx));
                             }
                         }
                     }
@@ -187,13 +189,10 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
                         let call_id = rp.call_id.unwrap_or_default();
                         let output = value_to_string(rp.output);
 
-                        if let Some((turn_pos, action_idx)) =
-                            pending_calls.remove(&call_id)
-                        {
+                        if let Some((turn_pos, action_idx)) = pending_calls.remove(&call_id) {
                             if let Some(turn) = turns.get_mut(turn_pos) {
-                                if let Some(Action::ToolUse {
-                                    output_summary, ..
-                                }) = turn.actions.get_mut(action_idx)
+                                if let Some(Action::ToolUse { output_summary, .. }) =
+                                    turn.actions.get_mut(action_idx)
                                 {
                                     *output_summary = output;
                                 }
@@ -236,6 +235,7 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
         project,
         cwd: meta_cwd.map(|s| s.into()),
         git_branch: None,
+        host: Some(gethostname::gethostname().to_string_lossy().to_string()),
         start_time,
         end_time: None,
         turns,
@@ -397,7 +397,10 @@ mod tests {
         let session = parse_codex_jsonl(f.path()).unwrap();
         assert_eq!(session.project.as_deref(), Some("seCall"));
         assert_eq!(
-            session.cwd.as_ref().map(|p| p.to_string_lossy().to_string()),
+            session
+                .cwd
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
             Some("/Users/d9ng/proj/seCall".to_string())
         );
     }
@@ -429,10 +432,19 @@ mod tests {
             r#"{"timestamp":"2026-04-05T10:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-obj","output":["line1","line2"]}}"#,
         ]);
         let session = parse_codex_jsonl(f.path()).unwrap();
-        let assistant = session.turns.iter().find(|t| t.role == Role::Assistant).unwrap();
+        let assistant = session
+            .turns
+            .iter()
+            .find(|t| t.role == Role::Assistant)
+            .unwrap();
         assert_eq!(assistant.actions.len(), 1);
         match &assistant.actions[0] {
-            Action::ToolUse { name, input_summary, output_summary, .. } => {
+            Action::ToolUse {
+                name,
+                input_summary,
+                output_summary,
+                ..
+            } => {
                 assert_eq!(name, "container");
                 // 객체가 JSON 문자열로 저장됨
                 assert!(input_summary.contains("node:18"));

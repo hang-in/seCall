@@ -12,8 +12,7 @@ pub fn append_log(vault_path: &Path, session: &Session, md_path: &Path) -> Resul
     let project = session.project.as_deref().unwrap_or("unknown");
     let id_prefix = &session.id[..session.id.len().min(8)];
     let turns = session.turns.len();
-    let total_k =
-        (session.total_tokens.input + session.total_tokens.output) / 1000;
+    let total_k = (session.total_tokens.input + session.total_tokens.output) / 1000;
     let rel_path = md_path.to_string_lossy();
 
     let entry = format!(

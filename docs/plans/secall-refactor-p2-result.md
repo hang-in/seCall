@@ -2,78 +2,32 @@
 
 > Developer: claude
 > Branch: N/A
-> Date: 2026-04-06 14:34
+> Date: 2026-04-06 15:58
 > Plan Revision: 0
 
 ---
 
 ## Summary
 
-모든 테스트 통과. 각 task별 Verification 결과를 보고합니다.
+완료. 누락된 3개 검증 결과 요약:
 
----
+| 명령 | 결과 |
+|---|---|
+| `secall status` (warn level) | ✅ stderr 0줄 — status 명령은 `println!` 기반, warn 이벤트 없음 |
+| `RUST_LOG=debug secall status` | ✅ stderr 0줄 — status 코드 경로에 tracing 계측 없음 (예상된 결과) |
+| `secall mcp` stdout 오염 | ✅ stdout 완전히 비어 있음 (`stdout_empty=1`). 동시에 `ERROR` 메시지가 **stderr**에 정확히 기록됨을 확인 — `with_writer(stderr)` 설정이 올바르게 동작함 |
 
-## Verification 결과
-
-### Task 01: tracing 도입
-
-```
-✅ cargo check — exit 0 (warning 1건: unused import SessionMeta, 기존 코드)
-✅ cargo test — 122 passed; 0 failed; 9 ignored
-```
-
-Task 02, 03, 04도 동일한 `cargo test`에서 통과했으므로 함께 보고합니다.
-
-### Task 02: 벡터 검색 메모리 최적화
-
-```
-✅ cargo check -p secall-core — exit 0
-✅ cargo test -p secall-core vector — 9 passed (search_vectors_with_session_filter, empty_filter 포함)
-✅ cargo test -p secall-core hybrid — 9+2 passed
-✅ cargo test — 122 passed; 0 failed
-```
-
-### Task 03: 디렉토리 ingest 멀티에이전트
-
-```
-✅ cargo check -p secall — exit 0
-✅ cargo test — 122 passed; 0 failed
-```
-
-### Task 04: BLOB 검증 + CLI/MCP 테스트
-
-```
-✅ cargo check — exit 0
-✅ cargo test -p secall-core vector — test_insert_vector_empty_rejected, test_insert_vector_dimension_mismatch, test_bytes_to_floats_corrupt_blob 모두 통과
-✅ cargo test -p secall-core mcp — test_status_tool, test_recall_empty_db 모두 통과
-✅ cargo test -p secall cli_smoke — 4 passed (help, version, status_without_db, lint_without_db)
-✅ cargo test — 122 passed; 0 failed
-```
-
----
+> **참고**: `secall status`가 tracing 이벤트를 0개 생성하는 이유는 정상입니다. 해당 명령은 DB 통계를 읽어 `println!`으로 출력하며, tracing 매크로가 있는 코드 경로(`create_vector_indexer`, `create_tokenizer`, hook 실행 등)를 호출하지 않습니다. tracing 시스템이 실제 작동하는 증거는 MCP 실행 시 stderr에 포맷된 ERROR 로그로 확인됩니다.
 
 ## Subtask Results
 
-### 1. 모든 테스트 통과. 각 task별 Verification 결과를 보고합니다.
+### 1. 완료. 누락된 3개 검증 결과 요약:
 
----
+| 명령 | 결과 |
+|---|---|
+| `secall status` (warn level) | ✅ stderr 0줄 — status 명령은 `println!` 기반, warn 이벤트 없음 |
+| `RUST_LOG=debug secall status` | ✅ stderr 0줄 — status 코드 경로에 tracing 계측 없음 (예상된 결과) |
+| `secall mcp` stdout 오염 | ✅ stdout 완전히 비어 있음 (`stdout_empty=1`). 동시에 `ERROR` 메시지가 **stderr**에 정확히 기록됨을 확인 — `with_writer(stderr)` 설정이 올바르게 동작함 |
 
-## Verification 결과
-
-### Task 01: tracing 도입
-
-```
-✅ cargo check — exit 0 (warning 1건: unused import SessionMeta, 기존 코드)
-✅ cargo test — 122 passed; 0 failed; 9 ignored
-```
-
-Task 02, 03, 04도 동일한 `cargo test`에서 통과했으므로 함께 보고합니다.
-
-### Task 02: 벡터 검색 메모리 최적화
-
-```
-✅ cargo check -p secall-core — exit 0
-✅ cargo test -p secall-core vector — 9 passed (search_vectors_with_session_filter, empty_filter 포함)
-✅ cargo test -p secall-core hybrid — 9+2 passed
-✅ cargo
+> **참고**: `secall status`가 tracing 이벤트를 0개 생성하는 이유는 정상입니다. 해당 명령은 DB 통계를 읽어 `println!`으로 출력하며, tracing 매크로가 있는 코드 경로(`create_vector_in
 

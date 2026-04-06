@@ -5,10 +5,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const MODEL_URL: &str =
-    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
-const TOKENIZER_URL: &str =
-    "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
+const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
+const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
 const HF_API_URL: &str = "https://huggingface.co/api/models/BAAI/bge-m3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,8 +49,7 @@ impl ModelManager {
     }
 
     pub fn is_downloaded(&self) -> bool {
-        self.model_dir.join("model.onnx").exists()
-            && self.model_dir.join("tokenizer.json").exists()
+        self.model_dir.join("model.onnx").exists() && self.model_dir.join("tokenizer.json").exists()
     }
 
     pub async fn download(&self, force: bool) -> Result<()> {
@@ -60,8 +57,7 @@ impl ModelManager {
             tracing::info!("model already exists, use --force to re-download");
             return Ok(());
         }
-        std::fs::create_dir_all(&self.model_dir)
-            .context("failed to create model directory")?;
+        std::fs::create_dir_all(&self.model_dir).context("failed to create model directory")?;
 
         let model_sha = self
             .download_file(MODEL_URL, "model.onnx")
@@ -103,11 +99,7 @@ impl ModelManager {
             .context("HTTP request failed")?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "download failed ({}): {}",
-                resp.status(),
-                url
-            ));
+            return Err(anyhow!("download failed ({}): {}", resp.status(), url));
         }
 
         let total = resp.content_length();
@@ -131,7 +123,10 @@ impl ModelManager {
                     format_bytes(total)
                 );
             } else {
-                eprint!("\r⬇ Downloading {final_name}... {}", format_bytes(downloaded));
+                eprint!(
+                    "\r⬇ Downloading {final_name}... {}",
+                    format_bytes(downloaded)
+                );
             }
         }
         tracing::info!(name = final_name, size = %format_bytes(downloaded), "download complete");
@@ -177,8 +172,7 @@ impl ModelManager {
 
     pub fn remove(&self) -> Result<()> {
         if self.model_dir.exists() {
-            std::fs::remove_dir_all(&self.model_dir)
-                .context("failed to remove model directory")?;
+            std::fs::remove_dir_all(&self.model_dir).context("failed to remove model directory")?;
             tracing::info!(path = %self.model_dir.display(), "model removed");
         } else {
             tracing::warn!("model directory not found");

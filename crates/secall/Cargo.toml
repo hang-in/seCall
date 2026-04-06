@@ -16,3 +16,4 @@ walkdir.workspace = true
 shellexpand = "3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+gethostname.workspace = true

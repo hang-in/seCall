@@ -1,15 +1,16 @@
 use anyhow::{anyhow, Result};
 use secall_core::{
-    search::{Bm25Indexer, SearchEngine, SearchFilters},
     search::hybrid::parse_temporal_filter,
     search::query_expand::expand_query,
     search::tokenizer::create_tokenizer,
+    search::{Bm25Indexer, SearchEngine, SearchFilters},
     store::{get_default_db_path, Database},
     vault::Config,
 };
 
 use crate::output::{print_search_results, OutputFormat};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     query: Vec<String>,
     since: Option<String>,
@@ -26,30 +27,32 @@ pub async fn run(
     }
 
     let query_str = query.join(" ");
+    let db_path = get_default_db_path();
+    let db = Database::open(&db_path)?;
     let query_str = if expand {
-        expand_query(&query_str)?
+        expand_query(&query_str, Some(&db))?
     } else {
         query_str
     };
-    let db_path = get_default_db_path();
-    let db = Database::open(&db_path)?;
 
     // Build filters
-    let mut filters = SearchFilters::default();
-    filters.project = project;
-    filters.agent = agent;
-
-    if let Some(since_str) = since {
+    let (since_filter, until_filter) = if let Some(since_str) = since {
         if let Some(temporal) = parse_temporal_filter(&since_str) {
-            filters.since = temporal.since;
-            filters.until = temporal.until;
+            (temporal.since, temporal.until)
+        } else if let Ok(dt) = chrono::NaiveDate::parse_from_str(&since_str, "%Y-%m-%d") {
+            (dt.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc()), None)
         } else {
-            // Try parse as ISO date
-            if let Ok(dt) = chrono::NaiveDate::parse_from_str(&since_str, "%Y-%m-%d") {
-                filters.since = dt.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc());
-            }
+            (None, None)
         }
-    }
+    } else {
+        (None, None)
+    };
+    let filters = SearchFilters {
+        project,
+        agent,
+        since: since_filter,
+        until: until_filter,
+    };
 
     // Build search engine
     let config = Config::load_or_default();
@@ -63,7 +66,9 @@ pub async fn run(
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     let results = if vec_only {
-        engine.search_vector(&db, &query_str, limit, &filters).await?
+        engine
+            .search_vector(&db, &query_str, limit, &filters)
+            .await?
     } else if lex_only {
         engine.search_bm25(&db, &query_str, &filters, limit)?
     } else {

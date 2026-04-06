@@ -1,10 +1,21 @@
 use anyhow::Result;
 
+use crate::store::db::Database;
+
 /// Expand a search query using Claude Code CLI.
 ///
 /// Calls `claude -p <prompt> --model claude-haiku-4-5-20251001` as a subprocess.
 /// If `claude` is not in PATH or the call fails, returns the original query unchanged.
-pub fn expand_query(query: &str) -> Result<String> {
+/// If `db` is provided, results are cached for 7 days.
+pub fn expand_query(query: &str, db: Option<&Database>) -> Result<String> {
+    // 1. 캐시 히트 확인
+    if let Some(db) = db {
+        if let Some(cached) = db.get_query_cache(query) {
+            tracing::info!(query, "query expansion cache hit");
+            return Ok(format!("{query} {cached}"));
+        }
+    }
+
     if !command_exists("claude") {
         tracing::warn!("claude not found, using original query");
         return Ok(query.to_string());
@@ -24,6 +35,12 @@ pub fn expand_query(query: &str) -> Result<String> {
     if output.status.success() {
         let expanded = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !expanded.is_empty() {
+            // 2. 캐시 저장
+            if let Some(db) = db {
+                if let Err(e) = db.set_query_cache(query, &expanded) {
+                    tracing::warn!(error = %e, "failed to cache query expansion");
+                }
+            }
             tracing::info!(original = query, expanded = %expanded, "query expanded");
             Ok(format!("{query} {expanded}"))
         } else {
@@ -46,6 +63,7 @@ fn command_exists(cmd: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::db::Database;
 
     #[test]
     fn test_expand_query_no_claude() {
@@ -54,7 +72,7 @@ mod tests {
             // Claude is installed; skip this specific path test
             return;
         }
-        let result = expand_query("벡터 검색").unwrap();
+        let result = expand_query("벡터 검색", None).unwrap();
         assert_eq!(result, "벡터 검색");
     }
 
@@ -64,11 +82,35 @@ mod tests {
     }
 
     #[test]
+    fn test_query_cache_hit() {
+        let db = Database::open_memory().unwrap();
+        db.set_query_cache("벡터 검색", "vector search semantic embedding")
+            .unwrap();
+
+        let cached = db.get_query_cache("벡터 검색");
+        assert!(cached.is_some());
+        assert!(cached.unwrap().contains("vector search"));
+    }
+
+    #[test]
+    fn test_query_cache_miss() {
+        let db = Database::open_memory().unwrap();
+        let cached = db.get_query_cache("존재하지 않는 쿼리");
+        assert!(cached.is_none());
+    }
+
+    #[test]
     #[ignore]
     fn test_expand_query_real() {
         // Manual: requires claude CLI installed
-        let result = expand_query("벡터 검색").unwrap();
-        assert!(result.contains("벡터 검색"), "original query should be included");
-        assert!(result.len() > "벡터 검색".len(), "should have expanded terms");
+        let result = expand_query("벡터 검색", None).unwrap();
+        assert!(
+            result.contains("벡터 검색"),
+            "original query should be included"
+        );
+        assert!(
+            result.len() > "벡터 검색".len(),
+            "should have expanded terms"
+        );
     }
 }

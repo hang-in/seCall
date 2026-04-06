@@ -6,12 +6,14 @@
 /// for MVP scale (< 100k chunks).
 use anyhow::Result;
 
+use super::ann::AnnIndex;
 use super::bm25::{IndexStats, SearchFilters, SearchResult, SessionMeta};
 use super::chunker::chunk_session;
 use super::embedding::{Embedder, OllamaEmbedder, OpenAIEmbedder, OrtEmbedder};
 use super::model_manager::ModelManager;
 use crate::ingest::Session;
 use crate::store::db::Database;
+use crate::store::{SessionRepo, VectorRepo};
 use crate::vault::config::Config;
 
 #[derive(Debug)]
@@ -25,11 +27,21 @@ pub struct VectorRow {
 
 pub struct VectorIndexer {
     embedder: Box<dyn Embedder>,
+    /// HNSW ANN 인덱스. None이면 기존 BLOB 선형 스캔으로 fallback.
+    ann_index: Option<AnnIndex>,
 }
 
 impl VectorIndexer {
     pub fn new(embedder: Box<dyn Embedder>) -> Self {
-        VectorIndexer { embedder }
+        VectorIndexer {
+            embedder,
+            ann_index: None,
+        }
+    }
+
+    pub fn with_ann(mut self, ann_index: AnnIndex) -> Self {
+        self.ann_index = Some(ann_index);
+        self
     }
 
     pub async fn index_session(&self, db: &Database, session: &Session) -> Result<IndexStats> {
@@ -49,17 +61,25 @@ impl VectorIndexer {
                     for (i, embedding) in embeddings.into_iter().enumerate() {
                         let chunk_idx = batch_idx * batch_size + i;
                         if let Some(chunk) = chunks.get(chunk_idx) {
-                            if let Err(e) = db.insert_vector(
+                            match db.insert_vector(
                                 &embedding,
                                 &chunk.session_id,
                                 chunk.turn_index,
                                 chunk.seq,
                                 self.embedder.model_name(),
                             ) {
-                                tracing::warn!(error = %e, "vector insert error");
-                                stats.errors += 1;
-                            } else {
-                                stats.chunks_embedded += 1;
+                                Ok(rowid) => {
+                                    stats.chunks_embedded += 1;
+                                    if let Some(ref ann) = self.ann_index {
+                                        if let Err(e) = ann.add(rowid as u64, &embedding) {
+                                            tracing::warn!(error = %e, "ANN index add failed");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "vector insert error");
+                                    stats.errors += 1;
+                                }
                             }
                         }
                     }
@@ -67,6 +87,15 @@ impl VectorIndexer {
                 Err(e) => {
                     tracing::warn!(error = %e, "embedding batch failed");
                     stats.errors += chunks.len();
+                }
+            }
+        }
+
+        // ANN 인덱스에 벡터가 추가됐으면 저장 (재시작 시 복구 가능하도록)
+        if stats.chunks_embedded > 0 {
+            if let Some(ref ann) = self.ann_index {
+                if let Err(e) = ann.save() {
+                    tracing::warn!(error = %e, "ANN index save failed");
                 }
             }
         }
@@ -83,28 +112,8 @@ impl VectorIndexer {
         candidate_session_ids: Option<&[String]>,
     ) -> Result<Vec<SearchResult>> {
         let query_embedding = self.embedder.embed(query).await?;
-        let rows = db.search_vectors(&query_embedding, limit, candidate_session_ids)?;
-
-        let results: Vec<SearchResult> = rows
-            .into_iter()
-            .filter_map(|row| {
-                let session_meta = db.get_session_meta(&row.session_id).ok()?;
-                if !passes_filters(&session_meta, filters) {
-                    return None;
-                }
-                Some(SearchResult {
-                    session_id: row.session_id,
-                    turn_index: row.turn_index,
-                    score: 1.0 - row.distance as f64,
-                    bm25_score: None,
-                    vector_score: Some(1.0 - row.distance as f64),
-                    snippet: String::new(),
-                    metadata: session_meta,
-                })
-            })
-            .collect();
-
-        Ok(results)
+        // ANN-aware 경로를 공통으로 사용
+        self.search_with_embedding(db, &query_embedding, limit, filters, candidate_session_ids)
     }
 
     /// Embed a query string without DB access (safe to call before locking DB mutex).
@@ -121,6 +130,37 @@ impl VectorIndexer {
         filters: &SearchFilters,
         candidate_session_ids: Option<&[String]>,
     ) -> anyhow::Result<Vec<SearchResult>> {
+        // ANN 경로: session_ids 필터 없고 ANN 인덱스 사용 가능할 때
+        if candidate_session_ids.is_none() {
+            if let Some(ref ann) = self.ann_index {
+                let ann_results = ann.search(embedding, limit)?;
+                let results: Vec<SearchResult> = ann_results
+                    .iter()
+                    .filter_map(|(key, distance)| {
+                        db.get_vector_meta(*key as i64).ok().and_then(
+                            |(session_id, turn_index, _chunk_seq)| {
+                                let meta = db.get_session_meta(&session_id).ok()?;
+                                if !passes_filters(&meta, filters) {
+                                    return None;
+                                }
+                                Some(SearchResult {
+                                    session_id,
+                                    turn_index,
+                                    score: 1.0 - *distance as f64,
+                                    bm25_score: None,
+                                    vector_score: Some(1.0 - *distance as f64),
+                                    snippet: String::new(),
+                                    metadata: meta,
+                                })
+                            },
+                        )
+                    })
+                    .collect();
+                return Ok(results);
+            }
+        }
+
+        // BLOB 선형 스캔 fallback
         let rows = db.search_vectors(embedding, limit, candidate_session_ids)?;
         let results = rows
             .into_iter()
@@ -177,7 +217,7 @@ pub fn passes_filters(meta: &SessionMeta, filters: &SearchFilters) -> bool {
 /// Create a VectorIndexer based on config.embedding.backend.
 /// Falls back to Ollama if ort fails; returns None if neither is available.
 pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
-    match config.embedding.backend.as_str() {
+    let indexer = match config.embedding.backend.as_str() {
         "ort" => {
             let model_dir = config
                 .embedding
@@ -191,18 +231,18 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
                 tracing::warn!("ONNX model not found, downloading");
                 if let Err(e) = mgr.download(false).await {
                     tracing::warn!(error = %e, "download failed, trying Ollama fallback");
-                    return try_ollama_fallback(config).await;
+                    return try_ollama_fallback_with_ann(config).await;
                 }
             }
 
             match OrtEmbedder::new(&model_dir) {
                 Ok(e) => {
                     tracing::info!("ort ONNX loaded, local vector search enabled");
-                    Some(VectorIndexer::new(Box::new(e)))
+                    VectorIndexer::new(Box::new(e))
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "ort load failed, trying Ollama fallback");
-                    try_ollama_fallback(config).await
+                    return try_ollama_fallback_with_ann(config).await;
                 }
             }
         }
@@ -212,29 +252,63 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
                 let model = config.embedding.openai_model.as_deref();
                 let embedder = OpenAIEmbedder::new(&api_key, model);
                 tracing::info!(model = %embedder.model_name(), "OpenAI embedder ready");
-                Some(VectorIndexer::new(Box::new(embedder)))
+                VectorIndexer::new(Box::new(embedder))
             } else {
                 tracing::warn!("OPENAI_API_KEY not set, trying Ollama fallback");
-                try_ollama_fallback(config).await
+                return try_ollama_fallback_with_ann(config).await;
             }
         }
         _ => {
             // "ollama" or any unknown value → Ollama
-            try_ollama_fallback(config).await
+            return try_ollama_fallback_with_ann(config).await;
         }
-    }
+    };
+
+    Some(attach_ann_index(indexer))
 }
 
-async fn try_ollama_fallback(config: &Config) -> Option<VectorIndexer> {
+async fn try_ollama_fallback_with_ann(config: &Config) -> Option<VectorIndexer> {
     let base_url = config.embedding.ollama_url.as_deref();
     let model = config.embedding.ollama_model.as_deref();
     let embedder = OllamaEmbedder::new(base_url, model);
     if embedder.is_available().await {
         tracing::info!("Ollama available, vector search enabled");
-        Some(VectorIndexer::new(Box::new(embedder)))
+        Some(attach_ann_index(VectorIndexer::new(Box::new(embedder))))
     } else {
         tracing::warn!("Ollama not available, vector search disabled, BM25-only mode");
         None
+    }
+}
+
+/// ANN 인덱스 파일을 로드(또는 생성)하여 VectorIndexer에 붙임.
+/// 로드 실패 시 ANN 없이 반환 (graceful degradation).
+fn attach_ann_index(indexer: VectorIndexer) -> VectorIndexer {
+    let dimensions = indexer.embedder.dimensions();
+    if dimensions == 0 {
+        // 차원을 알 수 없으면 ANN 인덱스 생성 불가
+        return indexer;
+    }
+
+    let model_name = indexer.embedder.model_name().replace(['/', ':'], "_");
+    let file_name = format!("ann_{}_{}.usearch", model_name, dimensions);
+    let ann_path = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("secall")
+        .join(file_name);
+
+    match AnnIndex::open_or_create(&ann_path, dimensions) {
+        Ok(ann) => {
+            tracing::info!(
+                dimensions,
+                path = %ann_path.display(),
+                "ANN index attached to VectorIndexer"
+            );
+            indexer.with_ann(ann)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "ANN index unavailable, falling back to BLOB scan");
+            indexer
+        }
     }
 }
 
@@ -247,9 +321,9 @@ fn default_model_path() -> std::path::PathBuf {
         .join("bge-m3-onnx")
 }
 
-// Vector table operations on Database
-impl Database {
-    pub fn init_vector_table(&self) -> Result<()> {
+// VectorRepo impl for Database — vector table management + search
+impl VectorRepo for Database {
+    fn init_vector_table(&self) -> Result<()> {
         self.conn().execute_batch(
             "
             CREATE TABLE IF NOT EXISTS turn_vectors (
@@ -267,7 +341,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_vector(
+    fn insert_vector(
         &self,
         embedding: &[f32],
         session_id: &str,
@@ -307,12 +381,12 @@ impl Database {
         Ok(self.conn().last_insert_rowid())
     }
 
-    pub fn search_vectors(
+    fn search_vectors(
         &self,
         query_embedding: &[f32],
         limit: usize,
         session_ids: Option<&[String]>,
-    ) -> Result<Vec<VectorRow>> {
+    ) -> crate::error::Result<Vec<VectorRow>> {
         let row_mapper = |row: &rusqlite::Row<'_>| {
             Ok((
                 row.get(0)?,
@@ -373,6 +447,22 @@ impl Database {
 
         Ok(scored.into_iter().map(|(_, row)| row).collect())
     }
+
+    fn get_vector_meta(&self, rowid: i64) -> anyhow::Result<(String, u32, u32)> {
+        self.conn()
+            .query_row(
+                "SELECT session_id, turn_index, chunk_seq FROM turn_vectors WHERE id = ?1",
+                [rowid],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)? as u32,
+                        row.get::<_, i64>(2)? as u32,
+                    ))
+                },
+            )
+            .map_err(Into::into)
+    }
 }
 
 fn floats_to_bytes(floats: &[f32]) -> Vec<u8> {
@@ -385,7 +475,10 @@ fn floats_to_bytes(floats: &[f32]) -> Vec<u8> {
 
 fn bytes_to_floats(bytes: &[u8]) -> Vec<f32> {
     if bytes.len() % 4 != 0 {
-        tracing::warn!(blob_len = bytes.len(), "corrupt vector BLOB (not multiple of 4 bytes)");
+        tracing::warn!(
+            blob_len = bytes.len(),
+            "corrupt vector BLOB (not multiple of 4 bytes)"
+        );
         return Vec::new();
     }
     bytes
@@ -449,11 +542,15 @@ mod tests {
         let db = Database::open_memory().unwrap();
         db.init_vector_table().unwrap();
 
-        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test").unwrap();
-        db.insert_vector(&[0.0_f32, 1.0, 0.0], "s2", 0, 0, "test").unwrap();
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test")
+            .unwrap();
+        db.insert_vector(&[0.0_f32, 1.0, 0.0], "s2", 0, 0, "test")
+            .unwrap();
 
         let query = vec![1.0_f32, 0.1, 0.0];
-        let rows = db.search_vectors(&query, 10, Some(&["s1".to_string()])).unwrap();
+        let rows = db
+            .search_vectors(&query, 10, Some(&["s1".to_string()]))
+            .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session_id, "s1");
     }
@@ -463,7 +560,8 @@ mod tests {
         let db = Database::open_memory().unwrap();
         db.init_vector_table().unwrap();
 
-        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test").unwrap();
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test")
+            .unwrap();
 
         let query = vec![1.0_f32, 0.0, 0.0];
         let rows = db.search_vectors(&query, 10, Some(&[])).unwrap();
@@ -483,11 +581,15 @@ mod tests {
         let db = Database::open_memory().unwrap();
         db.init_vector_table().unwrap();
 
-        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test").unwrap();
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "s1", 0, 0, "test")
+            .unwrap();
 
         let result = db.insert_vector(&[1.0_f32, 0.0], "s2", 0, 0, "test");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("dimension mismatch"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("dimension mismatch"));
     }
 
     #[test]

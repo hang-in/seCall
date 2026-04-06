@@ -67,8 +67,17 @@ fn build_turn_text(turn: &crate::ingest::Turn) -> String {
     }
 
     for action in &turn.actions {
-        if let crate::ingest::Action::ToolUse { name, input_summary, output_summary, .. } = action {
-            parts.push(format!("[Tool: {}] {} {}", name, input_summary, output_summary));
+        if let crate::ingest::Action::ToolUse {
+            name,
+            input_summary,
+            output_summary,
+            ..
+        } = action
+        {
+            parts.push(format!(
+                "[Tool: {}] {} {}",
+                name, input_summary, output_summary
+            ));
         }
     }
 
@@ -114,6 +123,7 @@ mod tests {
             project: Some("testproj".to_string()),
             cwd: None,
             git_branch: None,
+            host: None,
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             turns,

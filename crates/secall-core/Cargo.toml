@@ -29,6 +29,9 @@ axum.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+usearch.workspace = true
+gethostname.workspace = true
+serde_yaml.workspace = true
 
 [dev-dependencies]
 tempfile = "3.27.0"

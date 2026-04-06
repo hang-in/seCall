@@ -79,7 +79,10 @@ pub fn run_status() -> Result<()> {
     }
 
     let mut page_count = 0;
-    for entry in walkdir::WalkDir::new(&wiki_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&wiki_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.path().extension().map(|e| e == "md").unwrap_or(false) {
             page_count += 1;
         }

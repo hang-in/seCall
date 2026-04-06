@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use lindera::{
-    dictionary::{DictionaryKind, load_embedded_dictionary},
+    dictionary::{load_embedded_dictionary, DictionaryKind},
     mode::Mode,
     segmenter::Segmenter,
-    token_filter::{BoxTokenFilter, korean_keep_tags::KoreanKeepTagsTokenFilter},
+    token_filter::{korean_keep_tags::KoreanKeepTagsTokenFilter, BoxTokenFilter},
     tokenizer::Tokenizer as LinderaInner,
 };
 
@@ -86,8 +86,8 @@ pub struct KiwiTokenizer {
 
 impl KiwiTokenizer {
     pub fn new() -> Result<Self> {
-        let kiwi = kiwi_rs::Kiwi::init()
-            .map_err(|e| anyhow::anyhow!("kiwi-rs init failed: {e}"))?;
+        let kiwi =
+            kiwi_rs::Kiwi::init().map_err(|e| anyhow::anyhow!("kiwi-rs init failed: {e}"))?;
         Ok(Self {
             kiwi: std::sync::Mutex::new(KiwiWrapper(kiwi)),
         })
@@ -110,10 +110,7 @@ impl Tokenizer for KiwiTokenizer {
                     .into_iter()
                     .filter(|t| {
                         // Keep NNG, NNP, NNB (nouns), VV (verbs), VA (adjectives), SL (foreign)
-                        matches!(
-                            t.tag.as_str(),
-                            "NNG" | "NNP" | "NNB" | "VV" | "VA" | "SL"
-                        )
+                        matches!(t.tag.as_str(), "NNG" | "NNP" | "NNB" | "VV" | "VA" | "SL")
                     })
                     .map(|t| t.form.to_lowercase())
                     .filter(|s| s.chars().count() > 1)

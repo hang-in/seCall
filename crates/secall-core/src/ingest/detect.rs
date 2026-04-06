@@ -44,8 +44,7 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
                     if metadata.len() < 100 * 1024 * 1024 {
                         if let Ok(raw) = std::fs::read_to_string(path) {
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                                if v["messages"].is_array()
-                                    && v["messages"][0]["parts"].is_array()
+                                if v["messages"].is_array() && v["messages"][0]["parts"].is_array()
                                 {
                                     return Ok(Box::new(GeminiParser));
                                 }
@@ -171,14 +170,13 @@ pub fn find_sessions_for_cwd(cwd: &Path) -> Result<Vec<std::path::PathBuf>> {
 /// Encode a path as Claude Code project directory name (/ → -)
 pub fn encode_cwd(path: &Path) -> String {
     let s = path.to_string_lossy();
-    s.replace('/', "-").replace('\\', "-")
+    s.replace(['/', '\\'], "-")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::Builder;
 
     fn make_jsonl_file(dir: &std::path::Path, name: &str, lines: &[&str]) -> std::path::PathBuf {
         let p = dir.join(name);
@@ -201,7 +199,10 @@ mod tests {
             &[r#"{"sessionId":"abc","type":"user","message":{"role":"user","content":[]}}"#],
         );
         let parser = detect_parser(&p).unwrap();
-        assert_eq!(parser.agent_kind(), super::super::types::AgentKind::ClaudeCode);
+        assert_eq!(
+            parser.agent_kind(),
+            super::super::types::AgentKind::ClaudeCode
+        );
     }
 
     #[test]

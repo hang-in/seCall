@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 
-use super::bm25::{Bm25Indexer, IndexStats, SearchFilters, SearchResult, SessionMeta};
+use super::bm25::{Bm25Indexer, IndexStats, SearchFilters, SearchResult};
 use super::vector::VectorIndexer;
 use crate::ingest::Session;
 use crate::store::db::Database;
@@ -49,7 +49,11 @@ pub fn reciprocal_rank_fusion(
         .collect();
 
     // Sort by score descending
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Normalize 0.0–1.0
     if let Some(max) = results.first().map(|r| r.score) {
@@ -87,7 +91,8 @@ impl SearchEngine {
         // BM25 결과에서 후보 session_id 추출 → 벡터 검색 범위 제한
         let candidate_ids: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
-            bm25_results.iter()
+            bm25_results
+                .iter()
                 .map(|r| r.session_id.clone())
                 .filter(|id| seen.insert(id.clone()))
                 .collect()
@@ -99,7 +104,9 @@ impl SearchEngine {
             } else {
                 Some(candidate_ids.as_slice())
             };
-            vi.search(db, query, candidate_limit, filters, ids_opt).await.unwrap_or_default()
+            vi.search(db, query, candidate_limit, filters, ids_opt)
+                .await
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -161,7 +168,11 @@ impl SearchEngine {
         }
     }
 
-    pub async fn index_session(&self, db: &Database, session: &Session) -> anyhow::Result<IndexStats> {
+    pub async fn index_session(
+        &self,
+        db: &Database,
+        session: &Session,
+    ) -> anyhow::Result<IndexStats> {
         let mut stats = self.bm25.index_session(db, session)?;
 
         if let Some(vi) = &self.vector {
@@ -174,12 +185,20 @@ impl SearchEngine {
     }
 
     /// BM25 인덱싱만 수행 (동기, 트랜잭션 클로저 내에서 호출 가능)
-    pub fn index_session_bm25(&self, db: &Database, session: &Session) -> anyhow::Result<IndexStats> {
+    pub fn index_session_bm25(
+        &self,
+        db: &Database,
+        session: &Session,
+    ) -> anyhow::Result<IndexStats> {
         self.bm25.index_session(db, session)
     }
 
     /// 벡터 인덱싱만 수행 (비동기, 트랜잭션 밖에서 호출)
-    pub async fn index_session_vectors(&self, db: &Database, session: &Session) -> anyhow::Result<IndexStats> {
+    pub async fn index_session_vectors(
+        &self,
+        db: &Database,
+        session: &Session,
+    ) -> anyhow::Result<IndexStats> {
         if let Some(ref v) = self.vector {
             v.index_session(db, session).await
         } else {
@@ -226,18 +245,20 @@ pub fn parse_temporal_filter(input: &str) -> Option<SearchFilters> {
                 ..Default::default()
             })
         }
-        _ => None,
+        other => {
+            tracing::warn!(
+                input = other,
+                "unrecognized temporal filter, ignoring --since value"
+            );
+            None
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ingest::types::{AgentKind, Role, Session, TokenUsage, Turn};
-    use crate::search::bm25::SearchResult;
-    use crate::search::tokenizer::LinderaKoTokenizer;
-    use crate::store::db::Database;
-    use chrono::{TimeZone, Utc};
+    use crate::search::bm25::SessionMeta;
 
     fn make_result(session_id: &str, turn: u32, score: f64) -> SearchResult {
         SearchResult {
@@ -302,7 +323,10 @@ mod tests {
     fn test_rrf_score_normalization() {
         let bm25 = vec![make_result("A", 0, 0.9), make_result("B", 0, 0.5)];
         let combined = reciprocal_rank_fusion(&bm25, &[], RRF_K);
-        let max_score = combined.iter().map(|r| r.score).fold(f64::NEG_INFINITY, f64::max);
+        let max_score = combined
+            .iter()
+            .map(|r| r.score)
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!((max_score - 1.0).abs() < 0.01);
     }
 
@@ -351,6 +375,7 @@ mod integration {
             project: Some(project.to_string()),
             cwd: None,
             git_branch: None,
+            host: None,
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             turns: vec![Turn {
@@ -376,7 +401,9 @@ mod integration {
         let session = make_session("s1", "proj", "검색 기능 구현 방법");
         engine.bm25.index_session(&db, &session).unwrap();
 
-        let results = engine.search_bm25(&db, "검색", &SearchFilters::default(), 5).unwrap();
+        let results = engine
+            .search_bm25(&db, "검색", &SearchFilters::default(), 5)
+            .unwrap();
         assert!(!results.is_empty());
     }
 
@@ -396,6 +423,8 @@ mod integration {
             ..Default::default()
         };
         let results = engine.search_bm25(&db, "테스트", &filters, 10).unwrap();
-        assert!(results.iter().all(|r| r.metadata.project.as_deref() == Some("projectA")));
+        assert!(results
+            .iter()
+            .all(|r| r.metadata.project.as_deref() == Some("projectA")));
     }
 }

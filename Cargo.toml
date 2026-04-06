@@ -35,3 +35,6 @@ kiwi-rs = "0.1"
 sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+usearch = "2"
+gethostname = "0.4"
+serde_yaml = "0.9"

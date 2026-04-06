@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::store::db::Database;
+use crate::store::SessionRepo;
 use crate::vault::config::Config;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -99,7 +100,10 @@ fn check_vault_files(
                 findings.push(LintFinding {
                     code: "L001".to_string(),
                     severity: Severity::Error,
-                    message: format!("session {}: no vault_path recorded", &session_id[..session_id.len().min(8)]),
+                    message: format!(
+                        "session {}: no vault_path recorded",
+                        &session_id[..session_id.len().min(8)]
+                    ),
                     session_id: Some(session_id),
                     path: None,
                 });
@@ -246,7 +250,9 @@ fn check_orphan_vectors(db: &Database, findings: &mut Vec<LintFinding>) -> Resul
         findings.push(LintFinding {
             code: "L007".to_string(),
             severity: Severity::Warn,
-            message: format!("orphan vector row {rowid}: session_id '{session_id}' not in sessions"),
+            message: format!(
+                "orphan vector row {rowid}: session_id '{session_id}' not in sessions"
+            ),
             session_id: Some(session_id),
             path: None,
         });
@@ -262,7 +268,10 @@ fn check_wiki_frontmatter(config: &Config, findings: &mut Vec<LintFinding>) -> R
         return Ok(());
     }
 
-    for entry in walkdir::WalkDir::new(&wiki_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&wiki_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if !p.extension().map(|e| e == "md").unwrap_or(false) {
             continue;
@@ -316,7 +325,10 @@ fn check_wiki_source_links(
         return Ok(());
     }
 
-    for entry in walkdir::WalkDir::new(&wiki_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&wiki_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if !p.extension().map(|e| e == "md").unwrap_or(false) {
             continue;
@@ -351,7 +363,10 @@ fn check_orphan_sessions(
     }
 
     let mut referenced: HashSet<String> = HashSet::new();
-    for entry in walkdir::WalkDir::new(&wiki_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&wiki_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if p.extension().map(|e| e == "md").unwrap_or(false) {
             let content = std::fs::read_to_string(p).unwrap_or_default();
@@ -393,7 +408,7 @@ fn extract_session_id_from_frontmatter(content: &str) -> Option<String> {
     for line in frontmatter.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("session_id:") {
-            let value = trimmed["session_id:".len()..].trim();
+            let value = trimmed.strip_prefix("session_id:").unwrap_or("").trim();
             let id = value.trim_matches('"').trim_matches('\'');
             if !id.is_empty() {
                 return Some(id.to_string());
@@ -524,7 +539,10 @@ mod tests {
         .unwrap();
         let report = run_lint(&db, &config).unwrap();
         let l008 = report.findings.iter().find(|f| f.code == "L008");
-        assert!(l008.is_some(), "expected L008 finding for missing frontmatter");
+        assert!(
+            l008.is_some(),
+            "expected L008 finding for missing frontmatter"
+        );
         assert!(matches!(l008.unwrap().severity, Severity::Warn));
     }
 
@@ -543,7 +561,10 @@ mod tests {
             .findings
             .iter()
             .find(|f| f.code == "L008" && f.message.contains("sources"));
-        assert!(l008_sources.is_some(), "expected L008 for missing 'sources' field");
+        assert!(
+            l008_sources.is_some(),
+            "expected L008 for missing 'sources' field"
+        );
     }
 
     #[test]
@@ -561,7 +582,10 @@ mod tests {
             .findings
             .iter()
             .find(|f| f.code == "L008" && f.message.contains("type"));
-        assert!(l008_type.is_some(), "expected L008 for missing 'type' field");
+        assert!(
+            l008_type.is_some(),
+            "expected L008 for missing 'type' field"
+        );
     }
 
     #[test]
@@ -576,7 +600,10 @@ mod tests {
         .unwrap();
         let report = run_lint(&db, &config).unwrap();
         let l009 = report.findings.iter().find(|f| f.code == "L009");
-        assert!(l009.is_some(), "expected L009 finding for broken source link");
+        assert!(
+            l009.is_some(),
+            "expected L009 finding for broken source link"
+        );
         assert!(matches!(l009.unwrap().severity, Severity::Error));
     }
 
@@ -584,14 +611,18 @@ mod tests {
 
     #[test]
     fn test_extract_session_id_from_frontmatter() {
-        let content = "---\ntype: session\nsession_id: \"abc-123\"\nagent: claude-code\n---\n# Session\n";
+        let content =
+            "---\ntype: session\nsession_id: \"abc-123\"\nagent: claude-code\n---\n# Session\n";
         assert_eq!(
             extract_session_id_from_frontmatter(content),
             Some("abc-123".to_string())
         );
 
         // No frontmatter
-        assert_eq!(extract_session_id_from_frontmatter("# No frontmatter"), None);
+        assert_eq!(
+            extract_session_id_from_frontmatter("# No frontmatter"),
+            None
+        );
 
         // Missing session_id field
         let no_id = "---\ntype: session\nagent: claude-code\n---\n";
@@ -612,7 +643,12 @@ mod tests {
             .unwrap();
 
         // vault 파일 생성 (frontmatter에 session_id 포함)
-        let sessions_dir = config.vault.path.join("raw").join("sessions").join("2026-01-01");
+        let sessions_dir = config
+            .vault
+            .path
+            .join("raw")
+            .join("sessions")
+            .join("2026-01-01");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::write(
             sessions_dir.join("claude-code_seCall_a1b2c3d4.md"),
@@ -621,8 +657,15 @@ mod tests {
         .unwrap();
 
         let report = run_lint(&db, &config).unwrap();
-        let l002: Vec<_> = report.findings.iter().filter(|f| f.code == "L002").collect();
-        assert!(l002.is_empty(), "L002 false positive: 기존 세션을 orphan으로 오탐하면 안 됨");
+        let l002: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L002")
+            .collect();
+        assert!(
+            l002.is_empty(),
+            "L002 false positive: 기존 세션을 orphan으로 오탐하면 안 됨"
+        );
     }
 
     #[test]
@@ -631,7 +674,12 @@ mod tests {
         let (config, _tmp) = make_config_tmp();
 
         // DB에 세션 없음 — vault 파일만 존재
-        let sessions_dir = config.vault.path.join("raw").join("sessions").join("2026-01-01");
+        let sessions_dir = config
+            .vault
+            .path
+            .join("raw")
+            .join("sessions")
+            .join("2026-01-01");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::write(
             sessions_dir.join("claude-code_unknown_deadbeef.md"),
@@ -640,7 +688,11 @@ mod tests {
         .unwrap();
 
         let report = run_lint(&db, &config).unwrap();
-        let l002: Vec<_> = report.findings.iter().filter(|f| f.code == "L002").collect();
+        let l002: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L002")
+            .collect();
         assert_eq!(l002.len(), 1, "L002 should detect real orphan vault file");
     }
 

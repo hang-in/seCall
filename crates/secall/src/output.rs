@@ -6,6 +6,14 @@ pub enum OutputFormat {
     Json,
 }
 
+fn format_token_count(n: u64) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 pub fn print_search_results(results: &[SearchResult], format: &OutputFormat) {
     match format {
         OutputFormat::Text => {
@@ -26,7 +34,10 @@ pub fn print_search_results(results: &[SearchResult], format: &OutputFormat) {
             }
         }
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(results).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(results).unwrap_or_default()
+            );
         }
     }
 }
@@ -39,13 +50,20 @@ pub fn print_ingest_result(
 ) {
     match format {
         OutputFormat::Text => {
-            println!("✓ Ingested session: {}", &session.id[..session.id.len().min(8)]);
-            println!("  Project: {}", session.project.as_deref().unwrap_or("unknown"));
+            println!(
+                "✓ Ingested session: {}",
+                &session.id[..session.id.len().min(8)]
+            );
+            println!(
+                "  Project: {}",
+                session.project.as_deref().unwrap_or("unknown")
+            );
             println!("  Agent:   {}", session.agent.as_str());
             println!("  Turns:   {}", session.turns.len());
-            println!("  Tokens:  {}k in, {}k out",
-                session.total_tokens.input / 1000,
-                session.total_tokens.output / 1000
+            println!(
+                "  Tokens:  {} in, {} out",
+                format_token_count(session.total_tokens.input),
+                format_token_count(session.total_tokens.output),
             );
             println!("  File:    {}", vault_path.display());
             println!("  BM25:    {} turns indexed", stats.turns_indexed);
@@ -73,7 +91,10 @@ pub fn print_ingest_result(
                 },
                 "timestamp": chrono::Utc::now().to_rfc3339()
             });
-            println!("{}", serde_json::to_string_pretty(&event).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&event).unwrap_or_default()
+            );
         }
     }
 }

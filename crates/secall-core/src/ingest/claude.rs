@@ -18,14 +18,14 @@ impl SessionParser for ClaudeCodeParser {
         // Match ~/.claude/projects/**/*.jsonl pattern
         let path_str = path.to_string_lossy();
         (path_str.contains("/.claude/projects/") || path_str.contains("\\.claude\\projects\\"))
-            && path
-                .extension()
-                .map(|e| e == "jsonl")
-                .unwrap_or(false)
+            && path.extension().map(|e| e == "jsonl").unwrap_or(false)
     }
 
-    fn parse(&self, path: &Path) -> Result<Session> {
-        parse_claude_jsonl(path)
+    fn parse(&self, path: &Path) -> crate::error::Result<Session> {
+        parse_claude_jsonl(path).map_err(|e| crate::error::SecallError::Parse {
+            path: path.to_string_lossy().into_owned(),
+            source: e,
+        })
     }
 
     fn agent_kind(&self) -> AgentKind {
@@ -93,9 +93,7 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                     session_id = value["sessionId"].as_str().map(String::from);
                 }
                 if cwd.is_none() {
-                    cwd = value["cwd"]
-                        .as_str()
-                        .map(|s| std::path::PathBuf::from(s));
+                    cwd = value["cwd"].as_str().map(std::path::PathBuf::from);
                 }
                 if git_branch.is_none() {
                     git_branch = value["gitBranch"].as_str().map(String::from);
@@ -123,12 +121,11 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
 
                                 // Find the corresponding action in the last assistant turn
                                 if let Some(&action_idx) = pending_tool_uses.get(&tool_use_id) {
-                                    if let Some(turn) = turns.last_mut() {
-                                        if let Some(action) = turn.actions.get_mut(action_idx) {
-                                            if let Action::ToolUse { output_summary, .. } = action {
-                                                *output_summary = truncated;
-                                            }
-                                        }
+                                    if let Some(Action::ToolUse { output_summary, .. }) = turns
+                                        .last_mut()
+                                        .and_then(|turn| turn.actions.get_mut(action_idx))
+                                    {
+                                        *output_summary = truncated;
                                     }
                                 }
                             }
@@ -176,7 +173,11 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                     total_tokens.input += input;
                     total_tokens.output += output;
                     total_tokens.cached += cached;
-                    Some(TokenUsage { input, output, cached })
+                    Some(TokenUsage {
+                        input,
+                        output,
+                        cached,
+                    })
                 } else {
                     None
                 };
@@ -202,10 +203,8 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                             }
                             Some("tool_use") => {
                                 let name = item["name"].as_str().unwrap_or("unknown").to_string();
-                                let tool_use_id =
-                                    item["id"].as_str().unwrap_or("").to_string();
-                                let input_summary =
-                                    summarize_tool_input(&name, &item["input"]);
+                                let tool_use_id = item["id"].as_str().unwrap_or("").to_string();
+                                let input_summary = summarize_tool_input(&name, &item["input"]);
 
                                 let action_idx = actions.len();
                                 if !tool_use_id.is_empty() {
@@ -259,9 +258,7 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
     let id = session_id
         .or_else(|| {
             // Derive from filename if not in content
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .map(String::from)
+            path.file_stem().and_then(|s| s.to_str()).map(String::from)
         })
         .unwrap_or_else(|| uuid_from_path(path));
 
@@ -282,6 +279,7 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
         project,
         cwd,
         git_branch,
+        host: Some(gethostname::gethostname().to_string_lossy().to_string()),
         start_time,
         end_time,
         turns,
@@ -333,9 +331,7 @@ fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
     match tool_name {
         "Bash" | "bash" => input["command"].as_str().unwrap_or("").to_string(),
         "Read" | "read" => input["file_path"].as_str().unwrap_or("").to_string(),
-        "Edit" | "edit" | "MultiEdit" => {
-            input["file_path"].as_str().unwrap_or("").to_string()
-        }
+        "Edit" | "edit" | "MultiEdit" => input["file_path"].as_str().unwrap_or("").to_string(),
         "Write" | "write" => input["file_path"].as_str().unwrap_or("").to_string(),
         "Grep" | "grep" => {
             let pattern = input["pattern"].as_str().unwrap_or("");
@@ -409,7 +405,12 @@ mod tests {
         // user + assistant (tool_result doesn't create new turn)
         assert_eq!(session.turns.len(), 2);
         assert_eq!(session.turns[1].actions.len(), 1);
-        if let Action::ToolUse { name, output_summary, .. } = &session.turns[1].actions[0] {
+        if let Action::ToolUse {
+            name,
+            output_summary,
+            ..
+        } = &session.turns[1].actions[0]
+        {
             assert_eq!(name, "Bash");
             assert!(output_summary.contains("file1.txt"));
         }
@@ -423,7 +424,10 @@ mod tests {
         ];
         let f = write_jsonl(lines);
         let session = parse_claude_jsonl(f.path()).unwrap();
-        assert_eq!(session.turns[1].thinking.as_deref(), Some("Let me reason..."));
+        assert_eq!(
+            session.turns[1].thinking.as_deref(),
+            Some("Let me reason...")
+        );
         assert!(session.turns[1].content.contains("Here is my answer"));
     }
 

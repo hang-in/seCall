@@ -28,6 +28,7 @@ pub struct Session {
     pub project: Option<String>,
     pub cwd: Option<PathBuf>,
     pub git_branch: Option<String>,
+    pub host: Option<String>,
     pub start_time: DateTime<Utc>,
     pub end_time: Option<DateTime<Utc>>,
     pub turns: Vec<Turn>,

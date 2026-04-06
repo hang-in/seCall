@@ -1,5 +1,5 @@
-use serde::Deserialize;
 use schemars::JsonSchema;
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]

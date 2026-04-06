@@ -52,9 +52,31 @@ Parse and normalize sessions from multiple AI coding agents into a unified forma
 ### Hybrid Search
 
 - **BM25 full-text search** powered by SQLite FTS5 with Korean morpheme tokenization ([Lindera](https://github.com/lindera/lindera) ko-dic)
-- **Vector semantic search** using ONNX Runtime with BGE-M3 embeddings
+- **Vector semantic search** using ONNX Runtime with BGE-M3 embeddings + **HNSW ANN index** ([usearch](https://github.com/unum-cloud/usearch)) for O(log n) lookups
 - **Reciprocal Rank Fusion (RRF)** combining both results (k=60)
 - **LLM query expansion** for natural language queries via Claude Code
+
+### Multi-Device Vault Sync
+
+Sync your knowledge vault across machines via Git:
+
+```bash
+# Initialize with a remote repository
+secall init --git git@github.com:you/obsidian-vault.git
+
+# Full sync: git pull → reindex → ingest → git push
+secall sync
+
+# Local-only mode (skip git, useful for Claude Code hooks)
+secall sync --local-only
+
+# Recover DB from vault markdown files
+secall reindex --from-vault
+```
+
+- **MD as source of truth** — DB is a derived cache, fully recoverable from vault
+- **Host tracking** — each session records which machine ingested it (`host` field in frontmatter)
+- **No conflicts** — sessions are unique per device, so git merges are always clean
 
 ### Knowledge Vault
 
@@ -120,6 +142,9 @@ cargo install --path crates/secall
 ```bash
 # Point to your Obsidian vault (or any directory)
 secall init --vault ~/Documents/Obsidian\ Vault/seCall
+
+# Optional: enable Git sync for multi-device use
+secall init --git git@github.com:you/obsidian-vault.git
 ```
 
 ### Ingest Sessions
@@ -133,6 +158,9 @@ secall ingest ~/.codex/sessions
 
 # Ingest Gemini CLI sessions
 secall ingest ~/.gemini/sessions
+
+# Or sync everything in one command (pull + reindex + ingest + push)
+secall sync
 ```
 
 ### Search
@@ -230,8 +258,10 @@ secall wiki status
 
 | Command | Description |
 |---|---|
-| `secall init` | Initialize vault, config, and database |
+| `secall init [--git <remote>]` | Initialize vault, config, and database |
 | `secall ingest [path] --auto` | Parse and index agent sessions |
+| `secall sync [--local-only]` | Full sync: git pull → reindex → ingest → git push |
+| `secall reindex --from-vault` | Rebuild DB from vault markdown files |
 | `secall recall <query>` | Hybrid search across sessions |
 | `secall get <id>` | Retrieve session details |
 | `secall status` | Show index statistics |
@@ -256,18 +286,24 @@ Add to your Claude Code settings (`~/.claude/settings.json`):
 }
 ```
 
-For auto-ingest on session end:
+For auto-sync on session start/end:
 
 ```json
 {
   "hooks": {
+    "PreToolUse": [{
+      "matcher": "Initialize",
+      "hooks": [{"type": "command", "command": "secall sync --local-only"}]
+    }],
     "PostToolUse": [{
       "matcher": "Exit",
-      "hooks": [{"type": "command", "command": "secall ingest --auto --cwd $PWD"}]
+      "hooks": [{"type": "command", "command": "secall sync"}]
     }]
   }
 }
 ```
+
+> See [GitHub Vault Sync Guide](docs/reference/github-vault-sync.md) for detailed setup instructions.
 
 ## Acknowledgments
 
@@ -323,9 +359,31 @@ AI와의 대화는 곧 지식 자산입니다. seCall은 그것을 검색 가능
 ### 하이브리드 검색
 
 - **BM25 전문 검색**: SQLite FTS5 + 한국어 형태소 분석 ([Lindera](https://github.com/lindera/lindera) ko-dic)
-- **벡터 시맨틱 검색**: ONNX Runtime + BGE-M3 임베딩
+- **벡터 시맨틱 검색**: ONNX Runtime + BGE-M3 임베딩 + **HNSW ANN 인덱스** ([usearch](https://github.com/unum-cloud/usearch))로 O(log n) 탐색
 - **Reciprocal Rank Fusion (RRF)**: 두 결과를 결합 (k=60)
 - **LLM 쿼리 확장**: Claude Code를 통한 자연어 쿼리 확장
+
+### 멀티 기기 볼트 동기화
+
+Git을 통해 여러 기기에서 지식 볼트를 동기화합니다:
+
+```bash
+# 원격 저장소 설정
+secall init --git git@github.com:you/obsidian-vault.git
+
+# 전체 동기화: git pull → reindex → ingest → git push
+secall sync
+
+# 로컬 전용 모드 (git 생략, Claude Code hook에 적합)
+secall sync --local-only
+
+# 볼트 마크다운에서 DB 복구
+secall reindex --from-vault
+```
+
+- **MD가 원본** — DB는 파생 캐시이며, 볼트에서 완전 복구 가능
+- **호스트 추적** — 각 세션이 어떤 기기에서 수집되었는지 기록 (frontmatter `host` 필드)
+- **충돌 없음** — 세션은 기기별 유니크하므로 git 머지 충돌 없음
 
 ### 지식 볼트
 
@@ -391,6 +449,9 @@ cargo install --path crates/secall
 ```bash
 # Obsidian 볼트(또는 원하는 디렉토리)를 지정
 secall init --vault ~/Documents/Obsidian\ Vault/seCall
+
+# 선택: 멀티 기기 동기화를 위한 Git 연동
+secall init --git git@github.com:you/obsidian-vault.git
 ```
 
 ### 세션 수집
@@ -404,6 +465,9 @@ secall ingest ~/.codex/sessions
 
 # Gemini CLI 세션 수집
 secall ingest ~/.gemini/sessions
+
+# 또는 한 명령으로 전체 동기화 (pull + reindex + ingest + push)
+secall sync
 ```
 
 ### 검색
@@ -512,18 +576,24 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 }
 ```
 
-세션 종료 시 자동 수집:
+세션 시작/종료 시 자동 동기화:
 
 ```json
 {
   "hooks": {
+    "PreToolUse": [{
+      "matcher": "Initialize",
+      "hooks": [{"type": "command", "command": "secall sync --local-only"}]
+    }],
     "PostToolUse": [{
       "matcher": "Exit",
-      "hooks": [{"type": "command", "command": "secall ingest --auto --cwd $PWD"}]
+      "hooks": [{"type": "command", "command": "secall sync"}]
     }]
   }
 }
 ```
+
+> 자세한 설정 안내는 [GitHub 볼트 동기화 가이드](docs/reference/github-vault-sync.md)를 참고하세요.
 
 ## 출처
 

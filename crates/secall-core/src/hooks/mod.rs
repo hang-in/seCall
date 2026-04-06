@@ -114,10 +114,12 @@ mod tests {
     #[test]
     fn test_missing_hook_file_no_error() {
         use crate::vault::config::{Config, HooksConfig};
-        let mut config = Config::default();
-        config.hooks = HooksConfig {
-            post_ingest: Some("/tmp/nonexistent_hook_12345.sh".to_string()),
-            hook_timeout_secs: None,
+        let config = Config {
+            hooks: HooksConfig {
+                post_ingest: Some("/tmp/nonexistent_hook_12345.sh".to_string()),
+                hook_timeout_secs: None,
+            },
+            ..Config::default()
         };
         let session = make_test_session();
         // Should return Ok even if hook file doesn't exist
@@ -135,6 +137,7 @@ mod tests {
             project: Some("test".to_string()),
             cwd: None,
             git_branch: None,
+            host: None,
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             turns: vec![Turn {

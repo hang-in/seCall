@@ -16,6 +16,8 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VaultConfig {
     pub path: PathBuf,
+    #[serde(default)]
+    pub git_remote: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -63,6 +65,7 @@ impl Default for Config {
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join("obsidian-vault")
                     .join("seCall"),
+                git_remote: None,
             },
             ingest: IngestConfig::default(),
             search: SearchConfig::default(),
@@ -109,6 +112,7 @@ impl Default for VaultConfig {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("obsidian-vault")
                 .join("seCall"),
+            git_remote: None,
         }
     }
 }

@@ -6,5 +6,7 @@ pub mod lint;
 pub mod mcp;
 pub mod model;
 pub mod recall;
+pub mod reindex;
 pub mod status;
+pub mod sync;
 pub mod wiki;

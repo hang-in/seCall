@@ -45,7 +45,10 @@ pub fn run() -> Result<()> {
     // Recent ingest log
     println!("\nRecent Ingests (last 5):");
     for entry in &stats.recent_ingests {
-        println!("  {} — {} {}", entry.timestamp, entry.agent, entry.session_id_prefix);
+        println!(
+            "  {} — {} {}",
+            entry.timestamp, entry.agent, entry.session_id_prefix
+        );
     }
 
     Ok(())

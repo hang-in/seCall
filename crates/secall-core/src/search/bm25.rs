@@ -2,11 +2,13 @@
 // to avoid circular compilation issues
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use crate::error::SecallError;
 use serde::Serialize;
 
+use super::tokenizer::Tokenizer;
 use crate::ingest::Session;
 use crate::store::db::Database;
-use super::tokenizer::Tokenizer;
+use crate::store::{SearchRepo, SessionRepo};
 
 #[derive(Debug, Clone, Default)]
 pub struct IndexStats {
@@ -73,7 +75,11 @@ impl Bm25Indexer {
 
             // Also tokenize thinking if present
             let full_text = if let Some(thinking) = &turn.thinking {
-                format!("{} {}", tokenized, self.tokenizer.tokenize_for_fts(thinking))
+                format!(
+                    "{} {}",
+                    tokenized,
+                    self.tokenizer.tokenize_for_fts(thinking)
+                )
             } else {
                 tokenized
             };
@@ -180,9 +186,9 @@ fn extract_snippet(content: &str, query: &str, max_chars: usize) -> String {
     snippet
 }
 
-// Extension methods on Database for BM25 operations
-impl Database {
-    pub fn insert_session(&self, session: &Session) -> Result<()> {
+// SessionRepo impl for Database — session/turn CRUD
+impl SessionRepo for Database {
+    fn insert_session(&self, session: &Session) -> crate::error::Result<()> {
         use chrono::Utc;
         let tools_used: Vec<String> = session
             .turns
@@ -200,8 +206,8 @@ impl Database {
             .collect();
 
         self.conn().execute(
-            "INSERT OR IGNORE INTO sessions(id, agent, model, project, cwd, git_branch, start_time, end_time, turn_count, tokens_in, tokens_out, tools_used, tags, ingested_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT OR IGNORE INTO sessions(id, agent, model, project, cwd, git_branch, host, start_time, end_time, turn_count, tokens_in, tokens_out, tools_used, tags, ingested_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 session.id,
                 session.agent.as_str(),
@@ -209,6 +215,7 @@ impl Database {
                 session.project,
                 session.cwd.as_ref().map(|p| p.to_string_lossy().to_string()),
                 session.git_branch,
+                session.host,
                 session.start_time.to_rfc3339(),
                 session.end_time.map(|t| t.to_rfc3339()),
                 session.turns.len() as i64,
@@ -223,7 +230,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn update_session_vault_path(&self, session_id: &str, vault_path: &str) -> Result<()> {
+    fn update_session_vault_path(
+        &self,
+        session_id: &str,
+        vault_path: &str,
+    ) -> crate::error::Result<()> {
         self.conn().execute(
             "UPDATE sessions SET vault_path = ?1, status = 'indexed' WHERE id = ?2",
             rusqlite::params![vault_path, session_id],
@@ -231,7 +242,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_turn(&self, session_id: &str, turn: &crate::ingest::Turn) -> Result<i64> {
+    fn insert_turn(&self, session_id: &str, turn: &crate::ingest::Turn) -> crate::error::Result<i64> {
         let tool_names: Vec<String> = turn
             .actions
             .iter()
@@ -265,7 +276,59 @@ impl Database {
         Ok(self.conn().last_insert_rowid())
     }
 
-    pub fn insert_fts(&self, tokenized_content: &str, session_id: &str, turn_index: u32) -> Result<()> {
+    fn session_exists(&self, session_id: &str) -> crate::error::Result<bool> {
+        let count: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    fn session_exists_by_prefix(&self, prefix: &str) -> crate::error::Result<bool> {
+        let pattern = format!("{}%", prefix);
+        let count: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id LIKE ?1",
+            [pattern],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    fn get_session_meta(&self, session_id: &str) -> crate::error::Result<SessionMeta> {
+        self.conn()
+            .query_row(
+                "SELECT agent, model, project, start_time, vault_path FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| {
+                    let start_time: String = row.get(3)?;
+                    let date = start_time.get(..10).unwrap_or("").to_string();
+                    Ok(SessionMeta {
+                        agent: row.get(0)?,
+                        model: row.get(1)?,
+                        project: row.get(2)?,
+                        date,
+                        vault_path: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SecallError::SessionNotFound(session_id.to_string())
+                }
+                _ => SecallError::Database(e),
+            })
+    }
+}
+
+// SearchRepo impl for Database — FTS index + search
+impl SearchRepo for Database {
+    fn insert_fts(
+        &self,
+        tokenized_content: &str,
+        session_id: &str,
+        turn_index: u32,
+    ) -> crate::error::Result<()> {
         self.conn().execute(
             // FTS5 컬럼명 turn_id는 유지 (스키마 변경 최소화). 저장값은 실제 turn_index.
             "INSERT INTO turns_fts(content, session_id, turn_id) VALUES (?1, ?2, ?3)",
@@ -274,8 +337,12 @@ impl Database {
         Ok(())
     }
 
-    pub fn search_fts(&self, tokenized_query: &str, limit: usize, filters: &SearchFilters) -> Result<Vec<FtsRow>> {
-        // Use JOIN with sessions to apply date filters in SQL
+    fn search_fts(
+        &self,
+        tokenized_query: &str,
+        limit: usize,
+        filters: &SearchFilters,
+    ) -> crate::error::Result<Vec<FtsRow>> {
         let since_str = filters.since.map(|dt| dt.to_rfc3339());
         let until_str = filters.until.map(|dt| dt.to_rfc3339());
 
@@ -297,51 +364,13 @@ impl Database {
                     session_id: row.get(0)?,
                     turn_index: row.get::<_, i64>(1)? as u32,
                     content: row.get(2)?,
-                    // BM25 returns negative scores in SQLite; negate for convenience
                     score: -row.get::<_, f64>(3)?,
                 })
             },
         )?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
-
-    pub fn session_exists(&self, session_id: &str) -> Result<bool> {
-        let count: i64 = self.conn().query_row(
-            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-            [session_id],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    }
-
-    pub fn session_exists_by_prefix(&self, prefix: &str) -> Result<bool> {
-        let pattern = format!("{}%", prefix);
-        let count: i64 = self.conn().query_row(
-            "SELECT COUNT(*) FROM sessions WHERE id LIKE ?1",
-            [pattern],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    }
-
-    pub fn get_session_meta(&self, session_id: &str) -> Result<SessionMeta> {
-        self.conn().query_row(
-            "SELECT agent, model, project, start_time, vault_path FROM sessions WHERE id = ?1",
-            [session_id],
-            |row| {
-                let start_time: String = row.get(3)?;
-                let date = start_time.get(..10).unwrap_or("").to_string();
-                Ok(SessionMeta {
-                    agent: row.get(0)?,
-                    model: row.get(1)?,
-                    project: row.get(2)?,
-                    date,
-                    vault_path: row.get(4)?,
-                })
-            },
-        )
-        .map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(SecallError::Database)
     }
 }
 
@@ -361,6 +390,7 @@ mod tests {
             project: Some(project.to_string()),
             cwd: None,
             git_branch: None,
+            host: None,
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             turns: vec![Turn {
@@ -386,7 +416,9 @@ mod tests {
         let session = make_session("s1", "myproject", "아키텍처 설계 방법");
         indexer.index_session(&db, &session).unwrap();
 
-        let results = indexer.search(&db, "아키텍처", 10, &SearchFilters::default()).unwrap();
+        let results = indexer
+            .search(&db, "아키텍처", 10, &SearchFilters::default())
+            .unwrap();
         assert!(!results.is_empty());
     }
 
@@ -396,7 +428,9 @@ mod tests {
         let tok = LinderaKoTokenizer::new().unwrap();
         let indexer = Bm25Indexer::new(Box::new(tok));
 
-        let results = indexer.search(&db, "", 10, &SearchFilters::default()).unwrap();
+        let results = indexer
+            .search(&db, "", 10, &SearchFilters::default())
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -409,7 +443,9 @@ mod tests {
         let session = make_session("s2", "proj", "hello world test");
         indexer.index_session(&db, &session).unwrap();
 
-        let results = indexer.search(&db, "완전히없는단어xyz", 10, &SearchFilters::default()).unwrap();
+        let results = indexer
+            .search(&db, "완전히없는단어xyz", 10, &SearchFilters::default())
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -424,10 +460,15 @@ mod tests {
         indexer.index_session(&db, &session1).unwrap();
         indexer.index_session(&db, &session2).unwrap();
 
-        let mut results = indexer.search(&db, "rust", 10, &SearchFilters::default()).unwrap();
+        let results = indexer
+            .search(&db, "rust", 10, &SearchFilters::default())
+            .unwrap();
         assert!(!results.is_empty());
         // Max score should be 1.0
-        let max = results.iter().map(|r| r.score).fold(f64::NEG_INFINITY, f64::max);
+        let max = results
+            .iter()
+            .map(|r| r.score)
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!((max - 1.0).abs() < 0.01);
     }
 
@@ -439,6 +480,7 @@ mod tests {
             project: Some("proj".to_string()),
             cwd: None,
             git_branch: None,
+            host: None,
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             turns: turns
@@ -480,20 +522,22 @@ mod tests {
         // Session 2: 2 turns (turn_index 0, 1), rowid 4, 5
         let session2 = make_multi_turn_session(
             "s-second",
-            vec![
-                ("", "두번째 세션 아키텍처"),
-                ("", "두번째 세션 마지막"),
-            ],
+            vec![("", "두번째 세션 아키텍처"), ("", "두번째 세션 마지막")],
         );
         indexer.index_session(&db, &session2).unwrap();
 
         // "아키텍처"로 검색
-        let results = indexer.search(&db, "아키텍처", 10, &SearchFilters::default()).unwrap();
+        let results = indexer
+            .search(&db, "아키텍처", 10, &SearchFilters::default())
+            .unwrap();
         assert!(!results.is_empty(), "검색 결과가 있어야 함");
 
         for r in &results {
             if r.session_id == "s-second" {
-                assert_eq!(r.turn_index, 0, "session2의 turn_index는 0이어야 하나 rowid=4가 반환됨");
+                assert_eq!(
+                    r.turn_index, 0,
+                    "session2의 turn_index는 0이어야 하나 rowid=4가 반환됨"
+                );
             }
             if r.session_id == "s-first" {
                 assert_eq!(r.turn_index, 2, "session1의 turn_index는 2이어야 함");
@@ -517,6 +561,8 @@ mod tests {
             ..Default::default()
         };
         let results = indexer.search(&db, "검색", 10, &filters).unwrap();
-        assert!(results.iter().all(|r| r.metadata.project.as_deref() == Some("projectA")));
+        assert!(results
+            .iter()
+            .all(|r| r.metadata.project.as_deref() == Some("projectA")));
     }
 }
