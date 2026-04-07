@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.1 (2026-04-08)
+
+### Fixed
+- Dataview inline field 오염 방지 — vault 마크다운 body의 `::` 패턴에 zero-width space 삽입하여 Dataview가 인라인 필드로 해석하지 않도록 처리. fenced code block / inline code 내부는 보존.
+
 ## v0.2.0 (2026-04-07)
 
 ### Added

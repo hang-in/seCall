@@ -162,8 +162,9 @@ pub fn render_session(session: &Session) -> String {
 
         // Thinking block
         if let Some(thinking) = &turn.thinking {
+            let escaped = escape_dataview_fields(thinking);
             out.push_str("> [!thinking]- Thinking\n");
-            for line in thinking.lines() {
+            for line in escaped.lines() {
                 out.push_str(&format!("> {}\n", line));
             }
             out.push('\n');
@@ -171,9 +172,10 @@ pub fn render_session(session: &Session) -> String {
 
         // Main content
         if !turn.content.is_empty() {
-            // Collapse repeated blank lines
+            // Collapse repeated blank lines, then escape Dataview :: patterns
             let cleaned = collapse_blank_lines(&turn.content);
-            out.push_str(&cleaned);
+            let escaped = escape_dataview_fields(&cleaned);
+            out.push_str(&escaped);
             out.push_str("\n\n");
         }
 
@@ -317,6 +319,52 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
         let truncated: String = chars[..max_chars].iter().collect();
         format!("{}...", truncated)
     }
+}
+
+/// Dataview inline field 방지: fenced code block / inline code 밖의 `::` 사이에
+/// zero-width space를 삽입하여 Dataview 파서가 인식하지 못하게 한다.
+fn escape_dataview_fields(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut in_fenced = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fenced = !in_fenced;
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+        if in_fenced || !line.contains("::") {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+        // Inline code 구간을 보존하면서 바깥의 :: 만 이스케이프
+        let mut escaped = String::with_capacity(line.len());
+        let mut in_inline = false;
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            if chars[i] == '`' {
+                in_inline = !in_inline;
+                escaped.push('`');
+                i += 1;
+            } else if !in_inline && chars[i] == ':' && i + 1 < len && chars[i + 1] == ':' {
+                escaped.push(':');
+                escaped.push('\u{200B}'); // zero-width space
+                escaped.push(':');
+                i += 2;
+            } else {
+                escaped.push(chars[i]);
+                i += 1;
+            }
+        }
+        result.push_str(&escaped);
+        result.push('\n');
+    }
+    result.trim_end_matches('\n').to_string()
 }
 
 fn collapse_blank_lines(text: &str) -> String {
@@ -546,5 +594,51 @@ mod tests {
         let summary_pos = md.find("summary:").unwrap();
         let status_pos = md.find("status: raw").unwrap();
         assert!(summary_pos < status_pos);
+    }
+
+    #[test]
+    fn test_escape_dataview_plain_text() {
+        let input = "key:: value\nnormal line";
+        let escaped = escape_dataview_fields(input);
+        assert!(escaped.contains("key:\u{200B}: value"));
+        assert!(escaped.contains("normal line"));
+    }
+
+    #[test]
+    fn test_escape_dataview_preserves_fenced_code() {
+        let input = "before:: x\n```\ninside:: y\n```\nafter:: z";
+        let escaped = escape_dataview_fields(input);
+        // fenced block 안은 그대로
+        assert!(escaped.contains("inside:: y"));
+        // 밖은 이스케이프
+        assert!(escaped.contains("before:\u{200B}: x"));
+        assert!(escaped.contains("after:\u{200B}: z"));
+    }
+
+    #[test]
+    fn test_escape_dataview_preserves_inline_code() {
+        let input = "see `key:: value` here and bare:: field";
+        let escaped = escape_dataview_fields(input);
+        // inline code 안은 그대로
+        assert!(escaped.contains("`key:: value`"));
+        // 밖은 이스케이프
+        assert!(escaped.contains("bare:\u{200B}: field"));
+    }
+
+    #[test]
+    fn test_escape_dataview_no_colons() {
+        let input = "no colons here";
+        let escaped = escape_dataview_fields(input);
+        assert_eq!(escaped, input);
+    }
+
+    #[test]
+    fn test_render_escapes_dataview_in_content() {
+        let turns = vec![make_turn(Role::User, "field:: value in conversation")];
+        let session = make_session(turns);
+        let md = render_session(&session);
+        // body에서 :: 가 이스케이프되어야 함
+        assert!(md.contains("field:\u{200B}: value"));
+        // frontmatter의 :: 는 이 테스트와 무관
     }
 }

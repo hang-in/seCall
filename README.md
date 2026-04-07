@@ -707,6 +707,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | 날짜 | 버전 | 내용 |
 |------|------|------|
+| 2026-04-08 | P12 | Dataview inline field 오염 방지 — vault body `::` 이스케이프 (zero-width space), fenced/inline code 보존 |
 | 2026-04-07 | P11 | 임베딩 성능 최적화 — ORT session pool, batch inference, 병렬 처리, DB 트랜잭션 (49h → ~3-4h, 12-15x 개선) |
 | 2026-04-07 | P10 | 세션 `summary` frontmatter 추가 — 첫 User 턴 기반 자동 생성, `secall migrate summary`로 기존 세션 backfill |
 | 2026-04-07 | P9 | ChatGPT export 파서 설계 (데이터 대기 중) |
