@@ -259,5 +259,15 @@ async fn run_auto_ingest(config: &Config, db: &Database) -> Result<IngestStats> 
     let vault = Vault::new(config.vault.path.clone());
     vault.init()?;
 
-    ingest_sessions(config, db, paths, &engine, &vault, 0, false, &OutputFormat::Text).await
+    ingest_sessions(
+        config,
+        db,
+        paths,
+        &engine,
+        &vault,
+        0,
+        false,
+        &OutputFormat::Text,
+    )
+    .await
 }
