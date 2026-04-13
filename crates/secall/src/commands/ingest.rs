@@ -363,7 +363,9 @@ pub async fn ingest_sessions(
                 }
             };
             let body = secall_core::ingest::markdown::extract_body_text(&content);
-            match secall_core::graph::semantic::extract_and_store(db, &fm, &body).await {
+            match secall_core::graph::semantic::extract_and_store(db, &config.graph, &fm, &body)
+                .await
+            {
                 Ok(n) => {
                     tracing::debug!(session = short, edges = n, "semantic edges extracted")
                 }

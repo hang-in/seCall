@@ -139,11 +139,25 @@ impl Default for WikiConfig {
 pub struct GraphConfig {
     /// 시맨틱 엣지 추출 활성화 (기본: true)
     pub semantic: bool,
+    /// LLM backend: "ollama" (기본) | "anthropic" | "disabled" (규칙 기반만)
+    pub semantic_backend: String,
+    /// Ollama base URL (ollama backend)
+    pub ollama_url: Option<String>,
+    /// Ollama model name (ollama backend, 기본: gemma4:e4b)
+    pub ollama_model: Option<String>,
+    /// Anthropic model name (anthropic backend, 기본: claude-haiku-4-5-20251001)
+    pub anthropic_model: Option<String>,
 }
 
 impl Default for GraphConfig {
     fn default() -> Self {
-        GraphConfig { semantic: true }
+        GraphConfig {
+            semantic: true,
+            semantic_backend: "ollama".to_string(),
+            ollama_url: None,
+            ollama_model: None,
+            anthropic_model: None,
+        }
     }
 }
 

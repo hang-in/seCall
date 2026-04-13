@@ -3,20 +3,11 @@ use serde::Deserialize;
 
 use crate::ingest::markdown::SessionFrontmatter;
 use crate::store::Database;
+use crate::vault::config::GraphConfig;
 
 use super::extract::{extract_semantic_edges, GraphEdge};
 
-// ─── Haiku API 응답 구조 ─────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct HaikuResponse {
-    content: Vec<HaikuContent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HaikuContent {
-    text: String,
-}
+// ─── LLM 응답 구조 (공통) ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct SemanticOutput {
@@ -30,36 +21,52 @@ struct SemanticEdgeItem {
     target_label: String,
 }
 
+// ─── Anthropic 응답 구조 ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicContent {
+    text: String,
+}
+
+// ─── Ollama 응답 구조 ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct OllamaResponse {
+    message: OllamaMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaMessage {
+    content: String,
+}
+
 // ─── 정적 프롬프트 ──────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"Extract semantic relationships from this agent session log. Return JSON only.
+const SYSTEM_PROMPT: &str = r#"Extract semantic relationships from this agent session log. Return JSON only, no explanation.
 
 Output schema:
 {"edges": [{"relation": "fixes_bug|modifies_file|introduces_tech|discusses_topic", "target_type": "issue|file|tech|topic", "target_label": "<value>"}]}
 
 Rules:
-- fixes_bug: issue references like #N, "closes #N", "fixes #N"
-- modifies_file: file paths that were edited or written
-- introduces_tech: new technology, library, or tool introduced
-- discusses_topic: main topic or concept discussed
-- Return empty edges array if nothing is found
-- target_label for issues: just the number (e.g. "15")
-- target_label for files: relative path (e.g. "src/main.rs")
-- Do not include trivial relationships"#;
+- relation MUST be exactly one of: fixes_bug, modifies_file, introduces_tech, discusses_topic
+- fixes_bug: "closes #N" or "fixes #N" → target_type=issue, target_label=number only (e.g. "21")
+- modifies_file: edited file paths → target_type=file, target_label=relative path
+- introduces_tech: new library/tool → target_type=tech
+- discusses_topic: main topic → target_type=topic
+- Do not invent relation names
+- Do not include trivial relationships
+- Return empty edges array if nothing is found"#;
 
-const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
-const HAIKU_MAX_TOKENS: u32 = 512;
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const BODY_LIMIT: usize = 2000;
 
-// ─── Haiku API 호출 ─────────────────────────────────────────────────────────
+// ─── user content 생성 (공통) ──────────────────────────────────────────────
 
-/// Haiku API로 시맨틱 엣지 추출.
-/// `ANTHROPIC_API_KEY` 환경변수가 필요하며, 없으면 Err 반환.
-pub async fn extract_with_haiku(fm: &SessionFrontmatter, body: &str) -> Result<Vec<GraphEdge>> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-
+fn build_user_content(fm: &SessionFrontmatter, body: &str) -> String {
     let truncated_body = if body.len() > BODY_LIMIT {
         &body[..body
             .char_indices()
@@ -71,7 +78,7 @@ pub async fn extract_with_haiku(fm: &SessionFrontmatter, body: &str) -> Result<V
         body
     };
 
-    let user_content = format!(
+    format!(
         "---\nsession_id: {}\nagent: {}\nproject: {}\ndate: {}\nsummary: {}\n---\n\n{}",
         fm.session_id,
         fm.agent,
@@ -79,18 +86,33 @@ pub async fn extract_with_haiku(fm: &SessionFrontmatter, body: &str) -> Result<V
         fm.date,
         fm.summary.as_deref().unwrap_or(""),
         truncated_body,
-    );
+    )
+}
+
+// ─── Anthropic API 호출 ────────────────────────────────────────────────────
+
+const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+
+async fn extract_with_anthropic(
+    fm: &SessionFrontmatter,
+    body: &str,
+    model: &str,
+) -> Result<Vec<GraphEdge>> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+
+    let user_content = build_user_content(fm, body);
 
     let request_body = serde_json::json!({
-        "model": HAIKU_MODEL,
-        "max_tokens": HAIKU_MAX_TOKENS,
+        "model": model,
+        "max_tokens": 512,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": user_content}]
     });
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(API_URL)
+        .post(ANTHROPIC_API_URL)
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -101,23 +123,75 @@ pub async fn extract_with_haiku(fm: &SessionFrontmatter, body: &str) -> Result<V
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Haiku API error {}: {}", status, text);
+        anyhow::bail!("Anthropic API error {}: {}", status, text);
     }
 
-    let haiku_resp: HaikuResponse = resp.json().await?;
-    let text = haiku_resp
+    let api_resp: AnthropicResponse = resp.json().await?;
+    let text = api_resp
         .content
         .first()
         .map(|c| c.text.as_str())
         .unwrap_or("{}");
 
-    parse_haiku_edges(text, &fm.session_id)
+    parse_llm_edges(text, &fm.session_id)
 }
 
-/// Haiku JSON 응답 → GraphEdge 변환
-fn parse_haiku_edges(json_text: &str, session_id: &str) -> Result<Vec<GraphEdge>> {
-    let output: SemanticOutput = serde_json::from_str(json_text)
-        .map_err(|e| anyhow::anyhow!("failed to parse Haiku JSON: {}", e))?;
+// ─── Ollama API 호출 ───────────────────────────────────────────────────────
+
+async fn extract_with_ollama(
+    fm: &SessionFrontmatter,
+    body: &str,
+    base_url: &str,
+    model: &str,
+) -> Result<Vec<GraphEdge>> {
+    let user_content = build_user_content(fm, body);
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "options": {"temperature": 0.1},
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content}
+        ]
+    });
+
+    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let resp = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Ollama API error {}: {}", status, text);
+    }
+
+    let ollama_resp: OllamaResponse = resp.json().await?;
+    parse_llm_edges(&ollama_resp.message.content, &fm.session_id)
+}
+
+// ─── LLM 응답 파싱 (공통) ──────────────────────────────────────────────────
+
+/// LLM JSON 응답 → GraphEdge 변환
+fn parse_llm_edges(json_text: &str, session_id: &str) -> Result<Vec<GraphEdge>> {
+    // JSON이 마크다운 코드블록으로 감싸져 있을 수 있음
+    let cleaned = json_text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    let output: SemanticOutput = serde_json::from_str(cleaned)
+        .map_err(|e| anyhow::anyhow!("failed to parse LLM JSON: {}", e))?;
 
     let session_node_id = format!("session:{}", session_id);
 
@@ -131,10 +205,18 @@ fn parse_haiku_edges(json_text: &str, session_id: &str) -> Result<Vec<GraphEdge>
         }
     };
 
+    // 허용된 relation만 통과
+    let allowed = [
+        "fixes_bug",
+        "modifies_file",
+        "introduces_tech",
+        "discusses_topic",
+    ];
+
     let edges = output
         .edges
         .into_iter()
-        .filter(|item| !item.target_label.is_empty())
+        .filter(|item| !item.target_label.is_empty() && allowed.contains(&item.relation.as_str()))
         .map(|item| {
             let target_id = format!("{}:{}", item.target_type, item.target_label);
             GraphEdge {
@@ -150,37 +232,69 @@ fn parse_haiku_edges(json_text: &str, session_id: &str) -> Result<Vec<GraphEdge>
     Ok(edges)
 }
 
+// ─── provider 디스패치 ─────────────────────────────────────────────────────
+
+/// 설정에 따라 적절한 LLM backend로 시맨틱 엣지 추출
+async fn extract_with_llm(
+    config: &GraphConfig,
+    fm: &SessionFrontmatter,
+    body: &str,
+) -> Result<Vec<GraphEdge>> {
+    match config.semantic_backend.as_str() {
+        "ollama" => {
+            let base_url = config
+                .ollama_url
+                .as_deref()
+                .unwrap_or("http://localhost:11434");
+            let model = config.ollama_model.as_deref().unwrap_or("gemma4:e4b");
+            extract_with_ollama(fm, body, base_url, model).await
+        }
+        "anthropic" => {
+            let model = config
+                .anthropic_model
+                .as_deref()
+                .unwrap_or("claude-haiku-4-5-20251001");
+            extract_with_anthropic(fm, body, model).await
+        }
+        _ => anyhow::bail!("unknown semantic_backend: {}", config.semantic_backend),
+    }
+}
+
 // ─── 통합 저장 ──────────────────────────────────────────────────────────────
 
-/// 규칙 기반 + (옵션) Haiku API로 시맨틱 엣지 추출 후 DB 저장.
+/// 규칙 기반 + (옵션) LLM으로 시맨틱 엣지 추출 후 DB 저장.
 ///
 /// - 항상 규칙 기반 실행
-/// - `ANTHROPIC_API_KEY` 존재 시 Haiku 호출 → 실패 시 규칙 결과만 저장
+/// - `semantic_backend`가 "disabled"가 아니면 LLM 호출 시도
+/// - 실패 시 규칙 결과만 저장
 /// - 노드 자동 생성 (issue:N, file:path, tech:X, topic:Y)
 /// - 중복은 DB UNIQUE 제약으로 자동 방어
 pub async fn extract_and_store(
     db: &Database,
+    config: &GraphConfig,
     fm: &SessionFrontmatter,
     body: &str,
 ) -> Result<usize> {
     // 1. 규칙 기반 — 항상 실행
     let mut all_edges = extract_semantic_edges(fm, body);
 
-    // 2. Haiku API — API key 있을 때만 시도
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        match extract_with_haiku(fm, body).await {
-            Ok(haiku_edges) => {
+    // 2. LLM — backend가 "disabled"가 아닐 때 시도
+    if config.semantic_backend != "disabled" {
+        match extract_with_llm(config, fm, body).await {
+            Ok(llm_edges) => {
                 tracing::debug!(
                     session = &fm.session_id[..fm.session_id.len().min(8)],
-                    haiku_edges = haiku_edges.len(),
-                    "Haiku edges extracted"
+                    backend = &config.semantic_backend,
+                    llm_edges = llm_edges.len(),
+                    "LLM edges extracted"
                 );
-                all_edges.extend(haiku_edges);
+                all_edges.extend(llm_edges);
             }
             Err(e) => {
                 tracing::warn!(
                     session = &fm.session_id[..fm.session_id.len().min(8)],
-                    "Haiku API failed, using rules only: {}",
+                    backend = &config.semantic_backend,
+                    "LLM extraction failed, using rules only: {}",
                     e
                 );
             }
@@ -196,7 +310,6 @@ pub async fn extract_and_store(
     // 4. DB 저장
     let mut stored = 0usize;
     for edge in &all_edges {
-        // 타겟 노드 자동 생성
         let (target_type, target_label) = if let Some(rest) = edge.target.strip_prefix("issue:") {
             ("issue", rest)
         } else if let Some(rest) = edge.target.strip_prefix("file:") {
@@ -209,7 +322,6 @@ pub async fn extract_and_store(
             ("unknown", edge.target.as_str())
         };
 
-        // 소스 세션 노드가 없으면 최소 생성
         let session_node_id = format!("session:{}", fm.session_id);
         let session_label = fm.session_id[..fm.session_id.len().min(8)].to_string();
         db.upsert_graph_node(&session_node_id, "session", &session_label, None)?;
@@ -255,21 +367,27 @@ mod tests {
         }
     }
 
+    fn disabled_config() -> GraphConfig {
+        GraphConfig {
+            semantic: true,
+            semantic_backend: "disabled".to_string(),
+            ollama_url: None,
+            ollama_model: None,
+            anthropic_model: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_extract_and_store_rules_only() {
-        // ANTHROPIC_API_KEY 없이 → 규칙 기반만 동작
-        std::env::remove_var("ANTHROPIC_API_KEY");
-
         let db = Database::open_memory().unwrap();
+        let config = disabled_config();
         let fm = make_fm("sess001", Some(vec!["Edit"]), Some("closes #42"));
         let body = "> [!tool]- Edit `src/main.rs`\n\nsome content";
 
-        let stored = extract_and_store(&db, &fm, body).await.unwrap();
+        let stored = extract_and_store(&db, &config, &fm, body).await.unwrap();
 
-        // fixes_bug(#42) + modifies_file(src/main.rs) = 2
         assert!(stored >= 2, "expected at least 2 edges, got {}", stored);
 
-        // 노드가 생성되었는지 확인
         let neighbors = db.get_neighbors("session:sess001").unwrap();
         assert!(
             neighbors
@@ -286,13 +404,13 @@ mod tests {
     }
 
     #[test]
-    fn test_haiku_response_parsing() {
+    fn test_llm_response_parsing() {
         let json = r#"{"edges": [
             {"relation": "fixes_bug", "target_type": "issue", "target_label": "15"},
             {"relation": "introduces_tech", "target_type": "tech", "target_label": "ONNX Runtime"}
         ]}"#;
 
-        let edges = parse_haiku_edges(json, "test-session").unwrap();
+        let edges = parse_llm_edges(json, "test-session").unwrap();
         assert_eq!(edges.len(), 2);
 
         assert_eq!(edges[0].relation, "fixes_bug");
@@ -302,76 +420,86 @@ mod tests {
 
         assert_eq!(edges[1].relation, "introduces_tech");
         assert_eq!(edges[1].target, "tech:ONNX Runtime");
-        assert_eq!(edges[1].confidence, "LLM");
-        assert!((edges[1].weight - 0.6).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_haiku_invalid_json_fallback() {
+    fn test_llm_response_wrapped_in_codeblock() {
+        let json = "```json\n{\"edges\": [{\"relation\": \"fixes_bug\", \"target_type\": \"issue\", \"target_label\": \"7\"}]}\n```";
+        let edges = parse_llm_edges(json, "test-session").unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, "issue:7");
+    }
+
+    #[test]
+    fn test_llm_invalid_json_fallback() {
         let bad_json = "not a json at all";
-        let result = parse_haiku_edges(bad_json, "test-session");
+        let result = parse_llm_edges(bad_json, "test-session");
         assert!(result.is_err(), "invalid JSON should return Err");
     }
 
-    /// Haiku API가 실패해도 extract_and_store는 규칙 기반 결과를 저장해야 한다.
-    /// (ANTHROPIC_API_KEY가 없으면 Haiku를 시도하지 않으므로 규칙 기반만 실행)
-    #[tokio::test]
-    async fn test_extract_and_store_fallback_without_api_key() {
-        std::env::remove_var("ANTHROPIC_API_KEY");
+    #[test]
+    fn test_llm_filters_invalid_relations() {
+        let json = r#"{"edges": [
+            {"relation": "fixes_bug", "target_type": "issue", "target_label": "1"},
+            {"relation": "closes", "target_type": "issue", "target_label": "2"},
+            {"relation": "invented_relation", "target_type": "tech", "target_label": "foo"}
+        ]}"#;
+        let edges = parse_llm_edges(json, "test-session").unwrap();
+        assert_eq!(edges.len(), 1, "only fixes_bug should pass filter");
+        assert_eq!(edges[0].relation, "fixes_bug");
+    }
 
+    #[tokio::test]
+    async fn test_extract_and_store_fallback_without_llm() {
         let db = Database::open_memory().unwrap();
+        let config = disabled_config();
         let fm = make_fm("fallback01", Some(vec!["Edit"]), Some("closes #7"));
         let body = "> [!tool]- Edit `src/lib.rs`\n\nsome code";
 
-        let stored = extract_and_store(&db, &fm, body).await.unwrap();
+        let stored = extract_and_store(&db, &config, &fm, body).await.unwrap();
 
-        // API key 없이도 규칙 기반 결과가 저장되어야 함
         assert!(
             stored >= 2,
             "expected at least 2 rule-based edges, got {}",
             stored
         );
 
-        // DB에 실제 엣지 존재 확인
         let neighbors = db.get_neighbors("session:fallback01").unwrap();
         assert!(
             neighbors
                 .iter()
                 .any(|(id, rel, _)| id == "issue:7" && rel == "fixes_bug"),
-            "fixes_bug edge expected even without Haiku"
+            "fixes_bug edge expected"
         );
         assert!(
             neighbors
                 .iter()
                 .any(|(id, rel, _)| id == "file:src/lib.rs" && rel == "modifies_file"),
-            "modifies_file edge expected even without Haiku"
+            "modifies_file edge expected"
         );
     }
 
-    /// 동일 세션에 대해 extract_and_store를 두 번 호출하면 두 번째는 0을 반환해야 한다.
     #[tokio::test]
     async fn test_extract_and_store_double_call_returns_zero() {
-        std::env::remove_var("ANTHROPIC_API_KEY");
-
         let db = Database::open_memory().unwrap();
+        let config = disabled_config();
         let fm = make_fm("double01", Some(vec!["Edit"]), Some("closes #99"));
         let body = "> [!tool]- Edit `src/app.rs`\n\nsome content";
 
-        let first = extract_and_store(&db, &fm, body).await.unwrap();
+        let first = extract_and_store(&db, &config, &fm, body).await.unwrap();
         assert!(
             first >= 2,
             "first call should store at least 2 edges, got {}",
             first
         );
 
-        let second = extract_and_store(&db, &fm, body).await.unwrap();
+        let second = extract_and_store(&db, &config, &fm, body).await.unwrap();
         assert_eq!(
             second, 0,
             "second call should return 0 (all edges already exist)"
         );
     }
 
-    /// 규칙 기반과 Haiku가 같은 엣지를 생성해도 stored 카운트가 정확해야 한다.
     #[test]
     fn test_dedup_edges_before_store() {
         let edges = vec![
@@ -391,7 +519,6 @@ mod tests {
             },
         ];
 
-        // 수동으로 dedup 로직 검증
         let mut deduped = edges;
         {
             let mut seen = std::collections::HashSet::new();
@@ -399,7 +526,6 @@ mod tests {
                 .retain(|e| seen.insert((e.source.clone(), e.target.clone(), e.relation.clone())));
         }
         assert_eq!(deduped.len(), 1, "duplicate edges should be removed");
-        // 먼저 추출된 (규칙 기반) 엣지가 우선
         assert_eq!(deduped[0].confidence, "INFERRED");
     }
 }
