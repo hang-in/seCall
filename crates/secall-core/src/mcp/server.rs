@@ -11,24 +11,10 @@ use super::instructions::build_instructions;
 use super::tools::{
     GetParams, GraphQueryParams, QueryType, RecallParams, StatusParams, WikiSearchParams,
 };
-use crate::error::SecallError;
 use crate::search::bm25::{SearchFilters, SearchResult};
 use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
 use crate::store::db::Database;
 use crate::store::SessionRepo;
-
-fn to_mcp_error(e: SecallError) -> McpError {
-    match &e {
-        SecallError::SessionNotFound(_) | SecallError::TurnNotFound { .. } => {
-            McpError::invalid_params(e.to_string(), None)
-        }
-        SecallError::DatabaseNotInitialized => McpError::internal_error(e.to_string(), None),
-        SecallError::Parse { .. } | SecallError::UnsupportedFormat(_) => {
-            McpError::invalid_params(e.to_string(), None)
-        }
-        _ => McpError::internal_error(e.to_string(), None),
-    }
-}
 
 #[derive(Clone)]
 pub struct SeCallMcpServer {
@@ -39,7 +25,7 @@ pub struct SeCallMcpServer {
     vault_path: PathBuf,
 }
 
-#[tool_router]
+/// 공통 로직 메서드 — REST 핸들러와 MCP tool 모두에서 호출
 impl SeCallMcpServer {
     pub fn new(db: Arc<Mutex<Database>>, search: Arc<SearchEngine>, vault_path: PathBuf) -> Self {
         Self {
@@ -50,14 +36,10 @@ impl SeCallMcpServer {
         }
     }
 
-    /// Search agent session history
-    #[tool(
-        description = "Search agent session history. Use keyword queries for exact terms, semantic queries for conceptual search, or temporal queries for time-based filtering."
-    )]
-    async fn recall(
+    pub async fn do_recall(
         &self,
-        Parameters(params): Parameters<RecallParams>,
-    ) -> Result<CallToolResult, McpError> {
+        params: RecallParams,
+    ) -> anyhow::Result<serde_json::Value> {
         let limit = params.limit.unwrap_or(10).min(50);
 
         let mut base_filters = SearchFilters {
@@ -69,7 +51,6 @@ impl SeCallMcpServer {
             ..Default::default()
         };
 
-        // Apply any temporal filters first
         for item in &params.queries {
             if let QueryType::Temporal = item.query_type {
                 if let Some(tf) = parse_temporal_filter(&item.query) {
@@ -85,31 +66,18 @@ impl SeCallMcpServer {
             match item.query_type {
                 QueryType::Temporal => {}
                 QueryType::Keyword => {
-                    // BM25 search — sync, lock the DB
                     let results = {
-                        let db = self.db.lock().map_err(|e| {
-                            McpError::internal_error(format!("DB lock error: {e}"), None)
-                        })?;
-                        self.search
-                            .search_bm25(&db, &item.query, &base_filters, limit)
-                            .map_err(|e| {
-                                McpError::internal_error(format!("BM25 error: {e}"), None)
-                            })?
+                        let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+                        self.search.search_bm25(&db, &item.query, &base_filters, limit)?
                     };
                     all_results.extend(results);
                 }
                 QueryType::Semantic => {
-                    // Step 1: embed query (async, no DB lock held)
                     match self.search.embed_query(&item.query).await {
                         Ok(Some(embedding)) => {
-                            // Step 2: lock DB and search vectors synchronously
                             let results = {
-                                let db = self.db.lock().map_err(|e| {
-                                    McpError::internal_error(format!("DB lock error: {e}"), None)
-                                })?;
-                                self.search
-                                    .search_with_embedding(&db, &embedding, limit, &base_filters)
-                                    .map_err(|e| McpError::internal_error(e.to_string(), None))?
+                                let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+                                self.search.search_with_embedding(&db, &embedding, limit, &base_filters)?
                             };
                             all_results.extend(results);
                         }
@@ -117,30 +85,22 @@ impl SeCallMcpServer {
                             tracing::info!("vector search disabled (Ollama not available)");
                         }
                         Err(e) => {
-                            return Err(McpError::internal_error(
-                                format!("embedding failed: {e}"),
-                                None,
-                            ));
+                            return Err(anyhow::anyhow!("embedding failed: {e}"));
                         }
                     }
                 }
             }
         }
 
-        // Check if any keyword query was present
         let has_keyword = params
             .queries
             .iter()
             .any(|q| matches!(q.query_type, QueryType::Keyword));
 
         if !has_keyword && all_results.is_empty() {
-            let json = serde_json::json!({ "results": [], "count": 0 });
-            return Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&json).unwrap_or_default(),
-            )]));
+            return Ok(serde_json::json!({ "results": [], "count": 0 }));
         }
 
-        // Deduplicate and sort
         all_results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -149,20 +109,14 @@ impl SeCallMcpServer {
         let mut seen = std::collections::HashSet::new();
         all_results.retain(|r| seen.insert((r.session_id.clone(), r.turn_index)));
 
-        // 세션 다양성 적용
         let max_per = base_filters.max_per_session.unwrap_or(2);
         all_results = diversify_by_session(all_results, max_per);
-
         all_results.truncate(limit);
 
         let count = all_results.len();
 
-        // 관련 세션 그래프 탐색 (2홉, 최대 5개)
         let related_sessions = {
-            let db = self
-                .db
-                .lock()
-                .map_err(|e| McpError::internal_error(format!("DB lock error: {e}"), None))?;
+            let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
             let seed_ids: Vec<&str> = all_results
                 .iter()
                 .map(|r| r.session_id.as_str())
@@ -172,28 +126,16 @@ impl SeCallMcpServer {
             db.get_related_sessions(&seed_ids, 2, 5).unwrap_or_default()
         };
 
-        let json = serde_json::json!({
+        Ok(serde_json::json!({
             "results": all_results,
             "count": count,
             "related_sessions": related_sessions,
-        });
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json).unwrap_or_default(),
-        )]))
+        }))
     }
 
-    /// Get a specific session or turn by ID
-    #[tool(
-        description = "Retrieve a specific session or turn. Use session_id for full session metadata, session_id:N for a specific turn."
-    )]
-    fn get(&self, Parameters(params): Parameters<GetParams>) -> Result<CallToolResult, McpError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("DB lock error: {e}"), None))?;
+    pub fn do_get(&self, params: GetParams) -> anyhow::Result<serde_json::Value> {
+        let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
 
-        // Parse "session_id:turn_index" or just "session_id"
         let (session_id, turn_index) = if let Some(colon_pos) = params.id.rfind(':') {
             let sid = &params.id[..colon_pos];
             let tidx_str = &params.id[colon_pos + 1..];
@@ -207,89 +149,83 @@ impl SeCallMcpServer {
         };
 
         if let Some(turn_idx) = turn_index {
-            match db.get_turn(&session_id, turn_idx) {
-                Ok(turn) => {
-                    let json_val = serde_json::json!({
-                        "turn_index": turn.turn_index,
-                        "role": turn.role,
-                        "content": turn.content,
-                    });
-                    Ok(CallToolResult::success(vec![Content::text(
-                        serde_json::to_string_pretty(&json_val).unwrap_or_default(),
-                    )]))
-                }
-                Err(e) => Err(to_mcp_error(e)),
-            }
+            let turn = db.get_turn(&session_id, turn_idx)?;
+            Ok(serde_json::json!({
+                "turn_index": turn.turn_index,
+                "role": turn.role,
+                "content": turn.content,
+            }))
         } else {
-            match db.get_session_meta(&session_id) {
-                Ok(meta) => {
-                    let mut json_val = serde_json::to_value(&meta).unwrap_or_default();
-                    if params.full.unwrap_or(false) {
-                        if let Some(vault_path) = &meta.vault_path {
-                            if let Ok(content) = std::fs::read_to_string(vault_path) {
-                                json_val["content"] = serde_json::Value::String(content);
-                            }
-                        }
+            let meta = db.get_session_meta(&session_id)?;
+            let mut json_val = serde_json::to_value(&meta).unwrap_or_default();
+            if params.full.unwrap_or(false) {
+                let content = if let Some(vault_path) = &meta.vault_path {
+                    std::fs::read_to_string(vault_path).ok()
+                } else {
+                    None
+                };
+                // vault 파일이 없으면 DB turns를 합쳐 fallback content 생성
+                let content = content.or_else(|| {
+                    let mut stmt = db
+                        .conn()
+                        .prepare(
+                            "SELECT role, content FROM turns WHERE session_id = ?1 ORDER BY turn_index",
+                        )
+                        .ok()?;
+                    let rows: Vec<(String, String)> = stmt
+                        .query_map(rusqlite::params![&session_id], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        })
+                        .ok()?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    if rows.is_empty() {
+                        return None;
                     }
-                    Ok(CallToolResult::success(vec![Content::text(
-                        serde_json::to_string_pretty(&json_val).unwrap_or_default(),
-                    )]))
+                    let mut buf = String::new();
+                    for (role, text) in &rows {
+                        buf.push_str(&format!("## {}\n\n{}\n\n", role, text));
+                    }
+                    Some(buf)
+                });
+                if let Some(c) = content {
+                    json_val["content"] = serde_json::Value::String(c);
                 }
-                Err(e) => Err(to_mcp_error(e)),
             }
+            Ok(json_val)
         }
     }
 
-    /// Show index health: session count, embedding status, recent ingests
-    #[tool(description = "Show index health: session count, embedding status, recent ingests.")]
-    fn status(&self, _params: Parameters<StatusParams>) -> String {
-        let db = match self.db.lock() {
-            Ok(d) => d,
-            Err(e) => return format!("error: DB lock failed: {e}"),
-        };
-        match db.get_stats() {
-            Ok(stats) => format!(
-                "sessions: {}\nturns: {}\nvectors: {}\nrecent_ingests: {}",
-                stats.session_count,
-                stats.turn_count,
-                stats.vector_count,
-                stats.recent_ingests.len(),
-            ),
-            Err(e) => format!("error: {e}"),
-        }
+    pub fn do_status(&self) -> anyhow::Result<serde_json::Value> {
+        let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+        let stats = db.get_stats()?;
+        Ok(serde_json::json!({
+            "sessions": stats.session_count,
+            "turns": stats.turn_count,
+            "vectors": stats.vector_count,
+            "recent_ingests": stats.recent_ingests.len(),
+        }))
     }
 
-    /// Search wiki knowledge pages
-    #[tool(
-        description = "Search wiki knowledge pages. Returns matching wiki articles from projects, topics, and decisions."
-    )]
-    fn wiki_search(
+    pub fn do_wiki_search(
         &self,
-        Parameters(params): Parameters<WikiSearchParams>,
-    ) -> Result<CallToolResult, McpError> {
+        params: WikiSearchParams,
+    ) -> anyhow::Result<serde_json::Value> {
         let wiki_dir = self.vault_path.join("wiki");
         let limit = params.limit.unwrap_or(5);
         let query_lower = params.query.to_lowercase();
 
         if !wiki_dir.exists() {
-            let json = serde_json::json!({ "results": [], "count": 0 });
-            return Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&json).unwrap_or_default(),
-            )]));
+            return Ok(serde_json::json!({ "results": [], "count": 0 }));
         }
 
-        // wiki/ 하위 MD 파일 수집 (category 필터 적용)
-        // category는 허용 목록으로 검증 — 임의 경로 탐색 방지
         let search_root = if let Some(ref cat) = params.category {
             match cat.as_str() {
                 "projects" | "topics" | "decisions" => wiki_dir.join(cat),
                 _ => {
-                    return Err(McpError::invalid_params(
-                        format!(
-                            "invalid category '{}': must be one of projects, topics, decisions",
-                            cat
-                        ),
-                        None,
+                    return Err(anyhow::anyhow!(
+                        "invalid category '{}': must be one of projects, topics, decisions",
+                        cat
                     ));
                 }
             }
@@ -298,10 +234,7 @@ impl SeCallMcpServer {
         };
 
         if !search_root.exists() {
-            let json = serde_json::json!({ "results": [], "count": 0 });
-            return Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&json).unwrap_or_default(),
-            )]));
+            return Ok(serde_json::json!({ "results": [], "count": 0 }));
         }
 
         struct Match {
@@ -340,7 +273,6 @@ impl SeCallMcpServer {
                     .to_string_lossy()
                     .to_string();
 
-                // title: 첫 번째 # 헤더 or 파일명
                 let title = content
                     .lines()
                     .find(|l| l.starts_with("# "))
@@ -353,8 +285,6 @@ impl SeCallMcpServer {
                     });
 
                 let preview: String = content.chars().take(500).collect();
-
-                // frontmatter에서 created/updated 추출
                 let (created, updated) = extract_wiki_dates(&content);
 
                 Some(Match {
@@ -368,7 +298,6 @@ impl SeCallMcpServer {
             })
             .collect();
 
-        // 파일명 매칭을 우선 정렬
         matches.sort_by_key(|m| !m.name_match);
         matches.truncate(limit);
 
@@ -391,37 +320,24 @@ impl SeCallMcpServer {
             .collect();
 
         let count = results.len();
-        let json = serde_json::json!({ "results": results, "count": count });
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&json).unwrap_or_default(),
-        )]))
+        Ok(serde_json::json!({ "results": results, "count": count }))
     }
 
-    /// Query knowledge graph: find neighbors and relationships of a node
-    #[tool(
-        description = "Query the knowledge graph. Find neighbors and relationships of a node (session, project, agent, tool). Use depth to expand traversal. Returns connected nodes and edge types."
-    )]
-    fn graph_query(
+    pub fn do_graph_query(
         &self,
-        Parameters(params): Parameters<GraphQueryParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let depth = params.depth.unwrap_or(1).min(3); // 최대 3홉
+        params: GraphQueryParams,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self.db.lock().map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+        let depth = params.depth.unwrap_or(1).min(3);
 
-        // 1홉 이웃 조회
-        let neighbors = db.get_neighbors(&params.node_id).map_err(to_mcp_error)?;
+        let neighbors = db.get_neighbors(&params.node_id)?;
 
-        // relation 필터 적용
         let filtered: Vec<_> = if let Some(ref rel) = params.relation {
             neighbors.into_iter().filter(|(_, r, _)| r == rel).collect()
         } else {
             neighbors
         };
 
-        // depth > 1이면 BFS로 확장 (2홉, 3홉)
         let mut all_neighbors = filtered.clone();
         if depth > 1 {
             let mut visited = std::collections::HashSet::new();
@@ -451,7 +367,6 @@ impl SeCallMcpServer {
             }
         }
 
-        // 결과 JSON
         let results: Vec<serde_json::Value> = all_neighbors
             .iter()
             .map(|(id, rel, dir)| {
@@ -464,13 +379,79 @@ impl SeCallMcpServer {
             .collect();
 
         let count = results.len();
-        let json = serde_json::json!({
+        Ok(serde_json::json!({
             "query_node": params.node_id,
             "depth": depth,
             "results": results,
             "count": count,
-        });
+        }))
+    }
+}
 
+/// MCP tool wrappers — 공통 do_*() 메서드를 CallToolResult로 래핑
+#[tool_router]
+impl SeCallMcpServer {
+    #[tool(
+        description = "Search agent session history. Use keyword queries for exact terms, semantic queries for conceptual search, or temporal queries for time-based filtering."
+    )]
+    async fn recall(
+        &self,
+        Parameters(params): Parameters<RecallParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let json = self
+            .do_recall(params)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Retrieve a specific session or turn. Use session_id for full session metadata, session_id:N for a specific turn."
+    )]
+    fn get(&self, Parameters(params): Parameters<GetParams>) -> Result<CallToolResult, McpError> {
+        let json = self
+            .do_get(params)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Show index health: session count, embedding status, recent ingests.")]
+    fn status(&self, _params: Parameters<StatusParams>) -> String {
+        match self.do_status() {
+            Ok(json) => serde_json::to_string_pretty(&json).unwrap_or_default(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Search wiki knowledge pages. Returns matching wiki articles from projects, topics, and decisions."
+    )]
+    fn wiki_search(
+        &self,
+        Parameters(params): Parameters<WikiSearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let json = self
+            .do_wiki_search(params)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Query the knowledge graph. Find neighbors and relationships of a node (session, project, agent, tool). Use depth to expand traversal. Returns connected nodes and edge types."
+    )]
+    fn graph_query(
+        &self,
+        Parameters(params): Parameters<GraphQueryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let json = self
+            .do_graph_query(params)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&json).unwrap_or_default(),
         )]))

@@ -49,3 +49,4 @@ zip = { version = "=2.3.0", default-features = false, features = ["deflate"] }
 regex = "1"
 openvino = { version = "0.9", features = ["runtime-linking"] }
 libloading = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }

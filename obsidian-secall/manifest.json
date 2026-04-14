@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-secall",
+  "name": "seCall",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Search and browse seCall agent sessions",
+  "author": "d9ng",
+  "isDesktopOnly": false
+}

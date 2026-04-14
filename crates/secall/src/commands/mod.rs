@@ -12,6 +12,7 @@ pub mod migrate;
 pub mod model;
 pub mod recall;
 pub mod reindex;
+pub mod serve;
 pub mod status;
 pub mod sync;
 pub mod wiki;

@@ -3206,6 +3206,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tower-http",
  "tracing",
  "usearch",
  "walkdir",
