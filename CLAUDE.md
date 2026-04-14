@@ -98,17 +98,19 @@
 - PR #20 — OpenVINO embedding backend (외부 기여, CoLuthien)
 
 ### In Progress
-- (none)
+- P25 — Semantic Graph 활용 + Obsidian 플러그인 (docs/plans/p25-obsidian-plugin.md)
 
 ### Known Issues
-- (none)
+- 기존 DB에 FTS 중복 잔존 (--force reingest로 세션별 정리 가능)
 
 ---
 
 ## 8. Next Priorities
 
-1. (P1) Wiki 파이프라인 실행 검증 — 소규모(10~20세션) dry-run으로 end-to-end 동작 확인. API 비용 수반.
-2. (P1) Semantic graph 활용 — 추출된 694세션 edge 데이터를 검색/탐색에 반영하는 기능 설계. 별도 플랜 필요.
+1. (P1) P25 Phase 0 — `secall serve` REST API 레이어 구현
+2. (P1) P25 Phase 1 — Obsidian 플러그인 MVP (recall + get + status)
+3. (P2) P25 Phase 2 — 데일리 노트 자동 생성 + Graph 탐색
+4. (P2) Wiki 파이프라인 실행 검증 완료 — `--backend claude`로 동작 확인됨, 대규모 실행 미완
 
 ---
 
