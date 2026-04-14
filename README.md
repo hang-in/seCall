@@ -110,7 +110,7 @@ vault/
     └── graph.json   # 노드/엣지 데이터
 ```
 
-- **위키 생성**: Claude Code 메타에이전트 기반 (`secall wiki update`)
+- **위키 생성**: pluggable LLM backend 기반 (`secall wiki update --backend claude|codex|ollama|lmstudio`)
 - **Obsidian 백링크** (`[[]]`)로 세션 ↔ 위키 페이지 연결
 - Dataview 쿼리를 위한 frontmatter 메타데이터 (`summary` 필드로 세션 내용 즉시 파악)
 
@@ -303,6 +303,9 @@ session_type = "automated"
 # Claude Code로 위키 업데이트 (기본값)
 secall wiki update
 
+# Codex로 위키 업데이트
+secall wiki update --backend codex
+
 # 로컬 LLM 백엔드 사용
 secall wiki update --backend ollama
 secall wiki update --backend lmstudio
@@ -318,7 +321,7 @@ secall wiki status
 
 ```toml
 [wiki]
-default_backend = "lmstudio"   # "claude" | "ollama" | "lmstudio"
+default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio"
 
 [wiki.backends.lmstudio]
 api_url = "http://localhost:1234"
@@ -377,7 +380,7 @@ secall config path
 | `output.timezone` | 타임존 (IANA) | `UTC` |
 | `ingest.classification.default` | 분류 규칙 미매칭 시 기본 session_type | `interactive` |
 | `ingest.classification.skip_embed_types` | 임베딩을 스킵할 session_type 목록 | `[]` |
-| `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `ollama` / `lmstudio`) | `claude` |
+| `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.backends.<name>.api_url` | 백엔드 API 엔드포인트 | (기본값 사용) |
 | `wiki.backends.<name>.model` | 백엔드 모델 이름 | (기본값 사용) |
 | `wiki.backends.<name>.max_tokens` | 최대 생성 토큰 수 | `4096` |
@@ -404,7 +407,7 @@ secall config path
 | `secall mcp [--http <addr>]` | MCP 서버 시작 |
 | `secall config show\|set\|path` | 설정 확인/변경 |
 | `secall graph build\|stats\|export` | Knowledge Graph 관리 |
-| `secall wiki update [--backend claude\|ollama\|lmstudio]` | 위키 생성 (백엔드 선택 가능) |
+| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio]` | 위키 생성 (백엔드 선택 가능) |
 | `secall wiki status` | 위키 상태 확인 |
 | `secall model download\|info\|check` | ONNX 모델 관리 |
 | `secall reindex --from-vault` | 볼트에서 DB 재구축 |
@@ -496,7 +499,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 | ANN 인덱스 | usearch HNSW (macOS/Linux) |
 | MCP 서버 | rmcp (stdio + Streamable HTTP / axum) |
 | 볼트 | Obsidian 호환 Markdown |
-| 위키 엔진 | Claude Code / Ollama / LM Studio (플러그인 방식 백엔드) |
+| 위키 엔진 | Claude Code / Codex / Ollama / LM Studio (플러그인 방식 백엔드) |
 
 ## 출처
 
@@ -542,4 +545,3 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 **Contact**: [d9ng@outlook.com](mailto:d9ng@outlook.com)
 
 </div>
-

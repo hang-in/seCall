@@ -111,7 +111,7 @@ vault/
     └── graph.json   # Node/edge data
 ```
 
-- **Wiki generation** via pluggable LLM backends (`secall wiki update --backend claude|ollama|lmstudio`)
+- **Wiki generation** via pluggable LLM backends (`secall wiki update --backend claude|codex|ollama|lmstudio`)
 - **Obsidian backlinks** (`[[]]`) connecting sessions ↔ wiki pages
 - Frontmatter metadata for Dataview queries (`summary` field for at-a-glance session identification)
 
@@ -300,6 +300,9 @@ session_type = "automated"
 # Use Claude Code (default)
 secall wiki update
 
+# Use Codex
+secall wiki update --backend codex
+
 # Use a local LLM backend
 secall wiki update --backend ollama
 secall wiki update --backend lmstudio
@@ -315,7 +318,7 @@ Configure the default backend in `config.toml`:
 
 ```toml
 [wiki]
-default_backend = "lmstudio"   # "claude" | "ollama" | "lmstudio"
+default_backend = "lmstudio"   # "claude" | "codex" | "ollama" | "lmstudio"
 
 [wiki.backends.lmstudio]
 api_url = "http://localhost:1234"
@@ -371,7 +374,7 @@ secall config path
 | `output.timezone` | Timezone (IANA) | `UTC` |
 | `ingest.classification.default` | Default session_type when no rule matches | `interactive` |
 | `ingest.classification.skip_embed_types` | Session types to skip vector embedding | `[]` |
-| `wiki.default_backend` | Wiki generation backend (`claude` / `ollama` / `lmstudio`) | `claude` |
+| `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.backends.<name>.api_url` | Backend API endpoint | (default) |
 | `wiki.backends.<name>.model` | Model name for the backend | (default) |
 | `wiki.backends.<name>.max_tokens` | Max tokens to generate | `4096` |
@@ -398,7 +401,7 @@ Config file location:
 | `secall mcp [--http <addr>]` | Start MCP server |
 | `secall config show\|set\|path` | View/change settings |
 | `secall graph build\|stats\|export` | Knowledge graph management |
-| `secall wiki update [--backend claude\|ollama\|lmstudio]` | Wiki generation with backend selection |
+| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio]` | Wiki generation with backend selection |
 | `secall wiki status` | Wiki status |
 | `secall model download\|info\|check` | ONNX model management |
 | `secall reindex --from-vault` | Rebuild DB from vault |
@@ -490,7 +493,7 @@ For auto-sync on session start/end:
 | ANN Index | usearch HNSW (macOS/Linux) |
 | MCP Server | rmcp (stdio + Streamable HTTP via axum) |
 | Vault | Obsidian-compatible Markdown |
-| Wiki Engine | Claude Code / Ollama / LM Studio (pluggable backends) |
+| Wiki Engine | Claude Code / Codex / Ollama / LM Studio (pluggable backends) |
 
 ## Acknowledgments
 
