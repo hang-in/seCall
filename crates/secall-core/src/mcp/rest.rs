@@ -7,12 +7,63 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::server::SeCallMcpServer;
-use super::tools::{GetParams, GraphQueryParams, RecallParams, WikiSearchParams};
+use super::tools::{
+    GetParams, GraphQueryParams, QueryItem, QueryType, RecallParams, WikiSearchParams,
+};
 use crate::search::hybrid::SearchEngine;
 use crate::store::db::Database;
+
+// ── REST 간소화 DTO ─────────────────────────────────────────
+// MCP 스키마를 직접 노출하지 않고 REST 클라이언트에 친화적인 형태로 받아서 변환
+
+#[derive(Debug, Deserialize)]
+struct RestRecallParams {
+    query: String,
+    #[serde(default)]
+    mode: Option<String>, // "keyword" | "semantic" — 기본 keyword
+    project: Option<String>,
+    agent: Option<String>,
+    limit: Option<usize>,
+}
+
+impl From<RestRecallParams> for RecallParams {
+    fn from(p: RestRecallParams) -> Self {
+        let query_type = match p.mode.as_deref() {
+            Some("semantic") => QueryType::Semantic,
+            Some("temporal") => QueryType::Temporal,
+            _ => QueryType::Keyword,
+        };
+        RecallParams {
+            queries: vec![QueryItem {
+                query_type,
+                query: p.query,
+            }],
+            project: p.project,
+            agent: p.agent,
+            limit: p.limit,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RestGetParams {
+    session_id: String,
+    #[serde(default)]
+    full: Option<bool>,
+}
+
+impl From<RestGetParams> for GetParams {
+    fn from(p: RestGetParams) -> Self {
+        GetParams {
+            id: p.session_id,
+            full: p.full,
+        }
+    }
+}
 
 type AppState = Arc<SeCallMcpServer>;
 
@@ -59,9 +110,9 @@ pub async fn start_rest_server(
 
 async fn api_recall(
     State(s): State<AppState>,
-    Json(p): Json<RecallParams>,
+    Json(p): Json<RestRecallParams>,
 ) -> impl IntoResponse {
-    match s.do_recall(p).await {
+    match s.do_recall(p.into()).await {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }
@@ -69,9 +120,9 @@ async fn api_recall(
 
 async fn api_get(
     State(s): State<AppState>,
-    Json(p): Json<GetParams>,
+    Json(p): Json<RestGetParams>,
 ) -> impl IntoResponse {
-    match s.do_get(p) {
+    match s.do_get(p.into()) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

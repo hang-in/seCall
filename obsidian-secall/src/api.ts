@@ -8,20 +8,17 @@ export class SeCallApi {
       url: `${this.baseUrl}/api/recall`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        queries: [{ type: "keyword", query }],
-        limit,
-      }),
+      body: JSON.stringify({ query, limit }),
     });
     return resp.json;
   }
 
-  async get(id: string, full = false) {
+  async get(sessionId: string, full = false) {
     const resp = await requestUrl({
       url: `${this.baseUrl}/api/get`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, full }),
+      body: JSON.stringify({ session_id: sessionId, full }),
     });
     return resp.json;
   }
