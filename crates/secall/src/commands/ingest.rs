@@ -540,9 +540,7 @@ fn ingest_single_session(
                     return;
                 }
             };
-            if session.turns.len() > db_turn_count + 10
-                && session.turns.len() > db_turn_count * 2
-            {
+            if session.turns.len() > db_turn_count + 10 && session.turns.len() > db_turn_count * 2 {
                 tracing::info!(
                     session = &session.id,
                     db_turns = db_turn_count,

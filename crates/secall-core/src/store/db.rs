@@ -561,26 +561,34 @@ mod tests {
         db.insert_session(&session).unwrap();
 
         // FTS 행 삽입
-        db.insert_fts("first turn content", "sess-fts-del", 0).unwrap();
-        db.insert_fts("second turn response", "sess-fts-del", 1).unwrap();
+        db.insert_fts("first turn content", "sess-fts-del", 0)
+            .unwrap();
+        db.insert_fts("second turn response", "sess-fts-del", 1)
+            .unwrap();
 
         // FTS 행 존재 확인
-        let fts_count: i64 = db.conn().query_row(
-            "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'sess-fts-del'",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let fts_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'sess-fts-del'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(fts_count, 2);
 
         // delete_session_full 호출
         db.delete_session_full("sess-fts-del").unwrap();
 
         // FTS 행도 삭제되었는지 확인
-        let fts_after: i64 = db.conn().query_row(
-            "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'sess-fts-del'",
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let fts_after: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM turns_fts WHERE session_id = 'sess-fts-del'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(fts_after, 0);
 
         // 세션과 turns도 삭제 확인
@@ -608,7 +616,11 @@ mod tests {
 
         // KST 2026-04-10 자정 기준 → s1(UTC 4/9 15:00)도 포함되어야 함
         let rows_kst = db.get_sessions_since("2026-04-10T00:00:00+09:00").unwrap();
-        assert_eq!(rows_kst.len(), 3, "KST 4/10 자정 이후 세션: s1, s2, s3 모두 포함");
+        assert_eq!(
+            rows_kst.len(),
+            3,
+            "KST 4/10 자정 이후 세션: s1, s2, s3 모두 포함"
+        );
 
         // UTC 2026-04-10 자정 기준 → s1(UTC 4/9 15:00)은 제외
         let rows_utc = db.get_sessions_since("2026-04-10T00:00:00+00:00").unwrap();

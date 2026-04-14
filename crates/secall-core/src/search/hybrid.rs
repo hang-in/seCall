@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 
-use super::bm25::{Bm25Indexer, IndexStats, SearchFilters, SearchResult};
+use super::bm25::{Bm25Indexer, GraphFilter, IndexStats, SearchFilters, SearchResult};
 use super::vector::VectorIndexer;
 use crate::ingest::Session;
 use crate::store::db::Database;
@@ -93,6 +93,31 @@ pub struct SearchEngine {
     vector: Option<VectorIndexer>,
 }
 
+/// graph_filter가 설정된 경우 해당 노드와 연결된 세션 ID allowlist를 해석.
+/// None이면 그대로 필터를 반환.
+fn resolve_graph_filter<'a>(
+    db: &Database,
+    filters: &'a SearchFilters,
+) -> std::borrow::Cow<'a, SearchFilters> {
+    let Some(ref gf) = filters.graph_filter else {
+        return std::borrow::Cow::Borrowed(filters);
+    };
+
+    let (node_prefix, label, relation_hint) = match gf {
+        GraphFilter::Topic(t) => ("topic", t.as_str(), None),
+        GraphFilter::File(f) => ("file", f.as_str(), Some("modifies_file")),
+        GraphFilter::Issue(i) => ("issue", i.as_str(), Some("fixes_bug")),
+    };
+
+    let ids = db
+        .resolve_graph_filter_to_session_ids(node_prefix, label, relation_hint)
+        .unwrap_or_default();
+
+    let mut resolved = filters.clone();
+    resolved.session_ids_allowlist = Some(ids);
+    std::borrow::Cow::Owned(resolved)
+}
+
 impl SearchEngine {
     pub fn new(bm25: Bm25Indexer, vector: Option<VectorIndexer>) -> Self {
         SearchEngine { bm25, vector }
@@ -105,6 +130,9 @@ impl SearchEngine {
         filters: &SearchFilters,
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
+        let resolved = resolve_graph_filter(db, filters);
+        let filters = resolved.as_ref();
+
         let candidate_limit = limit * 3;
 
         let bm25_results = self.bm25.search(db, query, candidate_limit, filters)?;
@@ -153,7 +181,8 @@ impl SearchEngine {
         filters: &SearchFilters,
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        self.bm25.search(db, query, limit, filters)
+        let resolved = resolve_graph_filter(db, filters);
+        self.bm25.search(db, query, limit, resolved.as_ref())
     }
 
     pub async fn search_vector(
@@ -164,7 +193,10 @@ impl SearchEngine {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchResult>> {
         match &self.vector {
-            Some(vi) => vi.search(db, query, limit, filters, None).await,
+            Some(vi) => {
+                let resolved = resolve_graph_filter(db, filters);
+                vi.search(db, query, limit, resolved.as_ref(), None).await
+            }
             None => Ok(Vec::new()),
         }
     }
@@ -188,7 +220,10 @@ impl SearchEngine {
         filters: &SearchFilters,
     ) -> anyhow::Result<Vec<SearchResult>> {
         match &self.vector {
-            Some(vi) => vi.search_with_embedding(db, embedding, limit, filters, None),
+            Some(vi) => {
+                let resolved = resolve_graph_filter(db, filters);
+                vi.search_with_embedding(db, embedding, limit, resolved.as_ref(), None)
+            }
             None => Ok(Vec::new()),
         }
     }

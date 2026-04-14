@@ -16,6 +16,17 @@ pub struct IndexStats {
     pub errors: usize,
 }
 
+/// 그래프 기반 사전 필터 — 검색 대상 세션을 특정 노드와 연결된 것으로 제한
+#[derive(Debug, Clone)]
+pub enum GraphFilter {
+    /// 특정 토픽 노드와 연결된 세션 (e.g., "rust async")
+    Topic(String),
+    /// 특정 파일을 수정한 세션 (modifies_file 엣지)
+    File(String),
+    /// 특정 이슈를 수정한 세션 (fixes_bug 엣지, e.g., "#42")
+    Issue(String),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilters {
     pub project: Option<String>,
@@ -26,6 +37,11 @@ pub struct SearchFilters {
     pub max_per_session: Option<usize>,
     /// 제외할 session_type 목록 (빈 Vec = 제외 없음)
     pub exclude_session_types: Vec<String>,
+    /// 그래프 기반 사전 필터 (None = 필터 없음)
+    pub graph_filter: Option<GraphFilter>,
+    /// 검색 대상 세션 ID 허용 목록 — graph_filter 해석 결과가 여기에 삽입됨
+    /// None = 제한 없음, Some([]) = 결과 없음 (일치하는 그래프 노드 없음)
+    pub session_ids_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +125,13 @@ impl Bm25Indexer {
             return Ok(Vec::new());
         }
 
+        // 빈 allowlist → 결과 없음 (그래프 필터에 해당하는 세션이 없음)
+        if let Some(ref ids) = filters.session_ids_allowlist {
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
+
         let fts_rows = db.search_fts(&tokenized_query, limit * 3, filters)?;
         if fts_rows.is_empty() {
             return Ok(Vec::new());
@@ -189,7 +212,6 @@ fn extract_snippet(content: &str, query: &str, max_chars: usize) -> String {
     let snippet: String = chars[start_char..end_char].iter().collect();
     snippet
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -383,5 +405,23 @@ mod tests {
         assert!(results
             .iter()
             .all(|r| r.metadata.project.as_deref() == Some("projectA")));
+    }
+
+    #[test]
+    fn test_empty_allowlist_returns_empty() {
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let indexer = Bm25Indexer::new(Box::new(tok));
+
+        let session = make_session("s7", "proj", "rust 검색 테스트");
+        indexer.index_session(&db, &session).unwrap();
+
+        // 빈 allowlist → 결과 없음
+        let filters = SearchFilters {
+            session_ids_allowlist: Some(vec![]),
+            ..Default::default()
+        };
+        let results = indexer.search(&db, "rust", 10, &filters).unwrap();
+        assert!(results.is_empty(), "빈 allowlist는 결과 없음이어야 함");
     }
 }

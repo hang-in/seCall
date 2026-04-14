@@ -626,7 +626,10 @@ impl Database {
     }
 
     /// 세션 메타데이터 + 턴 내용을 한번에 조회 (위키 생성용)
-    pub fn get_session_with_turns(&self, session_id: &str) -> Result<(WikiSessionMeta, Vec<TurnRow>)> {
+    pub fn get_session_with_turns(
+        &self,
+        session_id: &str,
+    ) -> Result<(WikiSessionMeta, Vec<TurnRow>)> {
         let meta = self.conn().query_row(
             "SELECT id, agent, project, summary, start_time, turn_count, tools_used, session_type
              FROM sessions WHERE id = ?1",

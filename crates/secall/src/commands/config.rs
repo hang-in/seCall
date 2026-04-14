@@ -102,10 +102,7 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
         }
         "embedding.openvino_device" => {
             if !["NPU", "GPU", "CPU"].contains(&value) {
-                anyhow::bail!(
-                    "invalid openvino device: '{}'. Valid: NPU, GPU, CPU",
-                    value
-                );
+                anyhow::bail!("invalid openvino device: '{}'. Valid: NPU, GPU, CPU", value);
             }
             config.embedding.openvino_device = Some(value.to_string());
         }

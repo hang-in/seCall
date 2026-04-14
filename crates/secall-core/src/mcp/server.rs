@@ -156,9 +156,26 @@ impl SeCallMcpServer {
         all_results.truncate(limit);
 
         let count = all_results.len();
+
+        // 관련 세션 그래프 탐색 (2홉, 최대 5개)
+        let related_sessions = {
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| McpError::internal_error(format!("DB lock error: {e}"), None))?;
+            let seed_ids: Vec<&str> = all_results
+                .iter()
+                .map(|r| r.session_id.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            db.get_related_sessions(&seed_ids, 2, 5).unwrap_or_default()
+        };
+
         let json = serde_json::json!({
             "results": all_results,
-            "count": count
+            "count": count,
+            "related_sessions": related_sessions,
         });
 
         Ok(CallToolResult::success(vec![Content::text(

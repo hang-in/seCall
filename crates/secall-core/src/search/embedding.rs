@@ -402,11 +402,7 @@ struct TokenizedItem {
 
 #[cfg(feature = "openvino")]
 impl OpenVinoEmbedder {
-    pub fn new(
-        model_dir: &Path,
-        device: Option<&str>,
-        openvino_dir: Option<&str>,
-    ) -> Result<Self> {
+    pub fn new(model_dir: &Path, device: Option<&str>, openvino_dir: Option<&str>) -> Result<Self> {
         let device = device.unwrap_or("GPU").to_string();
         let tokenizer = tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json"))
             .map_err(|e| anyhow!("tokenizer load failed: {e}"))?;
@@ -473,13 +469,12 @@ impl OpenVinoEmbedder {
                 }
             };
 
-            let device_type: openvino::DeviceType = openvino::DeviceType::from(device_clone.as_str()).to_owned();
+            let device_type: openvino::DeviceType =
+                openvino::DeviceType::from(device_clone.as_str()).to_owned();
             let mut compiled = match core.compile_model(&model, device_type) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = init_tx.send(Err(anyhow!(
-                        "compile for {device_clone} failed: {e:?}"
-                    )));
+                    let _ = init_tx.send(Err(anyhow!("compile for {device_clone} failed: {e:?}")));
                     return;
                 }
             };
@@ -558,7 +553,6 @@ impl OpenVinoEmbedder {
             })
             .collect()
     }
-
 }
 
 /// Single-text inference on an OpenVINO InferRequest.
@@ -571,8 +565,7 @@ fn ov_infer_single(
 ) -> Result<Vec<f32>> {
     let seq_len = input_ids.len() as i64;
 
-    let shape = openvino::Shape::new(&[1, seq_len])
-        .map_err(|e| anyhow!("shape error: {e:?}"))?;
+    let shape = openvino::Shape::new(&[1, seq_len]).map_err(|e| anyhow!("shape error: {e:?}"))?;
 
     let mut ids_tensor = openvino::Tensor::new(openvino::ElementType::I64, &shape)
         .map_err(|e| anyhow!("tensor error: {e:?}"))?;
@@ -595,7 +588,9 @@ fn ov_infer_single(
         .set_tensor("attention_mask", &mask_tensor)
         .map_err(|e| anyhow!("set attention_mask: {e:?}"))?;
 
-    request.infer().map_err(|e| anyhow!("infer failed: {e:?}"))?;
+    request
+        .infer()
+        .map_err(|e| anyhow!("infer failed: {e:?}"))?;
 
     // Output: last_hidden_state [1, seq_len, dim]
     let output = request
@@ -609,7 +604,11 @@ fn ov_infer_single(
     let dim = output_data.len() / seq;
 
     // Mean pooling weighted by attention mask
-    let mask_sum: f32 = attention_mask.iter().map(|&m| m as f32).sum::<f32>().max(1e-9);
+    let mask_sum: f32 = attention_mask
+        .iter()
+        .map(|&m| m as f32)
+        .sum::<f32>()
+        .max(1e-9);
     let mut embedding = vec![0.0f32; dim];
     for i in 0..seq {
         let m = attention_mask[i] as f32;

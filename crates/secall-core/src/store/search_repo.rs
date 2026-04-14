@@ -37,7 +37,7 @@ impl SearchRepo for Database {
         let since_str = filters.since.map(|dt| dt.to_rfc3339());
         let until_str = filters.until.map(|dt| dt.to_rfc3339());
 
-        // session_type 제외 조건 동적 생성 — 고정 파라미터 4개 이후부터 ?5, ?6, ...
+        // session_type 제외 조건 — 고정 파라미터 4개 이후부터 ?5, ?6, ...
         let exclude_clause = if filters.exclude_session_types.is_empty() {
             String::new()
         } else {
@@ -50,6 +50,23 @@ impl SearchRepo for Database {
             )
         };
 
+        // session_ids allowlist 조건 — exclude 이후 파라미터 위치
+        let base_idx = 5 + filters.exclude_session_types.len();
+        let allowlist_clause = match &filters.session_ids_allowlist {
+            Some(ids) if ids.is_empty() => {
+                // 빈 allowlist → 결과 없음 보장 (caller에서 이미 체크하지만 방어적으로)
+                "AND 1=0".to_string()
+            }
+            Some(ids) => {
+                let placeholders: String = (0..ids.len())
+                    .map(|i| format!("?{}", i + base_idx))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("AND turns_fts.session_id IN ({placeholders})")
+            }
+            None => String::new(),
+        };
+
         let sql = format!(
             "SELECT turns_fts.session_id, turns_fts.turn_id, turns_fts.content, bm25(turns_fts) as score
              FROM turns_fts
@@ -58,11 +75,12 @@ impl SearchRepo for Database {
                AND (?2 IS NULL OR sessions.start_time >= ?2)
                AND (?3 IS NULL OR sessions.start_time < ?3)
                {exclude_clause}
+               {allowlist_clause}
              ORDER BY score
              LIMIT ?4"
         );
 
-        // 고정 파라미터 + exclude_session_types 동적 파라미터
+        // 고정 파라미터 + exclude_session_types + allowlist 동적 파라미터
         let fixed: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
             Box::new(tokenized_query.to_string()),
             Box::new(since_str),
@@ -74,10 +92,18 @@ impl SearchRepo for Database {
             .iter()
             .map(|t| -> Box<dyn rusqlite::types::ToSql> { Box::new(t.clone()) })
             .collect();
+        let allowlist: Vec<Box<dyn rusqlite::types::ToSql>> = filters
+            .session_ids_allowlist
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|id| -> Box<dyn rusqlite::types::ToSql> { Box::new(id.clone()) })
+            .collect();
 
         let all_params: Vec<&dyn rusqlite::types::ToSql> = fixed
             .iter()
             .chain(exclude.iter())
+            .chain(allowlist.iter())
             .map(|b| b.as_ref())
             .collect();
 

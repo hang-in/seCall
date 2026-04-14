@@ -91,6 +91,22 @@ enum Commands {
         /// Include automated sessions in search results (excluded by default)
         #[arg(long)]
         include_automated: bool,
+
+        /// Skip related session graph traversal in output
+        #[arg(long)]
+        no_related: bool,
+
+        /// Filter by topic node in knowledge graph (e.g., "rust async")
+        #[arg(long)]
+        topic: Option<String>,
+
+        /// Filter by file node in knowledge graph (e.g., "src/main.rs")
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Filter by issue node in knowledge graph (e.g., "#42")
+        #[arg(long)]
+        issue: Option<String>,
     },
 
     /// Get a specific session or turn
@@ -352,6 +368,10 @@ async fn main() -> anyhow::Result<()> {
             vec,
             expand,
             include_automated,
+            no_related,
+            topic,
+            file,
+            issue,
         } => {
             commands::recall::run(
                 query,
@@ -363,6 +383,10 @@ async fn main() -> anyhow::Result<()> {
                 vec,
                 expand,
                 include_automated,
+                no_related,
+                topic,
+                file,
+                issue,
                 &cli.format,
             )
             .await?;

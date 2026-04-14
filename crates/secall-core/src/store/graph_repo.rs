@@ -268,9 +268,9 @@ impl Database {
 
             for node in &frontier {
                 // 나가는 엣지
-                let mut stmt = self.conn().prepare(
-                    "SELECT target, relation FROM graph_edges WHERE source = ?1",
-                )?;
+                let mut stmt = self
+                    .conn()
+                    .prepare("SELECT target, relation FROM graph_edges WHERE source = ?1")?;
                 let out: Vec<(String, String)> = stmt
                     .query_map([node], |r| {
                         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -279,9 +279,9 @@ impl Database {
                     .collect();
 
                 // 들어오는 엣지
-                let mut stmt = self.conn().prepare(
-                    "SELECT source, relation FROM graph_edges WHERE target = ?1",
-                )?;
+                let mut stmt = self
+                    .conn()
+                    .prepare("SELECT source, relation FROM graph_edges WHERE target = ?1")?;
                 let inc: Vec<(String, String)> = stmt
                     .query_map([node], |r| {
                         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -397,15 +397,15 @@ impl Database {
         let label_pattern = format!("%{}%", label_query.to_lowercase());
 
         let mut target_nodes: Vec<String> = {
-            let mut stmt = self.conn().prepare(
-                "SELECT id FROM graph_nodes WHERE id LIKE ?1 AND lower(label) LIKE ?2",
-            )?;
-            let rows = stmt.query_map(
-                rusqlite::params![node_id_pattern, label_pattern],
-                |r| r.get::<_, String>(0),
-            )?
-            .filter_map(|r| r.ok())
-            .collect();
+            let mut stmt = self
+                .conn()
+                .prepare("SELECT id FROM graph_nodes WHERE id LIKE ?1 AND lower(label) LIKE ?2")?;
+            let rows = stmt
+                .query_map(rusqlite::params![node_id_pattern, label_pattern], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
             rows
         };
 

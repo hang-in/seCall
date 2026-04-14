@@ -509,7 +509,6 @@ fn default_model_path() -> std::path::PathBuf {
         .join("bge-m3-onnx")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

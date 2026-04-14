@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
-const MODEL_DATA_URL: &str =
-    "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx_data";
+const MODEL_DATA_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx_data";
 const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
 const HF_API_URL: &str = "https://huggingface.co/api/models/BAAI/bge-m3";
 

@@ -3,8 +3,8 @@ use secall_core::{
     search::hybrid::parse_temporal_filter,
     search::query_expand::expand_query,
     search::tokenizer::create_tokenizer,
-    search::{Bm25Indexer, SearchEngine, SearchFilters},
-    store::{get_default_db_path, Database},
+    search::{Bm25Indexer, GraphFilter, SearchEngine, SearchFilters},
+    store::{get_default_db_path, Database, RelatedSession},
     vault::Config,
 };
 
@@ -21,6 +21,10 @@ pub async fn run(
     vec_only: bool,
     expand: bool,
     include_automated: bool,
+    no_related: bool,
+    topic: Option<String>,
+    file: Option<String>,
+    issue: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
     if query.is_empty() {
@@ -53,12 +57,25 @@ pub async fn run(
     } else {
         vec!["automated".to_string()]
     };
+
+    // graph_filter: --topic, --file, --issue 중 첫 번째 지정된 것 적용
+    let graph_filter = if let Some(t) = topic {
+        Some(GraphFilter::Topic(t))
+    } else if let Some(f) = file {
+        Some(GraphFilter::File(f))
+    } else if let Some(i) = issue {
+        Some(GraphFilter::Issue(i))
+    } else {
+        None
+    };
+
     let filters = SearchFilters {
         project,
         agent,
         since: since_filter,
         until: until_filter,
         exclude_session_types,
+        graph_filter,
         ..Default::default()
     };
 
@@ -85,9 +102,54 @@ pub async fn run(
 
     if results.is_empty() {
         println!("No results found for: {}", query_str);
-    } else {
-        print_search_results(&results, format);
+        return Ok(());
+    }
+
+    print_search_results(&results, format);
+
+    // 관련 세션 그래프 탐색 (--no-related가 없고, text 포맷일 때만)
+    if !no_related && matches!(format, OutputFormat::Text) {
+        let seed_ids: Vec<&str> = results
+            .iter()
+            .map(|r| r.session_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let related = db.get_related_sessions(&seed_ids, 2, 5).unwrap_or_default();
+        print_related_sessions(&related);
     }
 
     Ok(())
+}
+
+fn print_related_sessions(related: &[RelatedSession]) {
+    if related.is_empty() {
+        return;
+    }
+    println!("─── 관련 세션 ───────────────────────────────────────");
+    for r in related {
+        let hop_label = match r.hop_count {
+            1 => "직접",
+            2 => "2홉",
+            _ => "3홉",
+        };
+        println!(
+            "  [{}] ({}) {} — {} {}",
+            hop_label,
+            r.relation,
+            r.project.as_deref().unwrap_or("?"),
+            r.date,
+            r.agent,
+        );
+        if let Some(summary) = &r.summary {
+            let short: String = summary.chars().take(80).collect();
+            println!("      {}", short);
+        }
+        println!(
+            "      → secall get {}",
+            &r.session_id[..r.session_id.len().min(8)]
+        );
+        println!();
+    }
 }
