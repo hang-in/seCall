@@ -114,22 +114,15 @@ seCall을 Obsidian 안에서 직접 사용할 수 있게 한다.
 
 **공수**: 2~3주
 
-## Subtasks
+## Subtasks (P25 범위: Phase 0-1)
 
 | # | Phase | 제목 | 핵심 파일 | depends_on |
 |---|-------|------|-----------|------------|
 | 01 | 0 | REST API 서버 (`secall serve`) | commands/serve.rs (신규) | 없음 |
 | 02 | 1 | Obsidian 플러그인 scaffold + recall | obsidian-secall/ (신규 디렉토리) | 01 |
 | 03 | 1 | 세션 조회 + 상태바 | obsidian-secall/src/ | 02 |
-| 04 | 2 | 데일리 노트 자동 생성 | obsidian-secall/src/ | 03 |
-| 05 | 2 | vault wikilink 생성 (`secall graph link`) | vault.rs, graph_repo.rs | 없음 |
-| 06 | 2 | Graph 탐색 뷰 | obsidian-secall/src/ | 03 |
-| 07 | 3 | Ingest 트리거 + SSE | serve.rs, obsidian-secall/ | 01, 03 |
-| 08 | 3 | Canvas 그래프 시각화 | obsidian-secall/src/ | 06 |
 
-Task 01, 05: 병렬 가능.
 Task 02~03: 순차 (01 완료 후).
-Task 04, 06: 순차 (03 완료 후), 상호 독립.
 
 ## 활용 시나리오
 
@@ -144,34 +137,25 @@ Task 04, 06: 순차 (03 완료 후), 상호 독립.
 - 결과 클릭 → vault 내 세션 MD 파일 바로 열기
 - 하단 상태바에 "seCall: 694 sessions, vectors ✓" 표시
 
-### Phase 2 완료 시
-- 매일 아침 Obsidian 열면 데일리 노트에 어제 작업 요약이 있음
-  ```markdown
-  # 2026-04-14 작업 일지
-
-  ## seCall (4 sessions)
-  - P24 GitHub 이슈 4건 일괄 수정 (#19, #21, #22, #23)
-  - PR #20 OpenVINO backend 리뷰 + 머지
-  - Wiki 파이프라인 검증 완료
-
-  ## tunaFlow (2 sessions)
-  - MCP 서버 설계 논의
-  ```
-- Obsidian Graph View에서 세션 간 관계 시각적 탐색
-- 토픽 "rust async" 클릭 → 관련 세션 5개 바로 확인
-
-### Phase 3 완료 시
-- Obsidian 안에서 ingest 버튼 → 새 세션 자동 수집 + 진행률 표시
-- Canvas에 그래프 노드를 시각적으로 배치하여 프로젝트 관계도 작성
-
 ## 비용/위험
 
 | 위험 | 대응 |
 |------|------|
 | REST + MCP 이중 API | 공통 로직 레이어로 해결. REST는 얇은 라우터만 |
-| Obsidian 모바일 | requestUrl/EventSource 모두 모바일 지원. child_process는 데스크톱 전용이므로 서버 자동 시작만 제한 |
+| Obsidian 모바일 | requestUrl 모바일 지원. child_process는 데스크톱 전용이므로 서버 자동 시작만 제한 |
 | 플러그인 배포 | 초기에는 수동 설치 (BRAT), 안정화 후 커뮤니티 스토어 등록 |
-| SSE 연결 관리 | Phase 3에서만 필요. MVP는 requestUrl만으로 충분 |
+
+## 향후 작업 (Phase 2-3, P25 범위 밖)
+
+### Phase 2 — 데일리 노트 + Graph 탐색
+- 데일리 노트 자동 생성 (temporal recall → 프로젝트별 그룹핑)
+- Graph 탐색 뷰 (인터랙티브 트리)
+- vault 세션 MD에 wikilink 자동 생성 (`secall graph link`)
+
+### Phase 3 — 고급 기능
+- Ingest 트리거 + SSE 진행률
+- Sync 상태 모니터링
+- Canvas 그래프 시각화
 
 ## 테스트 기준선 (2026-04-14)
 

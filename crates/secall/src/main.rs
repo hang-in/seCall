@@ -166,6 +166,13 @@ enum Commands {
         http: Option<String>,
     },
 
+    /// Start REST API server for Obsidian plugin and external clients
+    Serve {
+        /// Port number (default: 8080)
+        #[arg(long, short, default_value = "8080")]
+        port: u16,
+    },
+
     /// Manage ONNX embedding models
     Model {
         #[command(subcommand)]
@@ -416,6 +423,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Mcp { http } => {
             commands::mcp::run(http).await?;
+        }
+        Commands::Serve { port } => {
+            commands::serve::run(port).await?;
         }
         Commands::Model { action } => match action {
             ModelAction::Download { force } => {
