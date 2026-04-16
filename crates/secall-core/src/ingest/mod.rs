@@ -6,6 +6,7 @@ pub mod claude_ai;
 pub mod codex;
 pub mod detect;
 pub mod gemini;
+pub mod gemini_web;
 pub mod lint;
 pub mod markdown;
 pub mod types;

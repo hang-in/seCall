@@ -10,6 +10,7 @@ pub enum AgentKind {
     ChatGpt,
     Codex,
     GeminiCli,
+    GeminiWeb,
 }
 
 impl AgentKind {
@@ -20,6 +21,7 @@ impl AgentKind {
             AgentKind::ChatGpt => "chatgpt",
             AgentKind::Codex => "codex",
             AgentKind::GeminiCli => "gemini-cli",
+            AgentKind::GeminiWeb => "gemini-web",
         }
     }
 }

@@ -444,6 +444,7 @@ impl Database {
             "claude-ai" => AgentKind::ClaudeAi,
             "codex" => AgentKind::Codex,
             "gemini-cli" => AgentKind::GeminiCli,
+            "gemini-web" => AgentKind::GeminiWeb,
             "chatgpt" => AgentKind::ChatGpt,
             _ => AgentKind::ClaudeCode,
         };

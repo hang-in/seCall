@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 
 use super::{
     chatgpt::ChatGptParser, claude::ClaudeCodeParser, claude_ai::ClaudeAiParser,
-    codex::CodexParser, gemini::GeminiParser, SessionParser,
+    codex::CodexParser, gemini::GeminiParser, gemini_web::GeminiWebParser, SessionParser,
 };
 
 pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
@@ -27,6 +27,28 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
     if ext == "zip" {
         if let Ok(data) = std::fs::read(path) {
             if data.starts_with(b"PK\x03\x04") {
+                // GeminiWeb: 아카이브 내 첫 .json 파일의 projectHash 확인
+                if let Ok(mut archive) =
+                    zip::ZipArchive::new(std::io::Cursor::new(&data))
+                {
+                    let names: Vec<String> =
+                        archive.file_names().map(|s| s.to_owned()).collect();
+                    if let Some(name) = names.iter().find(|n| n.ends_with(".json")) {
+                        if let Ok(mut f) = archive.by_name(name) {
+                            let mut raw = String::new();
+                            if std::io::Read::read_to_string(&mut f, &mut raw).is_ok() {
+                                if let Ok(v) =
+                                    serde_json::from_str::<serde_json::Value>(&raw)
+                                {
+                                    if v["projectHash"].as_str() == Some("gemini-web") {
+                                        return Ok(Box::new(GeminiWebParser));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let Ok(file) = std::fs::File::open(path) {
                     if let Ok(mut archive) = zip::ZipArchive::new(file) {
                         if let Ok(mut conversations) = archive.by_name("conversations.json") {
