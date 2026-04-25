@@ -11,6 +11,7 @@ pub enum AgentKind {
     Codex,
     GeminiCli,
     GeminiWeb,
+    OpenCode,
 }
 
 impl AgentKind {
@@ -22,6 +23,7 @@ impl AgentKind {
             AgentKind::Codex => "codex",
             AgentKind::GeminiCli => "gemini-cli",
             AgentKind::GeminiWeb => "gemini-web",
+            AgentKind::OpenCode => "opencode",
         }
     }
 }

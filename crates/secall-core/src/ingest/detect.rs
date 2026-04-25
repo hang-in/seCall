@@ -5,7 +5,8 @@ use anyhow::{anyhow, Result};
 
 use super::{
     chatgpt::ChatGptParser, claude::ClaudeCodeParser, claude_ai::ClaudeAiParser,
-    codex::CodexParser, gemini::GeminiParser, gemini_web::GeminiWebParser, SessionParser,
+    codex::CodexParser, gemini::GeminiParser, gemini_web::GeminiWebParser,
+    opencode::OpenCodeParser, SessionParser,
 };
 
 pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
@@ -87,13 +88,17 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
                 }
             }
 
-            // Gemini: single JSON file — check if first char is '{'
-            // and it has "messages" array (need full parse, limited to < 100MB)
+            // JSON object: full parse for opencode / Gemini (limited to < 100MB)
             if first_line.trim_start().starts_with('{') {
                 if let Ok(metadata) = std::fs::metadata(path) {
                     if metadata.len() < 100 * 1024 * 1024 {
                         if let Ok(raw) = std::fs::read_to_string(path) {
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                // opencode: top-level "info" with "id" + "messages" array
+                                if v["info"]["id"].is_string() && v["messages"].is_array() {
+                                    return Ok(Box::new(OpenCodeParser));
+                                }
+                                // Gemini: "messages" array with parts sub-array
                                 if v["messages"].is_array() && v["messages"][0]["parts"].is_array()
                                 {
                                     return Ok(Box::new(GeminiParser));
@@ -381,6 +386,59 @@ mod tests {
         assert_eq!(
             parser.agent_kind(),
             super::super::types::AgentKind::ClaudeAi
+        );
+    }
+
+    #[test]
+    fn test_detect_opencode_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ses_abc123.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "info": {
+                "id": "ses_abc123",
+                "slug": "test-session",
+                "projectID": "proj1",
+                "directory": "/Users/user/projects/myapp",
+                "title": "Test session",
+                "version": "1.14.24",
+                "time": { "created": 1777090810040, "updated": 1777091142209 }
+              },
+              "messages": [
+                {
+                  "info": {
+                    "role": "user",
+                    "id": "msg_001",
+                    "sessionID": "ses_abc123",
+                    "time": { "created": 1777090810253 }
+                  },
+                  "parts": [
+                    { "type": "text", "text": "Hello", "id": "prt_001", "sessionID": "ses_abc123", "messageID": "msg_001" }
+                  ]
+                },
+                {
+                  "info": {
+                    "role": "assistant",
+                    "id": "msg_002",
+                    "sessionID": "ses_abc123",
+                    "model": { "providerID": "llama", "modelID": "Qwen3.6-35B" },
+                    "time": { "created": 1777090820000 }
+                  },
+                  "parts": [
+                    { "type": "step-start", "snapshot": {} },
+                    { "type": "text", "text": "Hi there!", "id": "prt_002", "sessionID": "ses_abc123", "messageID": "msg_002" }
+                  ]
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let parser = detect_parser(&path).unwrap();
+        assert_eq!(
+            parser.agent_kind(),
+            super::super::types::AgentKind::OpenCode
         );
     }
 }

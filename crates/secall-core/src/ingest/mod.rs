@@ -8,6 +8,7 @@ pub mod detect;
 pub mod gemini;
 pub mod gemini_web;
 pub mod lint;
+pub mod opencode;
 pub mod markdown;
 pub mod types;
 
