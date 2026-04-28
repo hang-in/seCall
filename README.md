@@ -480,12 +480,11 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 ```json
 {
   "hooks": {
-    "PreToolUse": [{
-      "matcher": "Initialize",
+    "SessionStart": [{
+      "matcher": "startup|resume",
       "hooks": [{"type": "command", "command": "secall sync --local-only"}]
     }],
-    "PostToolUse": [{
-      "matcher": "Exit",
+    "SessionEnd": [{
       "hooks": [{"type": "command", "command": "secall sync"}]
     }]
   }
