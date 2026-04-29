@@ -65,15 +65,14 @@ secall sync
 ```json
 {
   "hooks": {
-    "PreToolUse": [{
-      "matcher": "Initialize",
+    "SessionStart": [{
+      "matcher": "startup|resume",
       "hooks": [{
         "type": "command",
         "command": "secall sync --local-only"
       }]
     }],
-    "PostToolUse": [{
-      "matcher": "Exit",
+    "SessionEnd": [{
       "hooks": [{
         "type": "command",
         "command": "secall sync"

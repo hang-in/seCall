@@ -261,8 +261,7 @@ fn print_completion_hints() {
     println!(
         r#"{{
   "hooks": {{
-    "PostToolUse": [{{
-      "matcher": "Exit",
+    "SessionEnd": [{{
       "hooks": [{{"type": "command", "command": "secall ingest --auto --cwd $PWD"}}]
     }}]
   }}
