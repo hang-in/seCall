@@ -122,11 +122,7 @@ pub fn parse_opencode_json(path: &Path) -> Result<Session> {
         };
 
         if role == Role::Assistant && session_model.is_none() {
-            session_model = msg
-                .info
-                .model
-                .as_ref()
-                .and_then(|m| m.model_id.clone());
+            session_model = msg.info.model.as_ref().and_then(|m| m.model_id.clone());
         }
 
         let content: String = msg
