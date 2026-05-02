@@ -3,3 +3,5 @@
 *.swo
 .DS_Store
 desktop_conversation/
+web/dist/
+web/node_modules/
