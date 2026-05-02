@@ -318,12 +318,14 @@ pub async fn run_rebuild_cli(args: GraphRebuildArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     /// `run_rebuild` 는 `SECALL_DB_PATH` 환경변수를 통해 DB 를 연다.
     /// 테스트들이 병렬 실행될 때 같은 환경변수를 동시에 set/unset 하면 race 가 발생하므로
     /// 환경변수 변경을 직렬화한다.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // P37 rework — tokio::sync::Mutex 사용 (clippy::await_holding_lock 회피).
+    // std::sync::Mutex 가드를 .await 너머로 들고 가면 CI -D warnings 모드에서 error.
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     /// vault_path 가 설정되지 않은(또는 vault 가 비어있는) 세션은
     /// `extract_one_session_semantic` 이 Skipped 로 판정한다.
@@ -352,7 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_rebuild_retry_failed_only_processes_null_sessions() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("index.sqlite");
         std::env::set_var("SECALL_DB_PATH", &path);
@@ -384,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_rebuild_session_filter_processes_one() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("index.sqlite");
         std::env::set_var("SECALL_DB_PATH", &path);
