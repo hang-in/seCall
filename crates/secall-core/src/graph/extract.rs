@@ -1,8 +1,11 @@
+use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::ingest::markdown::SessionFrontmatter;
+use crate::error::Result;
+use crate::ingest::markdown::{extract_body_text, parse_session_frontmatter, SessionFrontmatter};
+use crate::store::Database;
 
 // ─── 컴파일된 정규식 (OnceLock) ───────────────────────────────────────────────
 
@@ -291,6 +294,132 @@ pub fn extract_session_relations(sessions: &[SessionFrontmatter]) -> Vec<GraphEd
     }
 
     edges
+}
+
+/// 단일/소수 세션 대상 그래프 증분 추출 결과.
+#[derive(Debug, Default)]
+pub struct GraphIncrementalReport {
+    pub nodes_added: usize,
+    pub edges_added: usize,
+    pub sessions_processed: usize,
+}
+
+/// 신규 세션 ID 목록만 받아 graph_nodes/graph_edges에 증분 추가한다.
+///
+/// - 노드: `INSERT OR REPLACE`(`upsert_graph_node`) — 기존 노드는 라벨/메타가 갱신될 수 있음.
+/// - 엣지: `INSERT OR IGNORE`(`upsert_graph_edge`) — 동일 (source,target,relation) 중복 무시.
+/// - 본 함수는 **신규 세션 자체 노드 + 출엣지**만 추가한다 (frontmatter 기반 + rule-based
+///   semantic edges). cross-session 관계 엣지(same_project, same_day)는 전체 vault 순회가
+///   필요하므로 본 증분 함수에서는 생성하지 않는다 — 사용자는 주기적으로
+///   `secall graph build`를 실행해 cross-session 엣지를 갱신해야 한다.
+///
+/// 세션 markdown은 다음 우선순위로 찾는다.
+/// 1. `db.get_session_vault_path(session_id)`로 등록된 상대 경로
+/// 2. fallback 으로 `vault_path/raw/sessions/{date}/{id}.md` 직접 탐색은 하지 않음
+///    (vault_path가 등록되지 않은 세션은 skip 후 카운트는 sessions_processed에 미포함).
+pub fn extract_for_sessions(
+    db: &Database,
+    vault_path: &Path,
+    session_ids: &[String],
+) -> Result<GraphIncrementalReport> {
+    let mut nodes_added = 0usize;
+    let mut edges_added = 0usize;
+    let mut sessions_processed = 0usize;
+
+    if session_ids.is_empty() {
+        return Ok(GraphIncrementalReport::default());
+    }
+
+    db.with_transaction(|| {
+        for session_id in session_ids {
+            // vault_path 등록 여부 확인
+            let rel = match db.get_session_vault_path(session_id)? {
+                Some(p) if !p.is_empty() => p,
+                _ => {
+                    tracing::debug!(
+                        session = %session_id,
+                        "skip graph incremental: no vault_path"
+                    );
+                    continue;
+                }
+            };
+
+            let md_path = vault_path.join(&rel);
+            let content = match std::fs::read_to_string(&md_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        session = %session_id,
+                        path = %md_path.display(),
+                        error = %e,
+                        "skip graph incremental: cannot read vault file"
+                    );
+                    continue;
+                }
+            };
+
+            let fm = match parse_session_frontmatter(&content) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(
+                        session = %session_id,
+                        error = %e,
+                        "skip graph incremental: failed to parse frontmatter"
+                    );
+                    continue;
+                }
+            };
+
+            // 1. frontmatter 기반 노드/엣지
+            let result = extract_from_frontmatter(&fm);
+            for node in &result.nodes {
+                db.upsert_graph_node(&node.id, &node.node_type, &node.label, node.meta.as_deref())?;
+                nodes_added += 1;
+            }
+            for edge in &result.edges {
+                let inserted = db.upsert_graph_edge(
+                    &edge.source,
+                    &edge.target,
+                    &edge.relation,
+                    &edge.confidence,
+                    edge.weight,
+                )?;
+                edges_added += inserted;
+            }
+
+            // 2. rule-based semantic edges (fixes_bug, modifies_file)
+            let body = extract_body_text(&content);
+            let semantic = extract_semantic_edges(&fm, &body);
+            for edge in &semantic {
+                let (target_type, target_label) =
+                    if let Some(num) = edge.target.strip_prefix("issue:") {
+                        ("issue", num)
+                    } else if let Some(path) = edge.target.strip_prefix("file:") {
+                        ("file", path)
+                    } else {
+                        ("unknown", edge.target.as_str())
+                    };
+                db.upsert_graph_node(&edge.target, target_type, target_label, None)?;
+                let inserted = db.upsert_graph_edge(
+                    &edge.source,
+                    &edge.target,
+                    &edge.relation,
+                    &edge.confidence,
+                    edge.weight,
+                )?;
+                edges_added += inserted;
+            }
+
+            sessions_processed += 1;
+        }
+        Ok(())
+    })?;
+
+    Ok(GraphIncrementalReport {
+        nodes_added,
+        edges_added,
+        sessions_processed,
+    })
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ sha2.workspace = true
 regex.workspace = true
 futures-util.workspace = true
 axum.workspace = true
+axum-extra.workspace = true
 tower-http.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -34,7 +35,10 @@ tracing.workspace = true
 gethostname.workspace = true
 serde_yaml.workspace = true
 zip.workspace = true
+uuid.workspace = true
 tempfile = "3.27.0"
+rust-embed = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
 openvino = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
 
@@ -45,7 +49,9 @@ kiwi-rs.workspace = true
 usearch.workspace = true
 
 [features]
+default = ["web-ui"]
 openvino = ["dep:openvino", "dep:libloading"]
+web-ui = ["dep:rust-embed", "dep:mime_guess"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }

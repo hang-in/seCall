@@ -10,6 +10,7 @@ use secall_core::{
         },
         AgentKind,
     },
+    jobs::ProgressSink,
     search::tokenizer::create_tokenizer,
     search::{Bm25Indexer, SearchEngine},
     store::{get_default_db_path, Database, SessionRepo},
@@ -17,6 +18,40 @@ use secall_core::{
 };
 
 use crate::output::{print_ingest_result, OutputFormat};
+
+/// `ingest` 명령 인자 — REST DTO/Job 어댑터에서 동일 구조 사용.
+///
+/// P33 Task 03(REST 핸들러)에서 어댑터를 통해 사용된다.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct IngestArgs {
+    pub path: Option<String>,
+    pub auto: bool,
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub min_turns: usize,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default)]
+    pub no_semantic: bool,
+    /// ingest 후 신규 세션을 graph에 자동 증분 추가 (기본: false)
+    #[serde(default)]
+    pub auto_graph: bool,
+}
+
+/// `ingest` 결과 요약 — REST 응답 / SSE Done payload용.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct IngestOutcome {
+    pub ingested: usize,
+    pub skipped: usize,
+    pub errors: usize,
+    pub skipped_min_turns: usize,
+    pub hook_failures: usize,
+    pub new_session_ids: Vec<String>,
+    /// auto_graph로 추가된 graph 노드 수 (auto_graph=true 시에만 Some)
+    pub graph_nodes_added: Option<usize>,
+    /// auto_graph로 추가된 graph 엣지 수 (auto_graph=true 시에만 Some)
+    pub graph_edges_added: Option<usize>,
+}
 
 #[derive(Debug, serde::Serialize)]
 pub struct IngestError {
@@ -46,6 +81,7 @@ pub struct IngestStats {
     pub error_details: Vec<IngestError>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     path: Option<String>,
     auto: bool,
@@ -53,6 +89,7 @@ pub async fn run(
     min_turns: usize,
     force: bool,
     no_semantic: bool,
+    auto_graph: bool,
     format: &OutputFormat,
 ) -> Result<()> {
     let config = Config::load_or_default();
@@ -139,7 +176,149 @@ pub async fn run(
         return Err(anyhow!("all sessions failed"));
     }
 
+    // auto_graph: 신규 세션을 graph에 증분 추가
+    if auto_graph && !stats.new_session_ids.is_empty() {
+        match secall_core::graph::extract::extract_for_sessions(
+            &db,
+            &config.vault.path,
+            &stats.new_session_ids,
+        ) {
+            Ok(report) => {
+                eprintln!(
+                    "Graph: {} nodes / {} edges added for {} session(s)",
+                    report.nodes_added, report.edges_added, report.sessions_processed
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "graph incremental failed");
+                eprintln!("Graph incremental failed: {e}");
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Progress 보고가 가능한 ingest 본체. CLI는 NoopSink, REST/Job은 BroadcastSink로 호출.
+///
+/// 기존 `run`이 수행하는 print 출력은 IngestOutcome 직렬화에 포함되지 않으므로
+/// REST 응답에 필요한 통계만 IngestOutcome으로 반환한다. 내부 호출은 동일한
+/// `ingest_sessions`를 사용하므로 핵심 로직 회귀는 발생하지 않는다.
+pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Result<IngestOutcome> {
+    let IngestArgs {
+        path,
+        auto,
+        cwd,
+        min_turns,
+        force,
+        no_semantic,
+        auto_graph,
+    } = args;
+
+    let config = Config::load_or_default();
+    let db_path = get_default_db_path();
+    let db = Database::open(&db_path)?;
+    let vault = Vault::new(config.vault.path.clone());
+    vault.init()?;
+
+    let tok = create_tokenizer(&config.search.tokenizer)
+        .map_err(|e| anyhow!("tokenizer init failed: {e}"))?;
+    let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
+    let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
+
+    // ── detect phase ──
+    sink.phase_start("detect").await;
+    let paths = collect_paths(path.as_deref(), auto, cwd.as_deref())?;
+    sink.message(&format!("Detected {} session file(s).", paths.len()))
+        .await;
+    sink.phase_complete("detect", Some(serde_json::json!({ "count": paths.len() })))
+        .await;
+
+    if paths.is_empty() {
+        return Ok(IngestOutcome::default());
+    }
+
+    // ── parse_and_insert phase ──
+    sink.phase_start("parse_and_insert").await;
+    let stats = ingest_sessions(
+        &config,
+        &db,
+        paths,
+        &engine,
+        &vault,
+        min_turns,
+        force,
+        no_semantic,
+        &OutputFormat::Text,
+    )
+    .await?;
+    sink.message(&format!(
+        "{} ingested, {} skipped, {} errors.",
+        stats.ingested, stats.skipped, stats.errors
+    ))
+    .await;
+    sink.phase_complete(
+        "parse_and_insert",
+        Some(serde_json::json!({
+            "ingested": stats.ingested,
+            "skipped": stats.skipped,
+            "errors": stats.errors,
+        })),
+    )
+    .await;
+
+    if stats.ingested == 0 && stats.errors > 0 {
+        return Err(anyhow!("all sessions failed"));
+    }
+
+    let mut outcome = IngestOutcome {
+        ingested: stats.ingested,
+        skipped: stats.skipped,
+        errors: stats.errors,
+        skipped_min_turns: stats.skipped_min_turns,
+        hook_failures: stats.hook_failures,
+        new_session_ids: stats.new_session_ids,
+        graph_nodes_added: None,
+        graph_edges_added: None,
+    };
+
+    // ── graph phase (auto_graph) ──
+    if auto_graph && !outcome.new_session_ids.is_empty() {
+        sink.phase_start("graph").await;
+        match secall_core::graph::extract::extract_for_sessions(
+            &db,
+            &config.vault.path,
+            &outcome.new_session_ids,
+        ) {
+            Ok(report) => {
+                sink.message(&format!(
+                    "graph: {} nodes / {} edges added ({} sessions processed).",
+                    report.nodes_added, report.edges_added, report.sessions_processed
+                ))
+                .await;
+                outcome.graph_nodes_added = Some(report.nodes_added);
+                outcome.graph_edges_added = Some(report.edges_added);
+                sink.phase_complete(
+                    "graph",
+                    Some(serde_json::json!({
+                        "nodes_added": report.nodes_added,
+                        "edges_added": report.edges_added,
+                        "sessions_processed": report.sessions_processed,
+                    })),
+                )
+                .await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "graph incremental failed");
+                sink.message(&format!("graph incremental failed: {e}"))
+                    .await;
+                sink.phase_complete("graph", Some(serde_json::json!({ "error": e.to_string() })))
+                    .await;
+            }
+        }
+    }
+
+    Ok(outcome)
 }
 
 /// ingest 핵심 로직 — sync.rs에서도 재사용

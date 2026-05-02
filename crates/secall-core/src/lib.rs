@@ -3,10 +3,13 @@ pub mod error;
 pub mod graph;
 pub mod hooks;
 pub mod ingest;
+pub mod jobs;
 pub mod mcp;
 pub mod search;
 pub mod store;
 pub mod vault;
+#[cfg(feature = "web-ui")]
+pub mod web;
 pub mod wiki;
 
 pub use error::{Result, SecallError};
