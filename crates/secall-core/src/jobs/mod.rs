@@ -20,6 +20,7 @@ pub use types::{JobKind, JobState, JobStatus, ProgressEvent};
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 /// Job 본체 코드(예: sync, ingest)가 progress를 보고할 때 사용하는 추상화.
 ///
@@ -31,19 +32,32 @@ pub trait ProgressSink: Send + Sync {
     async fn message(&self, text: &str);
     async fn progress(&self, ratio: f32);
     async fn phase_complete(&self, phase: &str, result: Option<serde_json::Value>);
+
+    /// P36 Task 01 — cancellation 폴링용 hook.
+    ///
+    /// 어댑터(Task 02)가 안전 지점마다 호출하여 자발적으로 종료할 수 있도록 한다.
+    /// 호출 비용은 atomic load 한 번이므로 hot loop 안에서도 자유롭게 호출 가능하다.
+    /// 기존 sink 구현체를 깨지 않기 위해 default `false` 를 반환한다.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// `broadcast::Sender<ProgressEvent>`를 `ProgressSink`로 어댑팅.
 ///
 /// Executor가 spawn한 Job 본체에 넘겨주는 기본 구현. 구독자가 없으면
 /// `send`가 Err를 반환하지만 의도된 동작이므로 무시한다.
+///
+/// P36 Task 01 — Job 별 `CancellationToken` 을 보유하고, 어댑터가
+/// `is_cancelled()` 로 폴링할 수 있도록 한다.
 pub struct BroadcastSink {
     pub tx: broadcast::Sender<ProgressEvent>,
+    pub cancel_token: CancellationToken,
 }
 
 impl BroadcastSink {
-    pub fn new(tx: broadcast::Sender<ProgressEvent>) -> Self {
-        Self { tx }
+    pub fn new(tx: broadcast::Sender<ProgressEvent>, cancel_token: CancellationToken) -> Self {
+        Self { tx, cancel_token }
     }
 }
 
@@ -70,5 +84,9 @@ impl ProgressSink for BroadcastSink {
             phase: phase.to_string(),
             result,
         });
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
     }
 }

@@ -145,7 +145,10 @@ secall serve --port 8080
   - `true` (기본): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
   - `false`: `{ "tags": ["rust", "search", ...] }`
 - 명령 (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
-- Job 관리 (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, v1.1 예정)
+- Job 관리 (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE)
+- Job 취소 (P36): `POST /api/jobs/{id}/cancel`
+  - 200: `{ "cancelled": true, "job_id": "..." }` — 활성 job 취소 성공 (이미 완료/취소된 job 도 동일 응답으로 idempotent)
+  - 404: `{ "error": "job not found or already evicted" }` — 미등록 / evict 됨
 
 **Web UI** (`web/`, P32 Phase 0 + P33 Phase 1):
 - 다크 모드 우선 모던 UI (Tailwind + shadcn/ui + Pretendard/Geist Sans)
@@ -334,6 +337,15 @@ secall serve --port 8080
 - SessionList 무한 스크롤 — IntersectionObserver 기반 자동 로드 (page_size=100)
 - Code-split — 라우트별 + vendor (react/query/radix/viz) chunk 분리, 초기 진입 JS ≤ 250 kB (gzip)
 
+**Job Cancellation** (P36, 실행 중 작업 취소):
+- 실행 중 sync / ingest / wiki-update 작업을 안전하게 중단 가능
+- `tokio_util::sync::CancellationToken` 기반 — `JobRegistry` / `JobExecutor` / `BroadcastSink` 통합, `ProgressSink::is_cancelled()` 노출
+- 어댑터(sync/ingest/wiki) 가 안전 지점에서 polling — phase 사이, file/session 루프 시작, LLM 호출 직전
+- 부분 결과 보존 — 예: ingest 100건 중 50건 처리 후 취소 → 결과 JSON 에 `ingested=50` 그대로 기록
+- 취소 시 최종 SSE 이벤트: `Failed { error: "cancelled by user", partial_result: None }`, job 상태는 `Interrupted` 로 강제
+- REST: `POST /api/jobs/{id}/cancel` — 활성 200, idempotent 200, 미등록/evict 404
+- Web UI: `JobBanner` 와 활성 `JobItem` 에 **취소** 버튼 + `window.confirm` 다이얼로그 (`useCancelJob` mutation hook)
+
 ### 키보드 단축키 (Phase 2)
 
 | 키 | 동작 |
@@ -374,7 +386,7 @@ secall wiki update --backend claude
 5. **Read 작업** (검색, 세션 조회 등)은 동시 무제한
 6. 서버 재시작 시 `running`/`started` 상태 jobs는 자동으로 `interrupted`로 갱신
 7. 7일 이상된 완료/실패/중단 jobs는 시작 시 자동 cleanup
-8. Cancellation은 MVP 미포함 — `POST /api/jobs/:id/cancel` 호출 시 `501 Not Implemented` (v1.1 예정)
+8. **Cancellation 지원** (P36) — `POST /api/jobs/{id}/cancel` 로 활성 job 취소 (200 idempotent / 404 unknown). 어댑터가 phase 사이·루프·LLM 호출 직전 안전 지점에서 polling 하여 부분 결과를 보존하고, job 상태는 `Interrupted` 로 종료
 
 #### Phase 분리 (sync 예시)
 
@@ -725,6 +737,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-02 | v0.7.0 | Job Cancellation (P36): `tokio_util::sync::CancellationToken` 통합 (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` 추가, sync/ingest/wiki 어댑터 safe-point polling (phase 사이·file/session 루프·LLM 호출 직전), 부분 결과 보존, `POST /api/jobs/{id}/cancel` 활성화 (200 idempotent / 404 unknown, 최종 이벤트 `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI 취소 버튼 (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
 | 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` 엔드포인트 (with_counts 옵션, 100세션 휴리스틱 제거), SessionList 무한 스크롤 (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunk, 초기 진입 JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): 시맨틱 검색 모드 활성, 검색어 하이라이트, 다중 태그 + 날짜 quick range, 키보드 단축키 (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), 관련 세션 패널, 그래프 시각화 강화 (dagre + 노드 색상/아이콘 + 범례), 세션 메타 mini-chart, 사용자 노트 편집 (`PATCH /api/sessions/{id}/notes`), DB 스키마 v7 |
 | 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): 명령 트리거 (Sync/Ingest/Wiki Update), SSE 진행 스트리밍 (phase별), Job 시스템 (단일 큐 + 7일 cleanup + interrupted 보정), 글로벌 진행 배너 + toast, 그래프 자동 증분 (`secall ingest --auto-graph`, `secall sync --no-graph`), 위키 본문 GET 엔드포인트 (`/api/wiki/{project}`), DB v6 (`jobs` 테이블) |

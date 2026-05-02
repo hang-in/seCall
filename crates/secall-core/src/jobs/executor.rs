@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::{broadcast, Mutex};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::adapters::CommandAdapters;
@@ -59,6 +60,9 @@ impl JobExecutor {
     ///
     /// `f`는 spawn된 task에서 실행되며, broadcast Sender를 받아 ProgressEvent를 발행한다.
     /// 반환 `Ok(value)` → Done event + DB completed, `Err(e)` → Failed event + DB failed.
+    /// P36 Task 01 — `f` 시그니처에 `CancellationToken` 추가.
+    /// 호출자(REST 핸들러)는 이 토큰을 `BroadcastSink::new` 에 그대로 넘겨
+    /// 어댑터가 `is_cancelled()` 폴링할 수 있게 한다.
     pub async fn try_spawn<F, Fut>(
         &self,
         kind: JobKind,
@@ -66,7 +70,7 @@ impl JobExecutor {
         f: F,
     ) -> Option<(String, broadcast::Sender<ProgressEvent>)>
     where
-        F: FnOnce(broadcast::Sender<ProgressEvent>) -> Fut + Send + 'static,
+        F: FnOnce(broadcast::Sender<ProgressEvent>, CancellationToken) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<serde_json::Value>> + Send + 'static,
     {
         // P33 review-r1 fix: spawn-gate로 active 체크 + register를 원자적으로 묶는다.
@@ -108,7 +112,11 @@ impl JobExecutor {
             }
         }
 
-        let tx = self.registry.register(state).await;
+        // P36 Task 01 — 이 job 전용 CancellationToken.
+        // registry 와 spawned task 가 동일 토큰을 공유한다.
+        // 어댑터 sink (BroadcastSink) 도 이 토큰을 받아 `is_cancelled()` 폴링에 사용.
+        let cancel_token = CancellationToken::new();
+        let tx = self.registry.register(state, cancel_token.clone()).await;
 
         // spawn
         let registry = self.registry.clone();
@@ -116,6 +124,7 @@ impl JobExecutor {
         let tx_clone = tx.clone();
         let id_clone = id.clone();
         let lock = self.write_lock.clone();
+        let cancel_token_spawn = cancel_token.clone();
         tokio::spawn(async move {
             let _guard = lock.lock().await; // 단일 큐 lock
 
@@ -123,12 +132,38 @@ impl JobExecutor {
                 .update(&id_clone, |s| s.status = JobStatus::Running)
                 .await;
 
-            let result = f(tx_clone.clone()).await;
+            // P36 Task 01 — 사용자 클로저를 cancel 신호와 race.
+            // cancel 분기 진입 시 user future 는 drop 되며 어댑터 자체 cleanup 책임.
+            let result = tokio::select! {
+                biased;
+                _ = cancel_token_spawn.cancelled() => {
+                    Err(anyhow::anyhow!("cancelled by user"))
+                }
+                r = f(tx_clone.clone(), cancel_token_spawn.clone()) => r,
+            };
 
-            // 완료 처리
-            let (status, error_text, result_json) = match &result {
-                Ok(v) => (JobStatus::Completed, None, Some(v.clone())),
-                Err(e) => (JobStatus::Failed, Some(e.to_string()), None),
+            // 완료 처리.
+            // P36 Task 01 — cancel race: 어댑터가 token cancel 직전에 Ok 반환 가능.
+            // 일관성을 위해 token 이 trigger 되었으면 status 를 Interrupted 로 강제하고
+            // error 메시지는 "cancelled by user" 로 통일한다.
+            //
+            // P36 rework — partial_result 보존: 어댑터 계약상 cancel 시
+            // `Ok(partial_outcome)` 으로 반환할 수 있으므로, was_cancelled 라도
+            // 그 값을 result_json 에 보존해 registry/DB/SSE 양쪽에 노출한다.
+            // select! 가 cancel 분기로 진입한 경우 result 는 Err → partial 없음.
+            let was_cancelled = cancel_token_spawn.is_cancelled();
+            let (status, error_text, result_json) = if was_cancelled {
+                let partial = result.as_ref().ok().cloned();
+                (
+                    JobStatus::Interrupted,
+                    Some("cancelled by user".to_string()),
+                    partial,
+                )
+            } else {
+                match &result {
+                    Ok(v) => (JobStatus::Completed, None, Some(v.clone())),
+                    Err(e) => (JobStatus::Failed, Some(e.to_string()), None),
+                }
             };
             let completed_at = chrono::Utc::now().to_rfc3339();
             let error_text_clone = error_text.clone();
@@ -143,8 +178,11 @@ impl JobExecutor {
                 .await;
 
             // DB persist
+            // P36 Task 01 — Interrupted 도 DB schema 에 별도 column 이 없으므로
+            // 기존 string mapping ("interrupted") 을 그대로 사용.
             let db_status = match status {
                 JobStatus::Completed => "completed",
+                JobStatus::Interrupted => "interrupted",
                 _ => "failed",
             };
             match db.lock() {
@@ -164,12 +202,22 @@ impl JobExecutor {
             }
 
             // 마지막 이벤트 broadcast (구독자가 끊었을 수도 있어 무시)
-            let final_event = match &result {
-                Ok(v) => ProgressEvent::Done { result: v.clone() },
-                Err(e) => ProgressEvent::Failed {
-                    error: e.to_string(),
-                    partial_result: None,
-                },
+            // P36 Task 01 — cancelled 인 경우 Failed 로 통일.
+            // P36 rework — partial_result 보존: 어댑터가 cancel 폴링 시 반환한
+            // Ok(partial_outcome) 의 JSON 을 SSE 구독자에게도 그대로 전달.
+            let final_event = if was_cancelled {
+                ProgressEvent::Failed {
+                    error: "cancelled by user".to_string(),
+                    partial_result: result_json.clone(),
+                }
+            } else {
+                match &result {
+                    Ok(v) => ProgressEvent::Done { result: v.clone() },
+                    Err(e) => ProgressEvent::Failed {
+                        error: e.to_string(),
+                        partial_result: None,
+                    },
+                }
             };
             let _ = tx_clone.send(final_event);
 
@@ -201,7 +249,7 @@ mod tests {
     async fn try_spawn_returns_some_when_idle() {
         let (exec, _dir) = make_executor();
         let res = exec
-            .try_spawn(JobKind::Sync, None, |_tx| async {
+            .try_spawn(JobKind::Sync, None, |_tx, _cancel| async {
                 Ok(serde_json::json!({"ok": true}))
             })
             .await;
@@ -213,7 +261,7 @@ mod tests {
         let (exec, _dir) = make_executor();
         // 첫 번째 job은 일부러 충분히 오래 걸리게 만든다.
         let first = exec
-            .try_spawn(JobKind::Sync, None, |_tx| async {
+            .try_spawn(JobKind::Sync, None, |_tx, _cancel| async {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 Ok(serde_json::json!({"ok": true}))
             })
@@ -225,7 +273,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let second = exec
-            .try_spawn(JobKind::Ingest, None, |_tx| async {
+            .try_spawn(JobKind::Ingest, None, |_tx, _cancel| async {
                 Ok(serde_json::json!({"never": true}))
             })
             .await;
@@ -245,7 +293,7 @@ mod tests {
         for _ in 0..n {
             let exec = exec.clone();
             handles.push(tokio::spawn(async move {
-                exec.try_spawn(JobKind::Sync, None, |_tx| async {
+                exec.try_spawn(JobKind::Sync, None, |_tx, _cancel| async {
                     // 첫 spawn이 충분히 오래 살아있도록
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     Ok(serde_json::json!({"ok": true}))
@@ -270,7 +318,7 @@ mod tests {
     async fn progress_event_is_broadcast_to_subscriber() {
         let (exec, _dir) = make_executor();
         let (id, tx) = exec
-            .try_spawn(JobKind::Sync, None, |tx| async move {
+            .try_spawn(JobKind::Sync, None, |tx, _cancel| async move {
                 tx.send(ProgressEvent::PhaseStart {
                     phase: "pull".into(),
                 })
@@ -316,5 +364,75 @@ mod tests {
                 .any(|e| matches!(e, ProgressEvent::Done { .. })),
             "Done event must be received: {received:?}"
         );
+    }
+
+    /// P36 Task 01 — cancel 호출 시 status 가 Interrupted 로 전이되고
+    /// SSE 채널로 Failed 이벤트가 발행되는지 검증.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_marks_job_as_interrupted_and_emits_failed_event() {
+        let (exec, _dir) = make_executor();
+        let (id, _tx) = exec
+            .try_spawn(JobKind::Sync, None, |_tx, _cancel| async move {
+                // 충분히 긴 작업 — cancel select 분기로 빠지도록.
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Ok(serde_json::json!({"never": true}))
+            })
+            .await
+            .expect("spawn ok");
+
+        // 구독자 등록 (cancel 전에 미리 붙여야 final event 수신 보장).
+        let mut rx = exec
+            .registry
+            .subscribe(&id)
+            .await
+            .expect("subscribe must succeed");
+
+        // spawn task 가 write_lock 획득 후 select 진입할 때까지 잠깐 대기.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert!(exec.registry.cancel(&id).await, "cancel must return true");
+
+        // 1초 안에 Failed 이벤트 수신.
+        let got_failed = tokio::time::timeout(std::time::Duration::from_secs(1), async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ProgressEvent::Failed { error, .. }) => {
+                        return Some(error);
+                    }
+                    Ok(_) => continue,
+                    Err(_) => return None,
+                }
+            }
+        })
+        .await
+        .expect("must not time out");
+
+        assert_eq!(
+            got_failed.as_deref(),
+            Some("cancelled by user"),
+            "Failed event must carry cancelled-by-user error"
+        );
+
+        // status 도 Interrupted 로 수렴해야 한다.
+        // spawn task 의 update 가 끝날 때까지 약간의 settle time 부여.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            let st = exec.registry.get(&id).await.expect("state must exist");
+            if st.status == JobStatus::Interrupted {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("status did not converge to Interrupted: {:?}", st.status);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    /// P36 Task 01 — 미등록 job id 로 cancel 호출 시 false.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_unknown_job_returns_false() {
+        let (exec, _dir) = make_executor();
+        let cancelled = exec.registry.cancel("does-not-exist").await;
+        assert!(!cancelled, "unknown id must return false");
     }
 }

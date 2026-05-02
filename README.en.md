@@ -146,7 +146,10 @@ secall serve --port 8080
   - `true` (default): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
   - `false`: `{ "tags": ["rust", "search", ...] }`
 - Commands (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
-- Job management (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, planned for v1.1)
+- Job management (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE)
+- Job cancellation (P36): `POST /api/jobs/{id}/cancel`
+  - 200: `{ "cancelled": true, "job_id": "..." }` — successful cancel of an active job (idempotent: same response for already-completed/cancelled jobs)
+  - 404: `{ "error": "job not found or already evicted" }` — unknown / evicted
 
 **Web UI** (`web/`, P32 Phase 0 + P33 Phase 1):
 - Dark-mode-first modern UI (Tailwind + shadcn/ui + Pretendard / Geist Sans)
@@ -335,6 +338,15 @@ secall serve --port 8080
 - SessionList infinite scroll — IntersectionObserver-based auto-load (page_size=100)
 - Code-split — per-route + vendor (react/query/radix/viz) chunks, initial entry JS ≤ 250 kB (gzip)
 
+**Job Cancellation** (P36, cancel running work):
+- Safely interrupt a running sync / ingest / wiki-update job
+- Built on `tokio_util::sync::CancellationToken` — wired through `JobRegistry`, `JobExecutor`, and `BroadcastSink`; exposed via `ProgressSink::is_cancelled()`
+- Adapters (sync/ingest/wiki) poll at safe points — between phases, at the top of file/session loops, and right before each LLM call
+- Partial results are preserved — e.g. cancelling after 50/100 ingested items keeps `ingested=50` in the result JSON
+- Final SSE event on cancel: `Failed { error: "cancelled by user", partial_result: None }`; job status is forced to `Interrupted`
+- REST: `POST /api/jobs/{id}/cancel` — 200 active, 200 idempotent, 404 unknown/evicted
+- Web UI: a **Cancel** button in `JobBanner` and the active `JobItem`, gated by `window.confirm` (`useCancelJob` mutation hook)
+
 ### Keyboard shortcuts (Phase 2)
 
 | Key | Action |
@@ -375,7 +387,7 @@ Command triggers (sync/ingest/wiki update) run as background jobs:
 5. **Read operations** (search, session lookup, etc.) are unbounded
 6. On server restart, jobs left in `running`/`started` are auto-flipped to `interrupted`
 7. Completed/failed/interrupted jobs older than 7 days are cleaned up at startup
-8. Cancellation is not in MVP — `POST /api/jobs/:id/cancel` returns `501 Not Implemented` (planned for v1.1)
+8. **Cancellation supported** (P36) — `POST /api/jobs/{id}/cancel` cancels an active job (200 idempotent / 404 unknown). Adapters poll at safe points (between phases, top of file/session loops, before LLM calls) so partial results are preserved and the job ends in the `Interrupted` state
 
 #### Phase Breakdown (sync example)
 
@@ -719,6 +731,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-02 | v0.7.0 | Job Cancellation (P36): `tokio_util::sync::CancellationToken` integration (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` trait method, sync/ingest/wiki adapter safe-point polling (between phases, file/session loop tops, before LLM calls), partial-result preservation, `POST /api/jobs/{id}/cancel` activated (200 idempotent / 404 unknown, final event `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI cancel button (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
 | 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` endpoint (with_counts option, removes 100-session heuristic), SessionList infinite scroll (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunks, initial entry JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7 |
 | 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): command triggers (Sync/Ingest/Wiki Update), SSE progress streaming (per phase), Job system (single queue + 7-day cleanup + interrupted recovery), global progress banner + toast, graph incremental (`secall ingest --auto-graph`, `secall sync --no-graph`), wiki body GET endpoint (`/api/wiki/{project}`), DB v6 (`jobs` table) |

@@ -63,9 +63,19 @@ pub async fn run_with_progress(
 
     sink.phase_start("llm_call").await;
     sink.message("Generating wiki content...").await;
+    // P36 — 내부 session/page loop + LLM 호출 직전 cancel 폴링을 위해 sink 전달
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (prompt_build phase 완료)")
+            .await;
+        return Ok(WikiOutcome {
+            backend: backend_label,
+            target: target_label,
+            pages_written: 0,
+        });
+    }
     // run_update가 prompt build → llm call → lint → merge → write를 모두 처리.
     // Phase 세분화는 run_update 내부 리팩토링이 필요하나 본 task 범위 밖.
-    let outcome = run_update(
+    let outcome = run_update_with_sink(
         args.model.as_deref(),
         args.backend.as_deref(),
         args.since.as_deref(),
@@ -73,6 +83,7 @@ pub async fn run_with_progress(
         args.dry_run,
         args.review,
         args.review_model.as_deref(),
+        Some(sink),
     )
     .await;
     sink.phase_complete("llm_call", None).await;
@@ -82,13 +93,15 @@ pub async fn run_with_progress(
 
     sink.phase_start("merge_and_write").await;
     let result = match outcome {
-        Ok(()) => {
+        Ok(pages_written) => {
             sink.message("Wiki update complete.").await;
             sink.phase_complete("merge_and_write", None).await;
+            // P36 rework — run_update_with_sink 가 반환한 카운트 그대로 outcome 에 반영.
+            // 정상 완료든 cancel 시점 부분 완료든 동일 경로.
             Ok(WikiOutcome {
                 backend: backend_label,
                 target: target_label,
-                pages_written: 0,
+                pages_written,
             })
         }
         Err(e) => {
@@ -113,6 +126,42 @@ pub async fn run_update(
     review: bool,
     review_model: Option<&str>,
 ) -> Result<()> {
+    // P36 rework — run_update_with_sink 가 page count 반환하지만 CLI 경로에서는 무시.
+    run_update_with_sink(
+        model,
+        backend,
+        since,
+        session,
+        dry_run,
+        review,
+        review_model,
+        None,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// P36 — `run_update` 의 sink-aware 버전. 내부 session/page 루프와 LLM 호출
+/// 직전에 cancel 폴링하기 위해 옵셔널 sink 를 받는다.
+///
+/// P36 rework — `run_with_progress` 가 outcome 에 정확한 페이지 수를 반영하도록
+/// **새로 작성된(또는 덮어쓴 첫 작성)** 페이지 카운트를 반환한다.
+/// review-regen 은 같은 페이지 덮어쓰기 → 카운트 증가 안 함.
+/// 비-haiku 백엔드는 stdout 출력만 → 카운트 0.
+#[allow(clippy::too_many_arguments)]
+async fn run_update_with_sink(
+    model: Option<&str>,
+    backend: Option<&str>,
+    since: Option<&str>,
+    session: Option<&str>,
+    dry_run: bool,
+    review: bool,
+    review_model: Option<&str>,
+    sink: Option<&dyn ProgressSink>,
+) -> Result<usize> {
+    // P36 rework — 작성된 페이지 누적. 정상 완료/취소 모두 같은 변수 사용.
+    let mut pages_written: usize = 0;
+
     // 1. wiki/ directory check
     let config = Config::load_or_default();
     let wiki_dir = config.vault.path.join("wiki");
@@ -138,7 +187,7 @@ pub async fn run_update(
     // 3. dry-run: print prompt and exit
     if dry_run {
         println!("{prompt}");
-        return Ok(());
+        return Ok(pages_written);
     }
 
     let target = if let Some(sid) = session {
@@ -203,7 +252,7 @@ pub async fn run_update(
         let sessions = db.get_sessions_since(since_date)?;
         if sessions.is_empty() {
             eprintln!("  No sessions found since {}", since_date);
-            return Ok(());
+            return Ok(pages_written);
         }
 
         let mut by_project: std::collections::BTreeMap<
@@ -217,12 +266,38 @@ pub async fn run_update(
 
         let resolved_model = resolve_review_model(review_model, &config);
 
-        for (proj_name, proj_sessions) in &by_project {
+        let total_proj = by_project.len();
+        for (proj_idx, (proj_name, proj_sessions)) in by_project.iter().enumerate() {
+            // P36 — cancel check at top of project loop
+            if let Some(s) = sink {
+                if s.is_cancelled() {
+                    s.message(&format!(
+                        "취소 요청 — {}/{} 프로젝트까지 처리 후 종료합니다",
+                        proj_idx, total_proj
+                    ))
+                    .await;
+                    return Ok(pages_written);
+                }
+                if total_proj > 0 {
+                    s.progress((proj_idx as f32) / (total_proj as f32)).await;
+                }
+            }
             let session_ids: Vec<String> = proj_sessions.iter().map(|s| s.id.clone()).collect();
             let vault_paths = collect_vault_paths(&db, &session_ids);
             let proj_prompt = build_haiku_single_project_prompt(&db, proj_name, proj_sessions)?;
 
             eprintln!("  Generating wiki for project: {}...", proj_name);
+            // P36 — cancel check just before LLM call (expensive)
+            if let Some(s) = sink {
+                if s.is_cancelled() {
+                    s.message(&format!(
+                        "취소 요청 — LLM 호출 직전 취소 ({} 프로젝트)",
+                        proj_name
+                    ))
+                    .await;
+                    return Ok(pages_written);
+                }
+            }
             let output = backend_box.generate(&proj_prompt).await?;
 
             if output.trim().is_empty() {
@@ -252,6 +327,9 @@ pub async fn run_update(
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&full_path, &linked)?;
+            // P36 rework — 새 페이지 작성 성공 시 카운트 +1.
+            // (review-regen 은 같은 파일 덮어쓰기라 카운트 증가 안 함)
+            pages_written += 1;
             eprintln!("    Written: {}", full_path.display());
 
             match secall_core::wiki::lint::run_markdownlint(&full_path) {
@@ -270,6 +348,17 @@ pub async fn run_update(
 
                 // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
                 if needs_regen {
+                    // P36 — cancel check before regeneration LLM call
+                    if let Some(s) = sink {
+                        if s.is_cancelled() {
+                            s.message(&format!(
+                                "취소 요청 — 재생성 직전 취소 ({} 프로젝트)",
+                                proj_name
+                            ))
+                            .await;
+                            return Ok(pages_written);
+                        }
+                    }
                     eprintln!("    Regenerating due to review errors...");
                     match backend_box.generate(&proj_prompt).await {
                         Ok(regen_output) if !regen_output.trim().is_empty() => {
@@ -309,12 +398,20 @@ pub async fn run_update(
         );
     } else if backend_name == "haiku" {
         // ── 인크리멘탈 모드: 단일 세션 ──
+        // P36 — cancel check just before LLM call
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message("취소 요청 — LLM 호출 직전 취소 (haiku incremental)")
+                    .await;
+                return Ok(pages_written);
+            }
+        }
         eprintln!("  Launching {}...", backend_box.name());
         let output = backend_box.generate(&prompt).await?;
 
         if output.trim().is_empty() {
             eprintln!("  (no output from backend)");
-            return Ok(());
+            return Ok(pages_written);
         }
 
         let db = Database::open(&get_default_db_path())?;
@@ -360,6 +457,8 @@ pub async fn run_update(
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&full_path, &linked)?;
+        // P36 rework — 새 페이지 작성 성공 시 카운트 +1 (review-regen 은 동일 파일 덮어쓰기).
+        pages_written += 1;
         eprintln!("  Written: {}", full_path.display());
 
         match secall_core::wiki::lint::run_markdownlint(&full_path) {
@@ -380,6 +479,14 @@ pub async fn run_update(
 
             // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
             if needs_regen {
+                // P36 — cancel check before regeneration LLM call
+                if let Some(s) = sink {
+                    if s.is_cancelled() {
+                        s.message("취소 요청 — 재생성 직전 취소 (haiku incremental)")
+                            .await;
+                        return Ok(pages_written);
+                    }
+                }
                 eprintln!("    Regenerating due to review errors...");
                 match backend_box.generate(&prompt).await {
                     Ok(regen_output) if !regen_output.trim().is_empty() => {
@@ -414,19 +521,30 @@ pub async fn run_update(
         }
     } else {
         // ── 비-haiku 백엔드: 기존 동작 (출력만) ──
+        // P36 — cancel check just before LLM call
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message(&format!(
+                    "취소 요청 — LLM 호출 직전 취소 ({})",
+                    backend_name
+                ))
+                .await;
+                return Ok(pages_written);
+            }
+        }
         eprintln!("  Launching {}...", backend_box.name());
         let output = backend_box.generate(&prompt).await?;
 
         if output.trim().is_empty() {
             eprintln!("  (no output from backend)");
-            return Ok(());
+            return Ok(pages_written);
         }
 
         println!("{}", output);
         eprintln!("  ✓ Wiki update complete.");
     }
 
-    Ok(())
+    Ok(pages_written)
 }
 
 fn resolve_backend_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> String {

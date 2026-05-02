@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use super::types::{JobKind, JobState, JobStatus, ProgressEvent};
 
@@ -28,6 +29,9 @@ impl Default for JobRegistry {
 struct RegistryInner {
     states: HashMap<String, JobState>,
     senders: HashMap<String, broadcast::Sender<ProgressEvent>>,
+    /// P36 Task 01 — Job 별 cancel 신호 보관소.
+    /// `register` 시 주입되며 `evict` 시 함께 제거된다.
+    cancel_tokens: HashMap<String, CancellationToken>,
 }
 
 impl JobRegistry {
@@ -36,18 +40,60 @@ impl JobRegistry {
             inner: Arc::new(RwLock::new(RegistryInner {
                 states: HashMap::new(),
                 senders: HashMap::new(),
+                cancel_tokens: HashMap::new(),
             })),
         }
     }
 
     /// 새 Job 상태 등록 + broadcast 채널 생성. tx를 반환해 progress reporter가 사용.
-    pub async fn register(&self, state: JobState) -> broadcast::Sender<ProgressEvent> {
+    ///
+    /// P36 Task 01 — `cancel_token` 도 함께 보관하여 `cancel(id)` 가 동일 토큰을
+    /// trigger 할 수 있도록 한다.
+    pub async fn register(
+        &self,
+        state: JobState,
+        cancel_token: CancellationToken,
+    ) -> broadcast::Sender<ProgressEvent> {
         let (tx, _) = broadcast::channel(BROADCAST_BUFFER);
         let id = state.id.clone();
         let mut inner = self.inner.write().await;
         inner.senders.insert(id.clone(), tx.clone());
+        inner.cancel_tokens.insert(id.clone(), cancel_token);
         inner.states.insert(id, state);
         tx
+    }
+
+    /// P36 Task 01 — Job 취소.
+    ///
+    /// 동작:
+    /// - 미등록 id → `false`
+    /// - 활성 (Started/Running) → token cancel + 즉시 status 를 Interrupted 로 전이 → `true`
+    /// - 이미 종료된 job (Completed/Failed/Interrupted) → idempotent `true`
+    ///
+    /// 실제 spawn task 종료/SSE final event 발행은 executor 의 select 루프가 담당한다.
+    pub async fn cancel(&self, id: &str) -> bool {
+        let mut inner = self.inner.write().await;
+        let Some(state) = inner.states.get(id) else {
+            return false;
+        };
+        let was_active = matches!(state.status, JobStatus::Started | JobStatus::Running);
+
+        // token cancel 은 idempotent. 등록되어 있으면 trigger.
+        if let Some(token) = inner.cancel_tokens.get(id) {
+            token.cancel();
+        }
+
+        if was_active {
+            if let Some(s) = inner.states.get_mut(id) {
+                s.status = JobStatus::Interrupted;
+            }
+        }
+        true
+    }
+
+    /// P36 Task 01 — 외부(주로 테스트)에서 token 직접 조회.
+    pub async fn token_for(&self, id: &str) -> Option<CancellationToken> {
+        self.inner.read().await.cancel_tokens.get(id).cloned()
     }
 
     /// 현재 실행 중(started/running) job 중 하나의 종류 반환. 단일 큐 정책 체크용.
@@ -98,6 +144,7 @@ impl JobRegistry {
         let mut inner = self.inner.write().await;
         inner.states.remove(id);
         inner.senders.remove(id);
+        inner.cancel_tokens.remove(id);
     }
 }
 
@@ -125,7 +172,7 @@ mod tests {
     async fn register_then_get_returns_state() {
         let reg = JobRegistry::new();
         let st = dummy_state("a", JobKind::Sync, JobStatus::Started);
-        let _tx = reg.register(st).await;
+        let _tx = reg.register(st, CancellationToken::new()).await;
         let got = reg.get("a").await.expect("registered state must be Some");
         assert_eq!(got.id, "a");
         assert_eq!(got.kind, JobKind::Sync);
@@ -136,10 +183,16 @@ mod tests {
     async fn list_active_filters_completed() {
         let reg = JobRegistry::new();
         let _ = reg
-            .register(dummy_state("running", JobKind::Sync, JobStatus::Running))
+            .register(
+                dummy_state("running", JobKind::Sync, JobStatus::Running),
+                CancellationToken::new(),
+            )
             .await;
         let _ = reg
-            .register(dummy_state("done", JobKind::Ingest, JobStatus::Completed))
+            .register(
+                dummy_state("done", JobKind::Ingest, JobStatus::Completed),
+                CancellationToken::new(),
+            )
             .await;
         let active = reg.list_active().await;
         assert_eq!(active.len(), 1);
@@ -150,12 +203,18 @@ mod tests {
     async fn current_active_kind_picks_in_progress_only() {
         let reg = JobRegistry::new();
         let _ = reg
-            .register(dummy_state("c", JobKind::Ingest, JobStatus::Completed))
+            .register(
+                dummy_state("c", JobKind::Ingest, JobStatus::Completed),
+                CancellationToken::new(),
+            )
             .await;
         assert!(reg.current_active_kind().await.is_none());
 
         let _ = reg
-            .register(dummy_state("r", JobKind::Sync, JobStatus::Running))
+            .register(
+                dummy_state("r", JobKind::Sync, JobStatus::Running),
+                CancellationToken::new(),
+            )
             .await;
         assert_eq!(reg.current_active_kind().await, Some(JobKind::Sync));
     }
@@ -164,19 +223,26 @@ mod tests {
     async fn evict_removes_state_and_sender() {
         let reg = JobRegistry::new();
         let _tx = reg
-            .register(dummy_state("e", JobKind::WikiUpdate, JobStatus::Running))
+            .register(
+                dummy_state("e", JobKind::WikiUpdate, JobStatus::Running),
+                CancellationToken::new(),
+            )
             .await;
         assert!(reg.subscribe("e").await.is_some());
         reg.evict("e").await;
         assert!(reg.get("e").await.is_none());
         assert!(reg.subscribe("e").await.is_none());
+        assert!(reg.token_for("e").await.is_none());
     }
 
     #[tokio::test]
     async fn broadcast_event_received_by_subscriber() {
         let reg = JobRegistry::new();
         let tx = reg
-            .register(dummy_state("b", JobKind::Sync, JobStatus::Running))
+            .register(
+                dummy_state("b", JobKind::Sync, JobStatus::Running),
+                CancellationToken::new(),
+            )
             .await;
         let mut rx = reg.subscribe("b").await.expect("subscribe must succeed");
         tx.send(ProgressEvent::Message {
@@ -194,7 +260,10 @@ mod tests {
     async fn update_mutates_existing_state() {
         let reg = JobRegistry::new();
         let _ = reg
-            .register(dummy_state("u", JobKind::Sync, JobStatus::Started))
+            .register(
+                dummy_state("u", JobKind::Sync, JobStatus::Started),
+                CancellationToken::new(),
+            )
             .await;
         reg.update("u", |s| {
             s.status = JobStatus::Running;
@@ -204,5 +273,40 @@ mod tests {
         let got = reg.get("u").await.unwrap();
         assert_eq!(got.status, JobStatus::Running);
         assert_eq!(got.current_phase.as_deref(), Some("pull"));
+    }
+
+    #[tokio::test]
+    async fn cancel_unknown_returns_false() {
+        let reg = JobRegistry::new();
+        assert!(!reg.cancel("missing").await);
+    }
+
+    #[tokio::test]
+    async fn cancel_active_marks_interrupted_and_triggers_token() {
+        let reg = JobRegistry::new();
+        let token = CancellationToken::new();
+        let _tx = reg
+            .register(
+                dummy_state("x", JobKind::Sync, JobStatus::Running),
+                token.clone(),
+            )
+            .await;
+        assert!(reg.cancel("x").await);
+        assert!(token.is_cancelled());
+        assert_eq!(reg.get("x").await.unwrap().status, JobStatus::Interrupted);
+    }
+
+    #[tokio::test]
+    async fn cancel_completed_is_idempotent_true() {
+        let reg = JobRegistry::new();
+        let _ = reg
+            .register(
+                dummy_state("done", JobKind::Sync, JobStatus::Completed),
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(reg.cancel("done").await);
+        // 이미 완료 상태는 그대로 유지.
+        assert_eq!(reg.get("done").await.unwrap().status, JobStatus::Completed);
     }
 }

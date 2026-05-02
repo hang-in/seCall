@@ -109,6 +109,13 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
     }
     sink.phase_complete("init", None).await;
 
+    // P36 — cancel check (between init and pull)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (init phase 완료)")
+            .await;
+        return Ok(outcome);
+    }
+
     // === Phase 1: Pull (다른 기기 세션 수신) ===
     sink.phase_start("pull").await;
     let mut pulled_count: Option<usize> = None;
@@ -144,6 +151,13 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
     outcome.pulled = pulled_count;
     sink.phase_complete("pull", Some(serde_json::json!({ "pulled": pulled_count })))
         .await;
+
+    // P36 — cancel check (between pull and reindex)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (pull phase 완료)")
+            .await;
+        return Ok(outcome);
+    }
 
     if dry_run {
         // dry-run 경로: 나머지 phase는 안내만 출력하고 종료
@@ -225,11 +239,18 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
     )
     .await;
 
+    // P36 — cancel check (between reindex and ingest)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (reindex phase 완료)")
+            .await;
+        return Ok(outcome);
+    }
+
     // === Phase 3: Ingest (로컬 새 세션 -> vault) ===
     sink.phase_start("ingest").await;
     eprintln!("Ingesting local sessions...");
     sink.message("Ingesting local sessions...").await;
-    let ingest_result = run_auto_ingest(&config, &db, no_semantic).await?;
+    let ingest_result = run_auto_ingest(&config, &db, no_semantic, sink).await?;
     eprintln!(
         "  -> {} ingested, {} skipped, {} errors.",
         ingest_result.ingested, ingest_result.skipped, ingest_result.errors
@@ -250,6 +271,13 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
     )
     .await;
 
+    // P36 — cancel check (between ingest and wiki_update)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (ingest phase 완료)")
+            .await;
+        return Ok(outcome);
+    }
+
     // === Phase 3.5: Incremental wiki (새 세션 → wiki 갱신) ===
     if !no_wiki && !ingest_result.new_session_ids.is_empty() {
         sink.phase_start("wiki_update").await;
@@ -266,7 +294,19 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
         sink.message(&format!("Updating wiki for {} new session(s)...", count))
             .await;
         let mut wiki_updated = 0usize;
-        for sid in &ingest_result.new_session_ids {
+        let total_wiki = ingest_result.new_session_ids.len();
+        for (i, sid) in ingest_result.new_session_ids.iter().enumerate() {
+            // P36 — cancel check at top of wiki update loop
+            if sink.is_cancelled() {
+                sink.message(&format!(
+                    "취소 요청 — {}/{} 세션 wiki 갱신 후 종료합니다",
+                    i, total_wiki
+                ))
+                .await;
+                outcome.wiki_updated = Some(wiki_updated);
+                return Ok(outcome);
+            }
+            sink.progress((i as f32) / (total_wiki as f32)).await;
             match wiki::run_update(None, None, None, Some(sid.as_str()), false, false, None).await {
                 Ok(()) => {
                     eprintln!("  ✓ wiki updated for {}", &sid[..sid.len().min(8)]);
@@ -290,6 +330,13 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
             Some(serde_json::json!({ "wiki_updated": wiki_updated })),
         )
         .await;
+    }
+
+    // P36 — cancel check (between wiki_update and graph)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (wiki_update phase 완료)")
+            .await;
+        return Ok(outcome);
     }
 
     // === Phase 3.7: Graph 증분 (새 세션 → graph 노드/엣지 추가) ===
@@ -336,6 +383,13 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
                     .await;
             }
         }
+    }
+
+    // P36 — cancel check (between graph and push)
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (graph phase 완료)")
+            .await;
+        return Ok(outcome);
     }
 
     // === Phase 4: Push (로컬 세션 공유) ===
@@ -459,7 +513,14 @@ fn reindex_vault(config: &Config, db: &Database) -> Result<ReindexResult> {
 }
 
 /// ingest --auto 로직 재사용
-async fn run_auto_ingest(config: &Config, db: &Database, no_semantic: bool) -> Result<IngestStats> {
+///
+/// P36 — `sink` 를 ingest_sessions 안쪽 file/embedding 루프 cancel 폴링에 전달.
+async fn run_auto_ingest(
+    config: &Config,
+    db: &Database,
+    no_semantic: bool,
+    sink: &dyn ProgressSink,
+) -> Result<IngestStats> {
     use secall_core::ingest::detect::{
         find_claude_sessions, find_codex_sessions, find_gemini_sessions,
     };
@@ -498,6 +559,7 @@ async fn run_auto_ingest(config: &Config, db: &Database, no_semantic: bool) -> R
         false,
         no_semantic,
         &OutputFormat::Text,
+        Some(sink),
     )
     .await
 }

@@ -29,4 +29,10 @@ impl secall_core::jobs::ProgressSink for NoopSink {
     async fn message(&self, _text: &str) {}
     async fn progress(&self, _ratio: f32) {}
     async fn phase_complete(&self, _phase: &str, _result: Option<serde_json::Value>) {}
+
+    // P36 Task 01 — CLI 컨텍스트는 외부 cancel 채널이 없으므로 항상 false.
+    // (default 구현이 동일하지만 의도를 명시적으로 표기.)
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
