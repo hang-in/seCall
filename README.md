@@ -757,6 +757,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-03 | v0.8.1 | P38 테스트 갭 메우기: `tests/rest_routes.rs` (REST 22 엔드포인트 라우트 레벨 회귀, 45 tests) + `tests/session_repo_helpers.rs` (P32~P37 누적 helper 회귀, 29 tests) — 총 74 P38 신규 tests 추가, Insight TES-session_repo finding 해소 |
 | 2026-05-03 | v0.8.0 | Graph Sync 자동화 (P37): DB 스키마 v8 (`sessions.semantic_extracted_at` 컬럼으로 시맨틱 추출 상태 추적), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (`extract_one_session_semantic` helper 분리, 우선순위: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, P33 단일 큐 + P36 cancel 통합), web UI Commands 페이지 4번째 카드 "Graph Rebuild" + 옵션 다이얼로그 |
 | 2026-05-02 | v0.7.0 | Job Cancellation (P36): `tokio_util::sync::CancellationToken` 통합 (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` 추가, sync/ingest/wiki 어댑터 safe-point polling (phase 사이·file/session 루프·LLM 호출 직전), 부분 결과 보존, `POST /api/jobs/{id}/cancel` 활성화 (200 idempotent / 404 unknown, 최종 이벤트 `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI 취소 버튼 (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
 | 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` 엔드포인트 (with_counts 옵션, 100세션 휴리스틱 제거), SessionList 무한 스크롤 (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunk, 초기 진입 JS ≤ 250 kB gzip) |

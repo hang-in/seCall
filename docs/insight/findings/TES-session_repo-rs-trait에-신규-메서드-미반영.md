@@ -4,6 +4,7 @@
 - **Severity**: info
 - **Fix Difficulty**: guided
 - **Status**: open
+- **Note (P38, 2026-05-03)**: P38 가 `tests/session_repo_helpers.rs` (29 tests) 로 helper 호출 회귀를 보강했으나, **trait surface 자체에 신규 메서드를 추가하는 production code 변경은 본 phase 범위 외**. trait 기반 mock 테스트 격리는 여전히 미해결 → status `open` 유지. 후속 phase 에서 `SessionRepo` trait 확장 (구조적 fix) 필요.
 - **File**: crates/secall-core/src/store/session_repo.rs:5
 
 ## Description
