@@ -972,6 +972,78 @@ impl Database {
         Ok(())
     }
 
+    /// P37 Task 00: 단일 세션의 `semantic_extracted_at` timestamp 갱신.
+    /// 미존재 세션은 0 affected — 호출자가 결과 무시 가능 (에러 안 남).
+    pub fn update_semantic_extracted_at(
+        &self,
+        session_id: &str,
+        ts: i64,
+    ) -> crate::error::Result<()> {
+        self.conn().execute(
+            "UPDATE sessions SET semantic_extracted_at = ?1 WHERE id = ?2",
+            rusqlite::params![ts, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// P37 Task 00: graph rebuild 처리 대상 세션 ID 목록 반환.
+    ///
+    /// 우선순위 (위에서 부터 평가하고 첫 매칭만 사용):
+    /// 1. `filter.session.is_some()` → 해당 ID만 (단일 row)
+    /// 2. `filter.all == true` → 모든 sessions
+    /// 3. `filter.retry_failed == true` → `WHERE semantic_extracted_at IS NULL`
+    /// 4. `filter.since.is_some()` → `WHERE start_time >= ?`
+    /// 5. 기본값 (모든 필드 비활성) → 빈 Vec
+    ///
+    /// 정렬: `ORDER BY start_time DESC` 일관 적용.
+    pub fn list_sessions_for_graph_rebuild(
+        &self,
+        filter: GraphRebuildFilter,
+    ) -> crate::error::Result<Vec<String>> {
+        // 1. session ID 단건 조회
+        if let Some(id) = filter.session {
+            let mut stmt = self
+                .conn()
+                .prepare("SELECT id FROM sessions WHERE id = ?1")?;
+            let rows = stmt.query_map([id], |row| row.get::<_, String>(0))?;
+            return Ok(rows.filter_map(|r| r.ok()).collect());
+        }
+
+        // 2. all=true → 모든 sessions
+        if filter.all {
+            let mut stmt = self
+                .conn()
+                .prepare("SELECT id FROM sessions ORDER BY start_time DESC")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            return Ok(rows.filter_map(|r| r.ok()).collect());
+        }
+
+        // 3. retry_failed → semantic_extracted_at IS NULL
+        if filter.retry_failed {
+            let mut stmt = self.conn().prepare(
+                "SELECT id FROM sessions
+                 WHERE semantic_extracted_at IS NULL
+                 ORDER BY start_time DESC",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            return Ok(rows.filter_map(|r| r.ok()).collect());
+        }
+
+        // 4. since (date 비교, ISO format)
+        if let Some(since) = filter.since {
+            let mut stmt = self.conn().prepare(
+                "SELECT id FROM sessions
+                 WHERE start_time >= ?1
+                 ORDER BY start_time DESC",
+            )?;
+            let rows = stmt.query_map([since], |row| row.get::<_, String>(0))?;
+            return Ok(rows.filter_map(|r| r.ok()).collect());
+        }
+
+        // 5. 모든 필드 비활성 → 빈 Vec
+        Ok(Vec::new())
+    }
+
     /// 단일 세션의 리스트 아이템 메타 — `do_get` 응답에 tags/is_favorite/notes 등 보강에 사용.
     pub fn get_session_list_item(&self, session_id: &str) -> crate::error::Result<SessionListItem> {
         self.conn()
@@ -1084,4 +1156,20 @@ pub struct SessionStats {
 pub struct TagCount {
     pub name: String,
     pub count: i64,
+}
+
+/// P37 Task 00: graph rebuild 대상 세션 필터.
+///
+/// 우선순위: `session` > `all` > `retry_failed` > `since`.
+/// 모든 필드 비활성이면 빈 결과 반환 (CLI/REST가 "처리할 세션 없음" 안내).
+#[derive(Debug, Default, Clone)]
+pub struct GraphRebuildFilter {
+    /// "YYYY-MM-DD" 또는 RFC3339. 이 시각 이후 시작된 세션만. None 이면 무시.
+    pub since: Option<String>,
+    /// 단일 세션 ID. 다른 필터 무시.
+    pub session: Option<String>,
+    /// true 면 모든 세션 (since/retry_failed 무시). session 보다 우선순위 낮음.
+    pub all: bool,
+    /// true 면 `semantic_extracted_at IS NULL` 인 세션만.
+    pub retry_failed: bool,
 }

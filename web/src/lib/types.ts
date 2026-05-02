@@ -117,7 +117,7 @@ export interface RecallResponse {
 // Job system (P33 — Web Phase 1)
 // ============================================================================
 
-export type JobKind = "sync" | "ingest" | "wiki_update";
+export type JobKind = "sync" | "ingest" | "wiki_update" | "graph_rebuild";
 export type JobStatus =
   | "started"
   | "running"
@@ -192,6 +192,17 @@ export interface WikiUpdateArgs {
   review_model?: string;
 }
 
+/**
+ * P37 Task 01 — `secall::commands::graph::GraphRebuildArgs` 와 1:1 매핑.
+ * 우선순위 (Task 00 SQL 기준): session > all > retry_failed > since.
+ */
+export interface GraphRebuildArgs {
+  since?: string;
+  session?: string;
+  all?: boolean;
+  retry_failed?: boolean;
+}
+
 // Outcome 구조 (job 완료 시 result 필드).
 // 백엔드는 단계별 skip 시 null을 반환할 수 있으므로 nullable 허용.
 export interface SyncOutcome {
@@ -220,6 +231,18 @@ export interface WikiOutcome {
   backend: string;
   target: string;
   pages_written: number;
+}
+
+/**
+ * P37 Task 01 — `secall::commands::graph::GraphRebuildOutcome` 와 1:1 매핑.
+ * 모든 카운터는 정수, 단계 skip 없이 항상 채워진다.
+ */
+export interface GraphRebuildOutcome {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  edges_added: number;
 }
 
 export interface SessionFilterState {

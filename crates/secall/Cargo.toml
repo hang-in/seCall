@@ -30,3 +30,6 @@ kiwi-rs.workspace = true
 default = ["web-ui"]
 web-ui = ["secall-core/web-ui"]
 openvino = ["secall-core/openvino"]
+
+[dev-dependencies]
+tempfile = "3.27.0"

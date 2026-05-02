@@ -27,7 +27,7 @@ export default function CommandsRoute() {
 
       <Card className="p-4 space-y-3">
         <h2 className="text-lg font-medium">새 작업</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <CommandButton
             kind="sync"
             label="Sync"
@@ -42,6 +42,11 @@ export default function CommandsRoute() {
             kind="wiki_update"
             label="Wiki Update"
             description="LLM으로 위키 갱신"
+          />
+          <CommandButton
+            kind="graph_rebuild"
+            label="Graph Rebuild"
+            description="이미 ingest 된 세션의 시맨틱 그래프 재구축 (since/session/all/retry-failed 옵션)"
           />
         </div>
       </Card>

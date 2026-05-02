@@ -12,6 +12,8 @@ pub enum JobKind {
     Sync,
     Ingest,
     WikiUpdate,
+    /// P37 Task 02 — `graph rebuild` (시맨틱 엣지 재추출).
+    GraphRebuild,
 }
 
 impl JobKind {
@@ -20,6 +22,7 @@ impl JobKind {
             JobKind::Sync => "sync",
             JobKind::Ingest => "ingest",
             JobKind::WikiUpdate => "wiki_update",
+            JobKind::GraphRebuild => "graph_rebuild",
         }
     }
 
@@ -29,6 +32,7 @@ impl JobKind {
             "sync" => Some(JobKind::Sync),
             "ingest" => Some(JobKind::Ingest),
             "wiki_update" => Some(JobKind::WikiUpdate),
+            "graph_rebuild" => Some(JobKind::GraphRebuild),
             _ => None,
         }
     }

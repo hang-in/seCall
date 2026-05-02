@@ -13,7 +13,10 @@ use secall_core::jobs::{
 use secall_core::store::Database;
 
 /// 테스트용 어댑터: sync_fn은 `delay_ms`만큼 대기 후 echo 결과 반환.
-/// ingest_fn/wiki_update_fn은 즉시 Ok 반환.
+/// ingest_fn/wiki_update_fn/graph_rebuild_fn 은 즉시 Ok 반환.
+///
+/// P37 Task 02 — `graph_rebuild_fn` 은 `delay_ms` 만큼 대기 후 outcome 반환하며,
+/// 매 50ms 단위로 `is_cancelled()` 폴링하여 cancel 시 부분 outcome 으로 early return.
 fn make_adapters(delay_ms: u64) -> CommandAdapters {
     CommandAdapters {
         sync_fn: Box::new(move |val, sink: BroadcastSink| {
@@ -32,6 +35,36 @@ fn make_adapters(delay_ms: u64) -> CommandAdapters {
         }),
         wiki_update_fn: Box::new(|_val, _sink| {
             Box::pin(async move { Ok(serde_json::json!({ "pages_written": 0 })) })
+        }),
+        graph_rebuild_fn: Box::new(move |val, sink: BroadcastSink| {
+            Box::pin(async move {
+                use secall_core::jobs::ProgressSink;
+                // delay_ms 를 50ms 슬라이스로 쪼개서 cancel 폴링.
+                let slices = (delay_ms / 50).max(1);
+                for _ in 0..slices {
+                    if sink.is_cancelled() {
+                        // 부분 outcome 보존 (P36 패턴).
+                        return Ok(serde_json::json!({
+                            "processed": 0,
+                            "succeeded": 0,
+                            "failed": 0,
+                            "skipped": 0,
+                            "edges_added": 0,
+                            "cancelled": true,
+                            "args": val,
+                        }));
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok(serde_json::json!({
+                    "processed": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "edges_added": 0,
+                    "args": val,
+                }))
+            })
         }),
     }
 }
@@ -227,6 +260,111 @@ async fn list_recent_jobs_returns_persisted_rows() {
     let r = rows.iter().find(|r| r.id == id).unwrap();
     assert_eq!(r.kind, "ingest");
     assert_eq!(r.status, "completed");
+}
+
+// ─── P37 Task 02 — graph rebuild adapter 통합 ───────────────────────────────
+
+/// REST `/api/commands/graph-rebuild` 엔트리포인트가 실제로 호출하는 흐름:
+/// `try_spawn(JobKind::GraphRebuild, args, |tx, token| (graph_rebuild_fn)(args, sink))`.
+/// 200 + job_id 반환 후 GET /api/jobs/{id} 동등 경로 (registry/db) 로 status 추적이 가능한지 검증.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_graph_rebuild_endpoint_starts_job() {
+    let (exec, _dir) = make_executor(0);
+    let adapters = exec.adapters.clone().expect("adapters configured");
+
+    let args = serde_json::json!({ "retry_failed": true });
+    let args_for_spawn = args.clone();
+    let (id, _tx) = exec
+        .try_spawn(
+            JobKind::GraphRebuild,
+            Some(args.clone()),
+            move |tx, cancel_token| {
+                let adapters = adapters.clone();
+                let args_for_spawn = args_for_spawn.clone();
+                async move {
+                    let sink = BroadcastSink::new(tx, cancel_token);
+                    (adapters.graph_rebuild_fn)(args_for_spawn, sink).await
+                }
+            },
+        )
+        .await
+        .expect("first spawn must succeed (graph_rebuild)");
+
+    // 잠시 후 registry 에 Started/Running 으로 등장 (GET /api/jobs/{id} 동등).
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let state = exec
+        .registry
+        .get(&id)
+        .await
+        .expect("graph_rebuild job must be registered");
+    assert_eq!(state.kind, JobKind::GraphRebuild);
+
+    // 완료까지 대기 → DB persist 검증.
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let row = exec.db.lock().unwrap().get_job(&id).expect("get_job ok");
+        if let Some(r) = row {
+            if r.status == "completed" || r.status == "failed" {
+                assert_eq!(r.kind, "graph_rebuild");
+                assert_eq!(r.status, "completed", "expected completed, got: {r:?}");
+                assert!(r.result.is_some(), "result must be persisted");
+                return;
+            }
+        }
+    }
+    panic!("graph_rebuild job did not complete within 2s");
+}
+
+/// P36 cancel 통합: graph_rebuild 실행 중 cancel 호출 → status=interrupted.
+/// adapter 가 폴링 후 부분 outcome 을 반환하면 partial_result 도 보존된다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_graph_rebuild_cancel_interrupts_job() {
+    // 충분히 긴 delay 로 폴링 루프 진입을 보장.
+    let (exec, _dir) = make_executor(2000);
+    let adapters = exec.adapters.clone().expect("adapters configured");
+
+    let args = serde_json::json!({ "all": true });
+    let args_for_spawn = args.clone();
+    let (id, _tx) = exec
+        .try_spawn(
+            JobKind::GraphRebuild,
+            Some(args.clone()),
+            move |tx, cancel_token| {
+                let adapters = adapters.clone();
+                let args_for_spawn = args_for_spawn.clone();
+                async move {
+                    let sink = BroadcastSink::new(tx, cancel_token);
+                    (adapters.graph_rebuild_fn)(args_for_spawn, sink).await
+                }
+            },
+        )
+        .await
+        .expect("first spawn must succeed");
+
+    // Running 진입 대기.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // POST /api/jobs/{id}/cancel 동등 경로.
+    assert!(exec.registry.cancel(&id).await, "cancel must succeed");
+
+    // executor select 루프가 status 를 Interrupted 로 확정할 때까지 대기.
+    let mut final_status = None;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let row = exec.db.lock().unwrap().get_job(&id).expect("get_job ok");
+        if let Some(r) = row {
+            if r.status == "interrupted" || r.status == "completed" || r.status == "failed" {
+                final_status = Some(r);
+                break;
+            }
+        }
+    }
+    let row = final_status.expect("job did not finalize within 2s");
+    assert_eq!(
+        row.status, "interrupted",
+        "cancel must yield interrupted status, got {row:?}"
+    );
+    assert_eq!(row.kind, "graph_rebuild");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

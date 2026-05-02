@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type {
+  GraphRebuildArgs,
   IngestArgs,
   JobKind,
   JobState,
@@ -54,7 +55,7 @@ export function useJob(id: string | undefined) {
   });
 }
 
-type JobArgs = SyncArgs | IngestArgs | WikiUpdateArgs;
+type JobArgs = SyncArgs | IngestArgs | WikiUpdateArgs | GraphRebuildArgs;
 
 /**
  * Job 시작 mutation. kind에 따라 적절한 시작 엔드포인트로 분기.
@@ -73,6 +74,8 @@ export function useStartJob(kind: JobKind) {
           return api.startIngest(args as IngestArgs);
         case "wiki_update":
           return api.startWikiUpdate(args as WikiUpdateArgs);
+        case "graph_rebuild":
+          return api.startGraphRebuild(args as GraphRebuildArgs);
       }
     },
     onSuccess: (data) => {

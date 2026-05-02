@@ -609,32 +609,17 @@ pub async fn ingest_sessions(
         && !no_semantic
         && !new_session_ids.is_empty();
     if semantic_enabled {
-        // 임베딩 모델(bge-m3)이 Ollama에 로드되어 있으면 언로드하여
-        // gemma4와 동시 로드로 인한 메모리 압박 방지 (16GB 시스템 대응)
-        if config.embedding.backend == "ollama" && config.graph.semantic_backend == "ollama" {
-            let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
-            let ollama_url = config
-                .embedding
-                .ollama_url
-                .as_deref()
-                .unwrap_or("http://localhost:11434");
-            let unload_url = format!("{}/api/generate", ollama_url.trim_end_matches('/'));
-            let body = serde_json::json!({"model": embed_model, "keep_alive": 0});
-            match secall_core::http_post_json(&unload_url, &body).await {
-                Ok(_) => tracing::debug!(
-                    model = embed_model,
-                    "unloaded embedding model before semantic extraction"
-                ),
-                Err(e) => {
-                    tracing::debug!(model = embed_model, "embedding model unload skipped: {}", e)
-                }
-            }
-        }
+        // 임베딩 모델 unload — P37 Task 01: helper 로 분리하여 graph::run_rebuild 와 공유
+        unload_embedding_model_if_needed(config).await;
         eprintln!(
             "Extracting semantic edges for {} session(s)...",
             new_session_ids.len()
         );
         let total_sem = new_session_ids.len();
+        // P37 rework — graph rebuild 와 동일하게 sub-loop 진입 시 timestamp 한 번 계산.
+        // 성공한 세션마다 같은 값으로 `semantic_extracted_at` 갱신 → 새 세션도
+        // `--retry-failed` 후속 실행 시 NULL 로 잡히지 않도록 한다.
+        let semantic_now_secs = chrono::Utc::now().timestamp();
         for (sem_idx, session_id) in new_session_ids.iter().enumerate() {
             // P36 — cancel check at top of semantic loop (before LLM-ish call)
             if let Some(s) = sink {
@@ -656,46 +641,26 @@ pub async fn ingest_sessions(
                 }
             }
             let short = &session_id[..8.min(session_id.len())];
-            // vault에서 세션 마크다운 읽기
-            let vault_path_opt = match db.get_session_vault_path(session_id) {
-                Ok(vp) => vp,
-                Err(e) => {
-                    tracing::warn!(session = short, "DB error reading vault path: {}", e);
-                    continue;
+            // P37 Task 01: 단일 세션 helper 로 추출 (rebuild 경로와 동일 helper).
+            // 동작 변경 없음 — 기존 tracing::warn/debug 메시지 그대로 보존.
+            match extract_one_session_semantic(db, config, session_id).await {
+                ExtractOneResult::Extracted(n) => {
+                    tracing::debug!(session = short, edges = n, "semantic edges extracted");
+                    // P37 rework — 추출 성공 세션은 timestamp 갱신.
+                    // graph rebuild 경로(graph.rs:280) 와 동일 동작 → ingest 후 NULL 로 남지 않음.
+                    // 갱신 실패는 자가 치유 (다음 retry-failed 가 다시 처리) — warn 만 남김.
+                    if let Err(e) = db.update_semantic_extracted_at(session_id, semantic_now_secs) {
+                        tracing::warn!(
+                            session = short,
+                            error = %e,
+                            "failed to update semantic_extracted_at"
+                        );
+                    }
                 }
-            };
-            let md_path = match vault_path_opt {
-                Some(vp) => config.vault.path.join(&vp),
-                None => {
-                    tracing::debug!(
-                        session = short,
-                        "no vault path, skipping semantic extraction"
-                    );
-                    continue;
+                ExtractOneResult::Skipped(reason) => {
+                    tracing::debug!(session = short, "semantic extraction skipped: {}", reason)
                 }
-            };
-            let content = match std::fs::read_to_string(&md_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(session = short, "failed to read vault file: {}", e);
-                    continue;
-                }
-            };
-            let fm = match secall_core::ingest::markdown::parse_session_frontmatter(&content) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::warn!(session = short, "failed to parse frontmatter: {}", e);
-                    continue;
-                }
-            };
-            let body = secall_core::ingest::markdown::extract_body_text(&content);
-            match secall_core::graph::semantic::extract_and_store(db, &config.graph, &fm, &body)
-                .await
-            {
-                Ok(n) => {
-                    tracing::debug!(session = short, edges = n, "semantic edges extracted")
-                }
-                Err(e) => {
+                ExtractOneResult::Failed(e) => {
                     tracing::warn!(session = short, "semantic extraction skipped: {}", e)
                 }
             }
@@ -711,6 +676,100 @@ pub async fn ingest_sessions(
         new_session_ids,
         error_details,
     })
+}
+
+/// P37 Task 01 — 단일 세션 시맨틱 엣지 추출 결과.
+///
+/// `ingest::ingest_sessions` 의 시맨틱 sub-loop 와
+/// `graph::run_rebuild` 가 동일 helper 를 사용하기 위한 공통 반환 타입.
+pub enum ExtractOneResult {
+    /// 추출 성공. payload 는 새로 저장된 엣지 수.
+    Extracted(usize),
+    /// vault 파일 누락/파싱 실패 등으로 추출 자체를 시도하지 않음.
+    /// reason 은 사용자/로그에 노출 가능한 짧은 설명.
+    Skipped(String),
+    /// 추출 시도했지만 LLM/DB 등 외부 호출 실패.
+    Failed(anyhow::Error),
+}
+
+/// P37 Task 01 — 단일 세션의 시맨틱 엣지를 추출한다.
+///
+/// ingest 와 graph rebuild 가 공유하는 helper. vault 마크다운을 읽어
+/// frontmatter + body 를 파싱하고 `extract_and_store` 호출.
+/// 동작 변경 없음 — 기존 ingest 시맨틱 sub-loop 의 분기 의미를 그대로 옮김.
+pub async fn extract_one_session_semantic(
+    db: &Database,
+    config: &Config,
+    session_id: &str,
+) -> ExtractOneResult {
+    let short = &session_id[..8.min(session_id.len())];
+
+    let vault_path_opt = match db.get_session_vault_path(session_id) {
+        Ok(vp) => vp,
+        Err(e) => {
+            tracing::warn!(session = short, "DB error reading vault path: {}", e);
+            return ExtractOneResult::Skipped(format!("DB error reading vault path: {e}"));
+        }
+    };
+
+    let md_path = match vault_path_opt {
+        Some(vp) => config.vault.path.join(&vp),
+        None => {
+            tracing::debug!(
+                session = short,
+                "no vault path, skipping semantic extraction"
+            );
+            return ExtractOneResult::Skipped("no vault path".to_string());
+        }
+    };
+
+    let content = match std::fs::read_to_string(&md_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(session = short, "failed to read vault file: {}", e);
+            return ExtractOneResult::Skipped(format!("failed to read vault file: {e}"));
+        }
+    };
+
+    let fm = match secall_core::ingest::markdown::parse_session_frontmatter(&content) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(session = short, "failed to parse frontmatter: {}", e);
+            return ExtractOneResult::Skipped(format!("failed to parse frontmatter: {e}"));
+        }
+    };
+
+    let body = secall_core::ingest::markdown::extract_body_text(&content);
+    match secall_core::graph::semantic::extract_and_store(db, &config.graph, &fm, &body).await {
+        Ok(n) => ExtractOneResult::Extracted(n),
+        Err(e) => ExtractOneResult::Failed(anyhow::anyhow!(e)),
+    }
+}
+
+/// P37 Task 01 — 시맨틱 추출 직전 임베딩 모델 unload.
+///
+/// 16GB 시스템에서 bge-m3(임베딩) 와 gemma4(LLM) 동시 로드 시
+/// OOM 위험을 줄이기 위해 시맨틱 backend 가 ollama 인 경우에만 발사.
+/// ingest 와 graph rebuild 둘 다 진입 시점에 한 번 호출한다.
+pub async fn unload_embedding_model_if_needed(config: &Config) {
+    if config.embedding.backend != "ollama" || config.graph.semantic_backend != "ollama" {
+        return;
+    }
+    let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+    let ollama_url = config
+        .embedding
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
+    let unload_url = format!("{}/api/generate", ollama_url.trim_end_matches('/'));
+    let body = serde_json::json!({"model": embed_model, "keep_alive": 0});
+    match secall_core::http_post_json(&unload_url, &body).await {
+        Ok(_) => tracing::debug!(
+            model = embed_model,
+            "unloaded embedding model before semantic extraction"
+        ),
+        Err(e) => tracing::debug!(model = embed_model, "embedding model unload skipped: {}", e),
+    }
 }
 
 /// 분류 규칙 — regex 패턴 또는 project 이름 매칭

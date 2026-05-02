@@ -3238,6 +3238,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

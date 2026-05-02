@@ -146,6 +146,10 @@ secall serve --port 8080
   - `true` (default): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
   - `false`: `{ "tags": ["rust", "search", ...] }`
 - Commands (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
+- Graph rebuild (P37): `POST /api/commands/graph-rebuild`
+  - body: `{ since?, session?, all?, retry_failed? }`
+  - response: `{ job_id, status: "started" }`
+  - Single-queue policy: returns `409 Conflict` if another mutating job is running
 - Job management (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE)
 - Job cancellation (P36): `POST /api/jobs/{id}/cancel`
   - 200: `{ "cancelled": true, "job_id": "..." }` — successful cancel of an active job (idempotent: same response for already-completed/cancelled jobs)
@@ -347,6 +351,14 @@ secall serve --port 8080
 - REST: `POST /api/jobs/{id}/cancel` — 200 active, 200 idempotent, 404 unknown/evicted
 - Web UI: a **Cancel** button in `JobBanner` and the active `JobItem`, gated by `window.confirm` (`useCancelJob` mutation hook)
 
+**Graph Sync automation** (P37, semantic graph rebuild):
+- Rebuild the semantic graph for already-ingested sessions out-of-band — backfill sessions that only have embeddings, or reprocess everything after swapping the model/prompt
+- DB schema v8: `sessions.semantic_extracted_at` column tracks semantic extraction state (NULL = not yet processed)
+- CLI: `secall graph rebuild [--since DATE] [--session ID] [--all] [--retry-failed]`
+- REST: `POST /api/commands/graph-rebuild` — integrated with the P33 Job system + P36 cancellation
+- Web UI: 4th card "Graph Rebuild" on the Commands page + options dialog (since / session / all / retry-failed)
+- Priority: `--session` > `--all` > `--retry-failed` > `--since` (when multiple are set, the highest-priority option wins) — consistent across CLI / REST / Web UI
+
 ### Keyboard shortcuts (Phase 2)
 
 | Key | Action |
@@ -374,6 +386,13 @@ secall sync --local-only --dry-run
 secall sync --no-graph         # disable graph incremental during sync (default: enabled)
 secall ingest --auto --auto-graph   # enable graph incremental during ingest (default: disabled)
 secall wiki update --backend claude
+
+# P37 — semantic graph rebuild (tracks semantic_extracted_at state)
+secall graph rebuild --retry-failed              # backfill all unprocessed (NULL) sessions
+secall graph rebuild --since 2026-04-01          # sessions on/after a date
+secall graph rebuild --session abc12345          # a single session
+secall graph rebuild --all                       # rebuild everything (overwrites existing results)
+# Priority: --session > --all > --retry-failed > --since (when set together, highest priority wins)
 ```
 
 ### Job System
@@ -616,6 +635,7 @@ Config file location:
 | `secall mcp [--http <addr>]` | Start MCP server |
 | `secall config show\|set\|path` | View/change settings |
 | `secall graph build\|stats\|export` | Knowledge graph management |
+| `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | Rebuild semantic graph (P37) — priority: `--session` > `--all` > `--retry-failed` > `--since` |
 | `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | Wiki generation with backend selection |
 | `secall wiki status` | Wiki status |
 | `secall log [YYYY-MM-DD]` | Generate daily work diary |
@@ -731,6 +751,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-03 | v0.8.0 | Graph Sync automation (P37): DB schema v8 (`sessions.semantic_extracted_at` column tracks semantic-extraction state), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (with `extract_one_session_semantic` helper extracted, priority: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, integrated with the P33 single-queue + P36 cancellation), 4th "Graph Rebuild" card on the web UI Commands page + options dialog |
 | 2026-05-02 | v0.7.0 | Job Cancellation (P36): `tokio_util::sync::CancellationToken` integration (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` trait method, sync/ingest/wiki adapter safe-point polling (between phases, file/session loop tops, before LLM calls), partial-result preservation, `POST /api/jobs/{id}/cancel` activated (200 idempotent / 404 unknown, final event `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI cancel button (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
 | 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` endpoint (with_counts option, removes 100-session heuristic), SessionList infinite scroll (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunks, initial entry JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7 |

@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type {
+  GraphRebuildArgs,
   IngestArgs,
   JobKind,
   SyncArgs,
@@ -64,9 +65,17 @@ const wikiSchema = z.object({
   review_model: z.string().optional(),
 });
 
+const graphRebuildSchema = z.object({
+  since: z.string().optional(),
+  session: z.string().optional(),
+  all: z.boolean().optional(),
+  retry_failed: z.boolean().optional(),
+});
+
 type SyncFormValues = z.input<typeof syncSchema>;
 type IngestFormValues = z.input<typeof ingestSchema>;
 type WikiFormValues = z.input<typeof wikiSchema>;
+type GraphRebuildFormValues = z.input<typeof graphRebuildSchema>;
 
 // 빈 문자열 필드를 제거하여 백엔드 Option<String>이 None이 되도록 한다.
 function stripEmpty<T extends Record<string, unknown>>(obj: T): T {
@@ -82,7 +91,9 @@ interface Props {
   kind: JobKind;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (args: SyncArgs | IngestArgs | WikiUpdateArgs) => void;
+  onSubmit: (
+    args: SyncArgs | IngestArgs | WikiUpdateArgs | GraphRebuildArgs,
+  ) => void;
 }
 
 export function JobOptionsDialog({ kind, open, onOpenChange, onSubmit }: Props) {
@@ -111,6 +122,12 @@ export function JobOptionsDialog({ kind, open, onOpenChange, onSubmit }: Props) 
             onSubmit={(v) => onSubmit(stripEmpty(v) as WikiUpdateArgs)}
           />
         )}
+        {kind === "graph_rebuild" && (
+          <GraphRebuildForm
+            onCancel={() => onOpenChange(false)}
+            onSubmit={(v) => onSubmit(stripEmpty(v) as GraphRebuildArgs)}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -124,6 +141,8 @@ function labelOf(kind: JobKind): string {
       return "Ingest";
     case "wiki_update":
       return "Wiki Update";
+    case "graph_rebuild":
+      return "Graph Rebuild";
   }
 }
 
@@ -135,6 +154,8 @@ function descOf(kind: JobKind): string {
       return "새 세션 파싱 + 인덱스";
     case "wiki_update":
       return "LLM 백엔드로 위키 페이지 갱신";
+    case "graph_rebuild":
+      return "이미 ingest 된 세션의 시맨틱 그래프 재구축";
   }
 }
 
@@ -287,6 +308,65 @@ function WikiForm({
         <label className="text-sm font-medium">review_model</label>
         <Input placeholder="(빈 값이면 기본값)" {...register("review_model")} />
       </div>
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onCancel}>취소</Button>
+        <Button type="submit">시작</Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// GraphRebuildForm
+// ----------------------------------------------------------------------------
+
+function GraphRebuildForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: SubmitHandler<GraphRebuildFormValues>;
+  onCancel: () => void;
+}) {
+  const { register, handleSubmit, reset } = useForm<GraphRebuildFormValues>({
+    resolver: zodResolver(graphRebuildSchema),
+    defaultValues: {
+      since: "",
+      session: "",
+      all: false,
+      retry_failed: false,
+    },
+  });
+  useEffect(() => () => reset(), [reset]);
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+      <p className="text-xs text-muted-foreground border border-border rounded px-2 py-1.5">
+        우선순위: <span className="font-mono">session</span> &gt;{" "}
+        <span className="font-mono">all</span> &gt;{" "}
+        <span className="font-mono">retry_failed</span> &gt;{" "}
+        <span className="font-mono">since</span> (Task 00 SQL 기준)
+      </p>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">since</label>
+        <Input type="date" {...register("since")} />
+        <p className="text-xs text-muted-foreground">이 날짜 이후 세션만 대상</p>
+      </div>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">session</label>
+        <Input
+          placeholder="full session_id (UUID)"
+          {...register("session")}
+        />
+        <p className="text-xs text-muted-foreground">
+          전체 session_id 정확히 입력 (backend 는 exact match — prefix 미지원)
+        </p>
+      </div>
+      <CheckboxRow label="all" register={register("all")} hint="모든 ingest된 세션 대상" />
+      <CheckboxRow
+        label="retry_failed"
+        register={register("retry_failed")}
+        hint="이전 실패/skip 세션만 재시도"
+      />
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onCancel}>취소</Button>
         <Button type="submit">시작</Button>
