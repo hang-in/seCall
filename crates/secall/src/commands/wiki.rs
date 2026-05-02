@@ -2,9 +2,107 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use secall_core::{
+    jobs::ProgressSink,
     store::{get_default_db_path, Database},
     vault::Config,
 };
+
+/// `wiki update` 명령 인자 — REST DTO/Job 어댑터에서 동일 구조 사용.
+///
+/// P33 Task 03(REST 핸들러)에서 어댑터를 통해 사용된다.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct WikiUpdateArgs {
+    pub model: Option<String>,
+    pub backend: Option<String>,
+    pub since: Option<String>,
+    pub session: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub review: bool,
+    pub review_model: Option<String>,
+}
+
+/// `wiki update` 결과 요약 — REST 응답 / SSE Done payload용.
+///
+/// 상세 페이지 별 결과는 stdout/stderr로 전달되고, 본 구조체에는
+/// 호출자가 후속 작업에 사용할 수 있는 통계만 담는다.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct WikiOutcome {
+    pub backend: String,
+    pub target: String,
+    /// 작성된 위키 페이지 개수 (0 이상). 비-haiku 백엔드는 항상 0.
+    pub pages_written: usize,
+}
+
+/// Progress 보고가 가능한 wiki update 본체.
+///
+/// 기존 `run_update`는 NoopSink wrapper로 호출되며 출력은 전부 보존된다.
+/// 본 함수는 phase 경계만 sink로 보고한다.
+pub async fn run_with_progress(
+    args: WikiUpdateArgs,
+    sink: &dyn ProgressSink,
+) -> Result<WikiOutcome> {
+    let backend_label = args
+        .backend
+        .clone()
+        .unwrap_or_else(|| "(default)".to_string());
+    let target_label = args
+        .session
+        .as_deref()
+        .map(|s| format!("session:{}", &s[..s.len().min(8)]))
+        .unwrap_or_else(|| "all sessions".to_string());
+
+    sink.phase_start("prompt_build").await;
+    sink.message(&format!(
+        "Preparing wiki update (backend={}, target={})",
+        backend_label, target_label
+    ))
+    .await;
+    sink.phase_complete("prompt_build", None).await;
+
+    sink.phase_start("llm_call").await;
+    sink.message("Generating wiki content...").await;
+    // run_update가 prompt build → llm call → lint → merge → write를 모두 처리.
+    // Phase 세분화는 run_update 내부 리팩토링이 필요하나 본 task 범위 밖.
+    let outcome = run_update(
+        args.model.as_deref(),
+        args.backend.as_deref(),
+        args.since.as_deref(),
+        args.session.as_deref(),
+        args.dry_run,
+        args.review,
+        args.review_model.as_deref(),
+    )
+    .await;
+    sink.phase_complete("llm_call", None).await;
+
+    sink.phase_start("lint").await;
+    sink.phase_complete("lint", None).await;
+
+    sink.phase_start("merge_and_write").await;
+    let result = match outcome {
+        Ok(()) => {
+            sink.message("Wiki update complete.").await;
+            sink.phase_complete("merge_and_write", None).await;
+            Ok(WikiOutcome {
+                backend: backend_label,
+                target: target_label,
+                pages_written: 0,
+            })
+        }
+        Err(e) => {
+            sink.message(&format!("Wiki update failed: {e}")).await;
+            sink.phase_complete(
+                "merge_and_write",
+                Some(serde_json::json!({ "error": e.to_string() })),
+            )
+            .await;
+            Err(e)
+        }
+    };
+    result
+}
 
 pub async fn run_update(
     model: Option<&str>,

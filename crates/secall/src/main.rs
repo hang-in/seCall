@@ -53,6 +53,10 @@ enum Commands {
         /// Skip semantic edge extraction during ingest
         #[arg(long)]
         no_semantic: bool,
+
+        /// Automatically run graph incremental extraction for new sessions after ingest
+        #[arg(long)]
+        auto_graph: bool,
     },
 
     /// Search session history
@@ -196,6 +200,10 @@ enum Commands {
         /// Skip semantic edge extraction during ingest
         #[arg(long)]
         no_semantic: bool,
+
+        /// Skip graph incremental extraction (default: enabled)
+        #[arg(long)]
+        no_graph: bool,
     },
 
     /// Rebuild DB index from vault markdown files
@@ -377,9 +385,19 @@ async fn main() -> anyhow::Result<()> {
             min_turns,
             force,
             no_semantic,
+            auto_graph,
         } => {
-            commands::ingest::run(path, auto, cwd, min_turns, force, no_semantic, &cli.format)
-                .await?;
+            commands::ingest::run(
+                path,
+                auto,
+                cwd,
+                min_turns,
+                force,
+                no_semantic,
+                auto_graph,
+                &cli.format,
+            )
+            .await?;
         }
         Commands::Recall {
             query,
@@ -462,8 +480,9 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             no_wiki,
             no_semantic,
+            no_graph,
         } => {
-            commands::sync::run(local_only, dry_run, no_wiki, no_semantic).await?;
+            commands::sync::run(local_only, dry_run, no_wiki, no_semantic, no_graph).await?;
         }
         Commands::Reindex { from_vault } => {
             commands::reindex::run(from_vault)?;

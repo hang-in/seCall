@@ -1,4 +1,4 @@
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 pub const CREATE_SESSIONS: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     summary       TEXT,
     ingested_at   TEXT NOT NULL,
     status        TEXT DEFAULT 'raw',
-    session_type  TEXT DEFAULT 'interactive'
+    session_type  TEXT DEFAULT 'interactive',
+    is_favorite   INTEGER DEFAULT 0,
+    notes         TEXT
 );
 ";
 
@@ -72,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
 CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(start_time);
+CREATE INDEX IF NOT EXISTS idx_sessions_favorite ON sessions(is_favorite) WHERE is_favorite = 1;
 ";
 
 pub const CREATE_QUERY_CACHE: &str = "
@@ -109,4 +112,29 @@ CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(type);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_relation ON graph_edges(relation);
+";
+
+// P33 Task 00: Job 시스템용 jobs 테이블.
+//
+// status 값:
+//   'started'     — 큐 진입 또는 spawn 직후
+//   'running'     — 실제 phase 실행 중
+//   'completed'   — 정상 종료
+//   'failed'      — 에러로 종료
+//   'interrupted' — 서버 재시작 등으로 중단
+//
+// kind 값: 'sync' | 'ingest' | 'wiki_update'
+pub const CREATE_JOBS: &str = "
+CREATE TABLE IF NOT EXISTS jobs (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    started_at    TEXT NOT NULL,
+    completed_at  TEXT,
+    error         TEXT,
+    result        TEXT,
+    metadata      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_started_at ON jobs(started_at);
 ";

@@ -53,6 +53,11 @@ When you need information during implementation:
 - `<!-- tunaflow:tool-request:rawq:QUERY -->` — Search project codebase
 - `<!-- tunaflow:tool-request:graph:callers_of TARGET -->` — Find what calls a function
 
+Tiered message inspection (when a message appeared cut in `recent_turns`):
+- `<!-- tunaflow:tool-request:probe_message:MESSAGE_ID -->` — metadata + head/tail (~1 KB)
+- `<!-- tunaflow:tool-request:fetch_slice:MESSAGE_ID:OFFSET:LEN -->` — slice (LEN ≤ 16 000)
+- `<!-- tunaflow:tool-request:full_message:MESSAGE_ID -->` — full content (heavy)
+
 Include markers at the END of your response, after your main content.
 
 ## Rework

@@ -127,16 +127,31 @@ Extract relationships between sessions to build a knowledge graph:
 - **Incremental builds**: new sessions get nodes added; relation edges are fully recomputed for accuracy
 - **MCP tool**: `graph_query` — AI agents can explore session relationships (BFS, max 3 hops)
 
-### REST API + Obsidian Plugin
+### Web UI + REST API + Obsidian Plugin
 
-Browse sessions from a REST API server and a dedicated Obsidian plugin:
+`secall serve` provides a REST API and a web UI on the same port (8080), and the Obsidian plugin shares the same API.
 
 ```bash
-# Start REST API server
+# Start REST API + Web UI server
 secall serve --port 8080
+# Browser: http://127.0.0.1:8080
 ```
 
-**Endpoints**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+**Endpoints**:
+- Read (Phase 0): `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`, `/api/wiki` (search)
+- Wiki body (Phase 1): `GET /api/wiki/{project}`
+- Session metadata (Phase 0): `/api/sessions`, `/api/projects`, `/api/agents`, `PATCH /api/sessions/{id}/{tags,favorite}`
+- Session notes (Phase 2): `PATCH /api/sessions/{id}/notes`
+- Commands (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
+- Job management (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, planned for v1.1)
+
+**Web UI** (`web/`, P32 Phase 0 + P33 Phase 1):
+- Dark-mode-first modern UI (Tailwind + shadcn/ui + Pretendard / Geist Sans)
+- 2-pane layout (left: search/list, right: detail)
+- Graph folding overlay (click node → load session + auto-fold)
+- Tag / favorite editing
+- Sidebar **Commands** menu — trigger Sync / Ingest / Wiki Update (Phase 1)
+- Global progress banner + SSE progress streaming + completion/failure toast (Phase 1)
 
 **Obsidian Plugin** (`obsidian-secall/`):
 - **Search View** — keyword/semantic session search
@@ -197,17 +212,31 @@ secall lint
 
 ### Step 1. Install
 
-**From source:**
+**GitHub Releases (recommended)** — single binary with embedded web UI:
 
-```bash
-git clone https://github.com/hang-in/seCall.git
-cd seCall
-cargo install --path crates/secall
-```
-
-**Pre-built binaries** ([Releases](https://github.com/hang-in/seCall/releases)):
+Download the binary for your OS from the [Releases page](https://github.com/hang-in/seCall/releases).
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
+
+**Cargo (developers)**:
+
+```bash
+# CLI / MCP / REST API only (no web UI)
+cargo install --path crates/secall --no-default-features
+
+# With web UI — requires Node 22 + pnpm 9 + just
+git clone https://github.com/hang-in/seCall.git && cd seCall
+just build         # builds web/dist then cargo build --release
+cp target/release/secall ~/.local/bin/
+```
+
+> `cargo install secall` does not run the npm build automatically. For the web UI, use the Releases binary or the manual build above.
+
+**Homebrew** (planned — tap registration in progress):
+
+```bash
+brew install hang-in/tap/secall
+```
 
 > **Windows users**: Core features (parsing, BM25 search, vault, MCP) work identically. The following are disabled due to MSVC limitations:
 > - **HNSW ANN index** (`usearch`) — falls back to BLOB cosine scan
@@ -263,6 +292,127 @@ secall recall "how does the search pipeline work" --vec
 # LLM-expanded query
 secall recall "improve search accuracy" --expand
 ```
+
+## Web UI
+
+`secall serve` provides a REST API and a web UI on the same port (single entry point).
+
+```bash
+secall serve --port 8080
+# Open http://127.0.0.1:8080 in your browser
+```
+
+**Phase 0 features** (P32, read-only):
+- Search / session browsing (2-pane layout)
+- Daily diary / wiki page viewing (full body — wiki-body fetch added in Phase 1)
+- Graph exploration (sidebar Graph button → fullscreen overlay)
+- Tag / favorite editing
+
+**Phase 1 features** (P33, command triggers):
+- Sidebar **Commands** menu — Sync / Ingest / Wiki Update buttons + options dialog
+- SSE progress streaming — per-phase live updates
+- Global progress banner — track active jobs from any page (sticky top)
+- Completion / failure / interrupted toast notifications
+- Partial success surfacing (e.g. "ingest OK / push failed")
+- Single mutating job at a time (single queue)
+- Auto-resume in-progress jobs after closing/reopening tabs
+
+**Phase 2 features** (P34, viewer enhancements):
+- Semantic search mode toggle (when Ollama is available)
+- Search-term highlighting — both in the list and the markdown body
+- Multi-tag AND filter + date quick range (today / this week / this month)
+- Keyboard shortcuts — `?` help, `j/k` list navigation, `/` search focus, `g d/w/s/c` route navigation, `[/]` session prev/next, `f` favorite, `e` notes
+- Related sessions panel — graph neighbors + same-project / same-tag suggestions (bottom of session detail)
+- Graph visualization upgrade — dagre auto-layout + per-type node colors / icons + edge label toggle + legend
+- Session metadata mini-chart — turn role distribution (user/assistant/system) + top 5 tool usage frequency
+- Per-session user notes — markdown editor (1s autosave, `PATCH /api/sessions/{id}/notes`)
+
+### Keyboard shortcuts (Phase 2)
+
+| Key | Action |
+|---|---|
+| `?` | Shortcut help |
+| `/` | Focus search |
+| `j` / `k` | Next / previous list item |
+| `[` / `]` | Previous / next session |
+| `g d` | Daily view |
+| `g w` | Wiki view |
+| `g s` | Sessions view |
+| `g c` | Commands view |
+| `g g` | Toggle graph overlay |
+| `f` | Toggle favorite on current session |
+| `e` | Edit notes on current session |
+| `Esc` | Close dialog / overlay |
+
+### Running Commands
+
+In the web UI: left sidebar **Commands** menu → choose command + options → start.
+
+Same commands work from the CLI (the Job system is web-UI only):
+```bash
+secall sync --local-only --dry-run
+secall sync --no-graph         # disable graph incremental during sync (default: enabled)
+secall ingest --auto --auto-graph   # enable graph incremental during ingest (default: disabled)
+secall wiki update --backend claude
+```
+
+### Job System
+
+Command triggers (sync/ingest/wiki update) run as background jobs:
+
+1. `POST /api/commands/{kind}` → immediately returns `{ job_id, status: "started" }` (HTTP 202)
+2. In-progress state lives in memory for fast SSE/polling (`Arc<RwLock<HashMap>>`)
+3. On completion/failure, results are persisted to the `jobs` table
+4. **Single queue**: only one mutating job at a time — a second request gets `409 Conflict` + `{"error":"another mutating job is running","current_kind":"sync|ingest|wiki_update"}`
+5. **Read operations** (search, session lookup, etc.) are unbounded
+6. On server restart, jobs left in `running`/`started` are auto-flipped to `interrupted`
+7. Completed/failed/interrupted jobs older than 7 days are cleaned up at startup
+8. Cancellation is not in MVP — `POST /api/jobs/:id/cancel` returns `501 Not Implemented` (planned for v1.1)
+
+#### Phase Breakdown (sync example)
+
+```
+sync = init → pull → reindex → ingest → wiki_update → graph → push
+```
+
+An SSE event is emitted on each phase boundary (`type` discriminator: `initial_state`, `phase_start`, `message`, `progress`, `phase_complete`, `done`, `failed`, KeepAlive 15s). If `push` fails, results up to `ingest` are preserved and surfaced in the result JSON:
+
+```json
+{
+  "pulled": 3,
+  "reindexed": 5,
+  "ingested": 2,
+  "wiki_updated": 1,
+  "graph_nodes_added": 12,
+  "graph_edges_added": 34,
+  "pushed": null,
+  "partial_failure": "push: <error>"
+}
+```
+
+### Dev Mode
+
+```bash
+just dev    # Vite dev server (5173) + axum (8080) in parallel
+```
+
+`just dev` runs Vite at 5173 and axum reverse-proxies it from 8080.
+- **Connect to 8080**: single-port (HMR requires manual refresh)
+- **Connect to 5173 directly**: HMR works, `/api/*` is proxied to 8080
+
+### Build
+
+```bash
+just build          # builds web/dist + cargo build --release
+# or manually:
+cd web && pnpm install && pnpm build && cd ..
+cargo build --release
+```
+
+### Prerequisites (development)
+
+- Node 22 + pnpm 9 — `corepack enable` or `npm i -g pnpm`
+- [just](https://just.systems) — `brew install just` (optional, for command runner)
 
 ## Usage
 
@@ -434,8 +584,8 @@ Config file location:
 | Command | Description |
 |---|---|
 | `secall init` | Interactive onboarding (vault, tokenizer, embedding setup) |
-| `secall ingest [path] --auto` | Parse and index agent sessions |
-| `secall sync [--local-only] [--no-wiki]` | Full sync: git pull → reindex → ingest → wiki → graph → git push |
+| `secall ingest [path] --auto [--auto-graph]` | Parse and index agent sessions (`--auto-graph` enables graph incremental, default disabled) |
+| `secall sync [--local-only] [--no-wiki] [--no-semantic] [--no-graph]` | Full sync: init → pull → reindex → ingest → wiki_update → graph → push (`--no-graph` skips the graph phase) |
 | `secall recall <query>` | Hybrid search (automated sessions excluded by default) |
 | `secall recall <query> --include-automated` | Search including automated sessions |
 | `secall get <id> [--full]` | Retrieve session details |
@@ -561,6 +711,8 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7 |
+| 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): command triggers (Sync/Ingest/Wiki Update), SSE progress streaming (per phase), Job system (single queue + 7-day cleanup + interrupted recovery), global progress banner + toast, graph incremental (`secall ingest --auto-graph`, `secall sync --no-graph`), wiki body GET endpoint (`/api/wiki/{project}`), DB v6 (`jobs` table) |
 | 2026-04-15 | v0.3.2 | Gemini API backend (semantic graph + diary), Codex wiki backend (PR #29), REST API server (`secall serve`), Obsidian plugin (search/daily/graph views), daily work log (`secall log`), semantic edges (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), auto-disable graph semantic in BM25-only mode (#25) |
 | 2026-04-12 | v0.3.1 | `secall lint --fix` stale DB cleanup (#15), `wiki_search` created/updated fields (#13), P20 test coverage (+16 tests) |
 | 2026-04-12 | v0.3.0 | Session classification (regex rules, `secall classify`), wiki pluggable backends (Ollama, LM Studio), `--include-automated` flag |

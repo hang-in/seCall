@@ -126,16 +126,31 @@ vault/
 - **증분 빌드**: 신규 세션만 노드 추가, 관계 엣지는 전체 재계산으로 정확성 보장
 - **MCP 도구**: `graph_query` — AI 에이전트가 세션 간 관계를 탐색 (BFS, 최대 3홉)
 
-### REST API + Obsidian 플러그인
+### Web UI + REST API + Obsidian 플러그인
 
-REST API 서버와 전용 Obsidian 플러그인으로 브라우저에서 세션을 탐색합니다:
+`secall serve`는 REST API와 웹 UI를 동일 포트(8080)에서 제공하며, Obsidian 플러그인과도 동일 API를 공유합니다.
 
 ```bash
-# REST API 서버 시작
+# REST API + Web UI 서버 시작
 secall serve --port 8080
+# 브라우저: http://127.0.0.1:8080
 ```
 
-**엔드포인트**: `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`
+**엔드포인트**:
+- 읽기 (Phase 0): `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`, `/api/wiki` (검색)
+- 위키 본문 (Phase 1): `GET /api/wiki/{project}`
+- 세션 메타 (Phase 0): `/api/sessions`, `/api/projects`, `/api/agents`, `PATCH /api/sessions/{id}/{tags,favorite}`
+- 세션 노트 (Phase 2): `PATCH /api/sessions/{id}/notes`
+- 명령 (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
+- Job 관리 (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, v1.1 예정)
+
+**Web UI** (`web/`, P32 Phase 0 + P33 Phase 1):
+- 다크 모드 우선 모던 UI (Tailwind + shadcn/ui + Pretendard/Geist Sans)
+- 2-pane 레이아웃 (좌: 검색/리스트, 우: 상세)
+- 그래프 폴딩 오버레이 (노드 클릭 → 세션 로드 + 자동 폴딩)
+- 태그 / 즐겨찾기 편집
+- 사이드바 **Commands** 메뉴 — Sync / Ingest / Wiki Update 트리거 (Phase 1)
+- 글로벌 진행 배너 + SSE 진행 스트리밍 + 완료/실패 toast (Phase 1)
 
 **Obsidian 플러그인** (`obsidian-secall/`):
 - **검색 뷰** — 키워드/시맨틱 세션 검색
@@ -196,17 +211,31 @@ secall lint
 
 ### Step 1. 설치
 
-**소스 빌드:**
+**GitHub Releases (권장)** — 웹 UI 포함된 단일 바이너리:
 
-```bash
-git clone https://github.com/hang-in/seCall.git
-cd seCall
-cargo install --path crates/secall
-```
-
-**사전 빌드 바이너리** ([Releases](https://github.com/hang-in/seCall/releases)):
+[Releases 페이지](https://github.com/hang-in/seCall/releases)에서 OS에 맞는 파일 다운로드.
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
+
+**Cargo (개발자용)**:
+
+```bash
+# CLI/MCP/REST API만 (웹 UI 미포함)
+cargo install --path crates/secall --no-default-features
+
+# 웹 UI 포함 — Node 22 + pnpm 9 + just 사전 설치 필요
+git clone https://github.com/hang-in/seCall.git && cd seCall
+just build         # web/dist 빌드 → cargo build --release
+cp target/release/secall ~/.local/bin/
+```
+
+> `cargo install secall`은 npm 빌드를 자동으로 수행하지 않습니다. 웹 UI를 사용하려면 Releases 바이너리 또는 위의 직접 빌드를 사용하세요.
+
+**Homebrew** (예정 — tap 등록 작업 진행 중):
+
+```bash
+brew install hang-in/tap/secall
+```
 
 > **Windows 사용자**: 핵심 기능(파싱, BM25 검색, vault, MCP)은 동일하게 동작합니다. 아래 기능은 MSVC 미지원으로 비활성화:
 > - **HNSW ANN 인덱스** (`usearch`) — BLOB 코사인 스캔 fallback
@@ -262,6 +291,127 @@ secall recall "검색 파이프라인 동작 방식" --vec
 # LLM 쿼리 확장
 secall recall "검색 정확도 개선" --expand
 ```
+
+## Web UI
+
+`secall serve`는 REST API와 함께 웹 UI를 동일 포트에서 제공합니다 (단일 진입점).
+
+```bash
+secall serve --port 8080
+# 브라우저에서 http://127.0.0.1:8080 접속
+```
+
+**Phase 0 기능** (P32, 읽기 전용):
+- 검색 / 세션 브라우징 (2-pane 레이아웃)
+- 일일 일기 / 위키 페이지 열람 (전체 본문 — Phase 1에서 위키 본문 fetch 추가)
+- 그래프 탐색 (사이드바 Graph 버튼 → 풀스크린 오버레이)
+- 태그 / 즐겨찾기 편집
+
+**Phase 1 기능** (P33, 명령 트리거):
+- 사이드바 **Commands** 메뉴 — Sync / Ingest / Wiki Update 버튼 + 옵션 다이얼로그
+- SSE 진행 스트리밍 — phase별 실시간 표시
+- 글로벌 진행 배너 — 어떤 페이지에서든 활성 작업 추적 (sticky top)
+- 완료/실패/중단 자동 toast 알림
+- 부분 성공 명시 (예: "ingest까지 OK / push 실패")
+- 한 번에 하나의 mutating 작업만 실행 (단일 큐)
+- 탭 닫고 재접속 시 진행 중 작업 자동 복원
+
+**Phase 2 기능** (P34, 뷰어 강화):
+- 시맨틱 검색 모드 토글 (Ollama 사용 시)
+- 검색어 하이라이트 — 리스트 + 마크다운 본문 양쪽
+- 다중 태그 AND 필터 + 날짜 quick range (오늘/이번 주/이번 달)
+- 키보드 단축키 — `?` 도움말, `j/k` 리스트 이동, `/` 검색 포커스, `g d/w/s/c` 라우트, `[/]` 세션 prev/next, `f` 즐겨찾기, `e` 노트
+- 관련 세션 패널 — 그래프 인접 + 같은 프로젝트/태그 추천 (세션 상세 하단)
+- 그래프 시각화 강화 — dagre 자동 레이아웃 + 노드 타입별 색상/아이콘 + 엣지 라벨 토글 + 범례
+- 세션 메타 mini-chart — turn role 분포 (user/assistant/system) + tool 사용 빈도 top 5
+- 사용자 노트 편집 — 세션별 markdown 노트 (autosave 1s, `PATCH /api/sessions/{id}/notes`)
+
+### 키보드 단축키 (Phase 2)
+
+| 키 | 동작 |
+|---|---|
+| `?` | 단축키 도움말 |
+| `/` | 검색 포커스 |
+| `j` / `k` | 리스트 다음/이전 항목 |
+| `[` / `]` | 세션 prev/next |
+| `g d` | Daily 화면 |
+| `g w` | Wiki 화면 |
+| `g s` | Sessions 화면 |
+| `g c` | Commands 화면 |
+| `g g` | 그래프 오버레이 토글 |
+| `f` | 현재 세션 즐겨찾기 토글 |
+| `e` | 현재 세션 노트 편집 |
+| `Esc` | 다이얼로그/오버레이 닫기 |
+
+### 명령 사용
+
+웹 UI에서 좌측 사이드바 **Commands** 메뉴 → 원하는 명령 + 옵션 → 시작.
+
+CLI에서도 동일하게 사용 가능 (Job 시스템은 웹 UI 전용):
+```bash
+secall sync --local-only --dry-run
+secall sync --no-graph         # graph 자동 증분 비활성 (sync 기본은 활성)
+secall ingest --auto --auto-graph   # ingest 시 graph 자동 증분 활성 (기본 비활성)
+secall wiki update --backend claude
+```
+
+### Job 시스템
+
+명령 트리거(sync/ingest/wiki update)는 백그라운드 Job으로 실행됩니다:
+
+1. `POST /api/commands/{kind}` → 즉시 `{ job_id, status: "started" }` 응답 (HTTP 202)
+2. 진행 중 상태는 메모리에 저장되어 빠른 SSE/폴링 가능 (`Arc<RwLock<HashMap>>`)
+3. 완료/실패 시 `jobs` 테이블에 영구 기록
+4. **단일 큐**: 동시에 mutating 작업은 1개만 — 두 번째 요청은 `409 Conflict` + `{"error":"another mutating job is running","current_kind":"sync|ingest|wiki_update"}`
+5. **Read 작업** (검색, 세션 조회 등)은 동시 무제한
+6. 서버 재시작 시 `running`/`started` 상태 jobs는 자동으로 `interrupted`로 갱신
+7. 7일 이상된 완료/실패/중단 jobs는 시작 시 자동 cleanup
+8. Cancellation은 MVP 미포함 — `POST /api/jobs/:id/cancel` 호출 시 `501 Not Implemented` (v1.1 예정)
+
+#### Phase 분리 (sync 예시)
+
+```
+sync = init → pull → reindex → ingest → wiki_update → graph → push
+```
+
+각 phase 완료마다 SSE 이벤트 발행 (`type` discriminator: `initial_state`, `phase_start`, `message`, `progress`, `phase_complete`, `done`, `failed`, KeepAlive 15초). push 실패 시 ingest까지의 결과는 보존되며 결과 JSON에 명시:
+
+```json
+{
+  "pulled": 3,
+  "reindexed": 5,
+  "ingested": 2,
+  "wiki_updated": 1,
+  "graph_nodes_added": 12,
+  "graph_edges_added": 34,
+  "pushed": null,
+  "partial_failure": "push: <error>"
+}
+```
+
+### 개발 모드
+
+```bash
+just dev    # Vite dev server (5173) + axum (8080) 동시 실행
+```
+
+`just dev`는 Vite를 5173에서 띄우고 axum이 8080으로 reverse proxy합니다.
+- **8080 접속**: 단일 포트로 모든 것 동작 (HMR은 새로고침 필요)
+- **5173 직접 접속**: HMR 동작, `/api/*`는 8080으로 프록시됨
+
+### 빌드
+
+```bash
+just build          # web/dist 빌드 + cargo build --release
+# 또는 수동:
+cd web && pnpm install && pnpm build && cd ..
+cargo build --release
+```
+
+### 사전 요구사항 (개발 시)
+
+- Node 22 + pnpm 9 — `corepack enable` 또는 `npm i -g pnpm`
+- [just](https://just.systems) — `brew install just` (선택, 명령 통합용)
 
 ## 사용법
 
@@ -440,8 +590,8 @@ secall config path
 | 명령 | 설명 |
 |---|---|
 | `secall init` | 대화형 온보딩 (vault, 토크나이저, 임베딩 설정) |
-| `secall ingest [path] --auto` | 에이전트 세션 파싱 및 인덱싱 |
-| `secall sync [--local-only] [--no-wiki] [--no-semantic]` | 전체 동기화: git pull → reindex → ingest → wiki → graph → git push |
+| `secall ingest [path] --auto [--auto-graph]` | 에이전트 세션 파싱 및 인덱싱 (`--auto-graph`로 graph 자동 증분 활성, 기본 비활성) |
+| `secall sync [--local-only] [--no-wiki] [--no-semantic] [--no-graph]` | 전체 동기화: init → pull → reindex → ingest → wiki_update → graph → push (`--no-graph`로 graph 단계 생략) |
 | `secall recall <query>` | 하이브리드 검색 (기본: automated 세션 제외) |
 | `secall recall <query> --include-automated` | automated 세션 포함하여 검색 |
 | `secall get <id> [--full]` | 세션 상세 조회 |
@@ -567,6 +717,8 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): 시맨틱 검색 모드 활성, 검색어 하이라이트, 다중 태그 + 날짜 quick range, 키보드 단축키 (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), 관련 세션 패널, 그래프 시각화 강화 (dagre + 노드 색상/아이콘 + 범례), 세션 메타 mini-chart, 사용자 노트 편집 (`PATCH /api/sessions/{id}/notes`), DB 스키마 v7 |
+| 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): 명령 트리거 (Sync/Ingest/Wiki Update), SSE 진행 스트리밍 (phase별), Job 시스템 (단일 큐 + 7일 cleanup + interrupted 보정), 글로벌 진행 배너 + toast, 그래프 자동 증분 (`secall ingest --auto-graph`, `secall sync --no-graph`), 위키 본문 GET 엔드포인트 (`/api/wiki/{project}`), DB v6 (`jobs` 테이블) |
 | 2026-04-17 | v0.3.3 | LM Studio (OpenAI 호환) 시맨틱 백엔드 추가 (`--backend lmstudio`, #35), `secall sync --no-semantic` 플래그 추가 — GPU 메모리 경합 방지 (#34), Gemini Web ZIP ingest 지원 (#31), `graph semantic` CLI 백엔드 설정 옵션 (#30) |
 | 2026-04-15 | v0.3.2 | Gemini API 백엔드 (시맨틱 그래프 + 일기 생성), Codex wiki 백엔드 (PR #29), REST API 서버 (`secall serve`), Obsidian 플러그인 (검색/데일리/그래프 뷰), 작업 일기 (`secall log`), 시맨틱 엣지 (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), BM25-only 모드 시 graph semantic 자동 비활성화 (#25) |
 | 2026-04-12 | v0.3.1 | `secall lint --fix` stale DB 정리 (#15), `wiki_search` created/updated 필드 (#13), P20 테스트 커버리지 강화 (+16 tests) |

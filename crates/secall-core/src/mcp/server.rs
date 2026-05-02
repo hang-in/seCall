@@ -171,6 +171,39 @@ impl SeCallMcpServer {
         } else {
             let meta = db.get_session_meta(&session_id)?;
             let mut json_val = serde_json::to_value(&meta).unwrap_or_default();
+            // P32 Task 06 rework: 웹 UI/Obsidian가 SessionDetail에서 직접 사용하도록
+            // tags/is_favorite/turn_count/start_time/id/summary를 추가. 기존 필드는 그대로 유지.
+            if let Ok(item) = db.get_session_list_item(&session_id) {
+                json_val["id"] = serde_json::Value::String(item.id);
+                json_val["start_time"] = serde_json::Value::String(item.start_time);
+                json_val["turn_count"] = serde_json::Value::Number(item.turn_count.into());
+                json_val["is_favorite"] = serde_json::Value::Bool(item.is_favorite);
+                json_val["tags"] = serde_json::to_value(&item.tags).unwrap_or_default();
+                if let Some(s) = item.summary {
+                    json_val["summary"] = serde_json::Value::String(s);
+                }
+                // P34 Task 00: notes 필드 보강
+                json_val["notes"] = match item.notes {
+                    Some(n) => serde_json::Value::String(n),
+                    None => serde_json::Value::Null,
+                };
+            }
+            // P34 Task 07: turn role 분포 + tool 사용 빈도 mini-chart용 통계.
+            // 통계 조회 실패는 무시 (옵셔널 필드).
+            if let Ok(stats) = db.get_session_stats(&session_id) {
+                json_val["turn_role_counts"] = serde_json::json!({
+                    "user": stats.user_turns,
+                    "assistant": stats.assistant_turns,
+                    "system": stats.system_turns,
+                });
+                json_val["tool_use_counts"] = serde_json::Value::Array(
+                    stats
+                        .tool_counts
+                        .into_iter()
+                        .map(|(name, count)| serde_json::json!({"name": name, "count": count}))
+                        .collect(),
+                );
+            }
             if params.full.unwrap_or(false) {
                 let content = if let Some(vault_path) = &meta.vault_path {
                     std::fs::read_to_string(vault_path).ok()
@@ -220,6 +253,44 @@ impl SeCallMcpServer {
             "turns": stats.turn_count,
             "vectors": stats.vector_count,
             "recent_ingests": stats.recent_ingests.len(),
+        }))
+    }
+
+    /// 단일 위키 페이지 본문 반환 (`vault/wiki/projects/{safe_name}.md`).
+    ///
+    /// 파일이 없으면 `Err`을 반환하고 메시지에 `not found`를 포함시켜
+    /// REST 핸들러가 404로 매핑할 수 있게 한다.
+    pub fn do_wiki_get(&self, project: &str) -> anyhow::Result<serde_json::Value> {
+        let safe = safe_project_name(project);
+        if safe.is_empty() {
+            return Err(anyhow::anyhow!(
+                "wiki page not found for project: {project}"
+            ));
+        }
+
+        let path = self
+            .vault_path
+            .join("wiki")
+            .join("projects")
+            .join(format!("{safe}.md"));
+
+        if !path.exists() {
+            return Err(anyhow::anyhow!(
+                "wiki page not found for project: {project}"
+            ));
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        let updated = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+
+        Ok(serde_json::json!({
+            "project": project,
+            "path": path.to_string_lossy(),
+            "content": content,
+            "updated": updated,
         }))
     }
 
@@ -477,6 +548,130 @@ impl SeCallMcpServer {
             "projects": by_project,
         }))
     }
+
+    // ─── REST listing / mutation (P32 Task 02) ──────────────────────────────
+
+    pub fn do_list_sessions(
+        &self,
+        filter: crate::store::session_repo::SessionListFilter,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        let page = db.list_sessions_filtered(&filter)?;
+        Ok(serde_json::to_value(page)?)
+    }
+
+    pub fn do_list_projects(&self) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        Ok(serde_json::json!({ "projects": db.list_projects()? }))
+    }
+
+    pub fn do_list_agents(&self) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        Ok(serde_json::json!({ "agents": db.list_agents()? }))
+    }
+
+    pub fn do_set_tags(
+        &self,
+        session_id: &str,
+        tags: Vec<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        let normalized = db.update_session_tags(session_id, &tags)?;
+        Ok(serde_json::json!({ "session_id": session_id, "tags": normalized }))
+    }
+
+    pub fn do_set_favorite(
+        &self,
+        session_id: &str,
+        favorite: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        db.update_session_favorite(session_id, favorite)?;
+        Ok(serde_json::json!({ "session_id": session_id, "favorite": favorite }))
+    }
+
+    /// P34 Task 00: 세션 노트 갱신. notes는 free-form markdown 문자열.
+    /// `None` 또는 빈 문자열 모두 허용 (사용자 의도 보존).
+    pub fn do_set_notes(
+        &self,
+        session_id: &str,
+        notes: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        db.update_session_notes(session_id, notes)?;
+        Ok(serde_json::json!({
+            "session_id": session_id,
+            "notes": notes,
+        }))
+    }
+
+    // ─── Job 시스템 (P33 Task 03) ──────────────────────────────────────────
+
+    /// 메모리 또는 DB에서 단일 job 상태 조회. 둘 다 없으면 Ok(None).
+    ///
+    /// 메모리 우선: 진행 중이거나 5분 보존 기간 내라면 `JobState`가 그대로 반환된다.
+    /// 메모리에 없으면 DB의 `JobRow`를 `serde_json::Value`로 매핑해 반환한다 (kind/status는 문자열).
+    pub async fn do_get_job(
+        &self,
+        executor: &crate::jobs::JobExecutor,
+        id: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        if let Some(state) = executor.registry.get(id).await {
+            return Ok(Some(serde_json::to_value(state)?));
+        }
+        let db = executor
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        match db.get_job(id)? {
+            Some(row) => Ok(Some(serde_json::to_value(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 메모리에 있는 active jobs 목록 (started/running).
+    pub async fn do_list_active_jobs(
+        &self,
+        executor: &crate::jobs::JobExecutor,
+    ) -> anyhow::Result<serde_json::Value> {
+        let states = executor.registry.list_active().await;
+        Ok(serde_json::json!({ "jobs": states }))
+    }
+
+    /// DB에서 최근 job 기록 조회 (최대 50개).
+    pub async fn do_list_recent_jobs(
+        &self,
+        executor: &crate::jobs::JobExecutor,
+        limit: usize,
+    ) -> anyhow::Result<serde_json::Value> {
+        let limit = limit.clamp(1, 200);
+        let rows = {
+            let db = executor
+                .db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            db.list_recent_jobs(limit)?
+        };
+        Ok(serde_json::json!({ "jobs": rows }))
+    }
 }
 
 /// MCP tool wrappers — 공통 do_*() 메서드를 CallToolResult로 래핑
@@ -626,6 +821,16 @@ pub async fn start_mcp_http_server(
     Ok(())
 }
 
+/// 프로젝트명을 wiki 파일명에 안전한 문자열로 정규화.
+///
+/// 위키 생성 측(`crates/secall/src/commands/wiki.rs::safe_project_name`)과 동일한 규칙:
+/// 알파벳/숫자/`-`/`_`만 허용하고 그 외 문자는 `-`로 치환한 뒤 양 끝의 `-`를 제거한다.
+fn safe_project_name(name: &str) -> String {
+    name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
+        .trim_matches('-')
+        .to_string()
+}
+
 /// wiki md frontmatter에서 created/updated 값을 추출.
 fn extract_wiki_dates(content: &str) -> (Option<String>, Option<String>) {
     let fm = match content.strip_prefix("---\n") {
@@ -727,5 +932,59 @@ mod tests {
         let content = "---\ncreated: \"2026-04-10\"\n---\n";
         let (created, _) = super::extract_wiki_dates(content);
         assert_eq!(created.as_deref(), Some("2026-04-10"));
+    }
+
+    #[test]
+    fn test_safe_project_name() {
+        assert_eq!(super::safe_project_name("seCall"), "seCall");
+        assert_eq!(super::safe_project_name("foo bar"), "foo-bar");
+        assert_eq!(super::safe_project_name("a/b/c"), "a-b-c");
+        assert_eq!(super::safe_project_name("--foo--"), "foo");
+        assert_eq!(
+            super::safe_project_name("한글_프로젝트-1"),
+            "한글_프로젝트-1"
+        );
+    }
+
+    #[test]
+    fn test_do_wiki_get_returns_content() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("wiki").join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+        let body = "# secall\n\n위키 본문 테스트.";
+        fs::write(projects_dir.join("secall.md"), body).unwrap();
+
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
+        let server = SeCallMcpServer::new(
+            Arc::new(Mutex::new(db)),
+            Arc::new(engine),
+            tmp.path().to_path_buf(),
+        );
+
+        let v = server.do_wiki_get("secall").expect("ok");
+        assert_eq!(v["project"], "secall");
+        assert_eq!(v["content"].as_str().unwrap(), body);
+        assert!(v["path"].as_str().unwrap().ends_with("secall.md"));
+        assert!(v["updated"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_do_wiki_get_missing_returns_not_found_err() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
+        let server = SeCallMcpServer::new(
+            Arc::new(Mutex::new(db)),
+            Arc::new(engine),
+            tmp.path().to_path_buf(),
+        );
+
+        let err = server.do_wiki_get("nope").unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 }

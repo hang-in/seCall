@@ -47,6 +47,13 @@ After the plan is promoted, write documents directly in `docs/plans/`:
 - `{slug}-task-02.md` — Subtask 2 work instruction
 - Continue for each subtask
 
+**`{slug}` is not something you invent.** The ContextPack `## Active Plan` section
+includes `> **Plan slug (canonical):** `<value>`` — use that value verbatim.
+Do not abbreviate, truncate, or re-slugify the plan title yourself. tunaFlow
+(Reviewer context loader, result/review report writers) reads file names back
+using this exact slug; any deviation — including a stray trailing `-` — means
+your task files will be invisible to downstream agents.
+
 Each task file MUST contain:
 1. **Changed files** — exact paths verified against the codebase (new files: state explicitly)
 2. **Change description** — what to add/modify/remove and why
@@ -66,6 +73,11 @@ When you need to explore the codebase before designing:
 - `<!-- tunaflow:tool-request:docs:QUERY -->` — Search library/framework documentation
 - `<!-- tunaflow:tool-request:rawq:QUERY -->` — Search project codebase
 - `<!-- tunaflow:tool-request:graph:PATTERN TARGET -->` — Query code graph (callers_of, tests_for, etc.)
+
+Tiered message inspection (when `recent_turns` truncated a message you need to verify):
+- `<!-- tunaflow:tool-request:probe_message:MESSAGE_ID -->` — ~1 KB metadata probe (length + head/tail previews). Confirms DB has full content before you pay for the body.
+- `<!-- tunaflow:tool-request:fetch_slice:MESSAGE_ID:OFFSET:LEN -->` — Read a `[offset, offset+len)` char slice. LEN capped at 16 000.
+- `<!-- tunaflow:tool-request:full_message:MESSAGE_ID -->` — Entire content with no truncation. Heaviest — prefer probe/slice unless you really need the whole thing.
 
 tunaFlow will execute the request and provide results in the next turn.
 Include markers at the END of your response, after your main content.

@@ -718,4 +718,341 @@ impl Database {
         )?;
         Ok(count as usize)
     }
+
+    /// P34 Task 07: 세션 단위 mini-chart용 통계.
+    /// turns 테이블에서 role별 카운트와 tool_names JSON 배열을 집계하여
+    /// 상위 빈도 tool 8개까지 반환한다.
+    pub fn get_session_stats(&self, session_id: &str) -> Result<SessionStats> {
+        // role 카운트
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT role, COUNT(*) FROM turns WHERE session_id = ?1 GROUP BY role")?;
+        let mut user = 0i64;
+        let mut assistant = 0i64;
+        let mut system = 0i64;
+        let rows = stmt.query_map(rusqlite::params![session_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows.filter_map(|r| r.ok()) {
+            match row.0.as_str() {
+                "user" => user = row.1,
+                "assistant" => assistant = row.1,
+                "system" => system = row.1,
+                _ => {}
+            }
+        }
+
+        // tool 카운트 — turns.tool_names는 JSON 배열
+        let mut stmt2 = self
+            .conn()
+            .prepare("SELECT tool_names FROM turns WHERE session_id = ?1 AND has_tool = 1")?;
+        let mut tool_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let rows2 = stmt2.query_map(rusqlite::params![session_id], |r| {
+            r.get::<_, Option<String>>(0)
+        })?;
+        for json_opt in rows2.filter_map(|r| r.ok()).flatten() {
+            if let Ok(names) = serde_json::from_str::<Vec<String>>(&json_opt) {
+                for name in names {
+                    *tool_map.entry(name).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut tool_counts: Vec<(String, i64)> = tool_map.into_iter().collect();
+        tool_counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        tool_counts.truncate(8);
+
+        Ok(SessionStats {
+            user_turns: user,
+            assistant_turns: assistant,
+            system_turns: system,
+            tool_counts,
+        })
+    }
+
+    // ─── REST listing / mutation (P32 Task 02) ─────────────────────────────
+
+    /// 세션 리스트 조회 (페이지네이션 + 다중 필터).
+    pub fn list_sessions_filtered(
+        &self,
+        f: &SessionListFilter,
+    ) -> crate::error::Result<SessionListPage> {
+        let mut conditions: Vec<String> = vec![
+            // automated session_type은 기본 제외 — recall과 일관성
+            "session_type != 'automated'".to_string(),
+        ];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(p) = &f.project {
+            conditions.push("project = ?".to_string());
+            params.push(Box::new(p.clone()));
+        }
+        if let Some(a) = &f.agent {
+            conditions.push("agent = ?".to_string());
+            params.push(Box::new(a.clone()));
+        }
+        if let Some(d) = &f.date_from {
+            // start_time은 RFC3339. "YYYY-MM-DD" 비교는 prefix LIKE — 단순히 lex 비교 사용
+            conditions.push("start_time >= ?".to_string());
+            params.push(Box::new(format!("{d}T00:00:00")));
+        }
+        if let Some(d) = &f.date_to {
+            conditions.push("start_time <= ?".to_string());
+            params.push(Box::new(format!("{d}T23:59:59")));
+        }
+        if let Some(t) = &f.tag {
+            // tags는 JSON 배열 문자열. "rust" → '%"rust"%' 패턴 LIKE.
+            // 부분 매칭 위험 있으나 MVP 허용.
+            conditions.push("tags LIKE ?".to_string());
+            params.push(Box::new(format!("%\"{}\"%", t.replace('"', "\"\""))));
+        }
+        // P34 Task 03: 다중 태그 AND 매칭 — 각 태그가 별도 LIKE.
+        for t in &f.tags {
+            conditions.push("tags LIKE ?".to_string());
+            params.push(Box::new(format!("%\"{}\"%", t.replace('"', "\"\""))));
+        }
+        if let Some(fav) = f.favorite {
+            conditions.push("is_favorite = ?".to_string());
+            params.push(Box::new(if fav { 1_i64 } else { 0_i64 }));
+        }
+        if let Some(q) = &f.q {
+            // summary LIKE
+            conditions.push("(summary LIKE ? OR project LIKE ?)".to_string());
+            let pat = format!("%{q}%");
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat));
+        }
+
+        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+
+        let page = f.page.max(1);
+        let page_size = f.page_size.clamp(1, 100);
+        let offset = (page - 1) * page_size;
+
+        // total
+        let total: i64 = {
+            let sql = format!("SELECT COUNT(*) FROM sessions {where_clause}");
+            let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            self.conn()
+                .query_row(&sql, params_ref.as_slice(), |r| r.get(0))?
+        };
+
+        // items
+        let sql = format!(
+            "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes
+             FROM sessions {where_clause}
+             ORDER BY start_time DESC
+             LIMIT ? OFFSET ?"
+        );
+        let mut stmt = self.conn().prepare(&sql)?;
+        // Bind filter params + LIMIT/OFFSET
+        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = params;
+        all_params.push(Box::new(page_size as i64));
+        all_params.push(Box::new(offset as i64));
+        let params_ref: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
+            let id: String = row.get(0)?;
+            let agent: String = row.get(1)?;
+            let project: Option<String> = row.get(2)?;
+            let model: Option<String> = row.get(3)?;
+            let start_time: String = row.get(4)?;
+            let turn_count: i64 = row.get(5)?;
+            let summary: Option<String> = row.get(6)?;
+            let tags_json: Option<String> = row.get(7)?;
+            let is_favorite: i64 = row.get(8).unwrap_or(0);
+            let session_type: String = row.get(9)?;
+            let vault_path: Option<String> = row.get(10)?;
+            let notes: Option<String> = row.get(11).ok().flatten();
+
+            let tags: Vec<String> = tags_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default();
+
+            // start_time이 RFC3339 형식 — 앞 10자가 YYYY-MM-DD
+            let date = start_time.chars().take(10).collect::<String>();
+
+            Ok(SessionListItem {
+                id,
+                agent,
+                project,
+                model,
+                date,
+                start_time,
+                turn_count,
+                summary,
+                tags,
+                is_favorite: is_favorite != 0,
+                session_type,
+                vault_path,
+                notes,
+            })
+        })?;
+
+        let items: Vec<SessionListItem> = rows.filter_map(|r| r.ok()).collect();
+
+        Ok(SessionListPage {
+            items,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    /// 세션 태그 갱신. 정규화 후 반환된 태그를 응답에 사용.
+    pub fn update_session_tags(
+        &self,
+        session_id: &str,
+        tags: &[String],
+    ) -> crate::error::Result<Vec<String>> {
+        let normalized = crate::store::normalize_tags(tags);
+        let json = serde_json::to_string(&normalized)
+            .map_err(|e| SecallError::Other(anyhow::anyhow!("tags json serialize: {e}")))?;
+        let affected = self.conn().execute(
+            "UPDATE sessions SET tags = ?1 WHERE id = ?2",
+            rusqlite::params![json, session_id],
+        )?;
+        if affected == 0 {
+            return Err(SecallError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(normalized)
+    }
+
+    /// 즐겨찾기 토글.
+    pub fn update_session_favorite(
+        &self,
+        session_id: &str,
+        favorite: bool,
+    ) -> crate::error::Result<()> {
+        let affected = self.conn().execute(
+            "UPDATE sessions SET is_favorite = ?1 WHERE id = ?2",
+            rusqlite::params![if favorite { 1_i64 } else { 0_i64 }, session_id],
+        )?;
+        if affected == 0 {
+            return Err(SecallError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// P34 Task 00: 세션 노트 갱신. notes는 사용자 free-form markdown.
+    /// 빈 문자열도 그대로 저장 (사용자 의도 보존). null이면 NULL로 저장.
+    pub fn update_session_notes(
+        &self,
+        session_id: &str,
+        notes: Option<&str>,
+    ) -> crate::error::Result<()> {
+        let affected = self.conn().execute(
+            "UPDATE sessions SET notes = ?1 WHERE id = ?2",
+            rusqlite::params![notes, session_id],
+        )?;
+        if affected == 0 {
+            return Err(SecallError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 단일 세션의 리스트 아이템 메타 — `do_get` 응답에 tags/is_favorite/notes 등 보강에 사용.
+    pub fn get_session_list_item(&self, session_id: &str) -> crate::error::Result<SessionListItem> {
+        self.conn()
+            .query_row(
+                "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes
+                 FROM sessions WHERE id = ?1",
+                rusqlite::params![session_id],
+                |row| {
+                    let id: String = row.get(0)?;
+                    let agent: String = row.get(1)?;
+                    let project: Option<String> = row.get(2)?;
+                    let model: Option<String> = row.get(3)?;
+                    let start_time: String = row.get(4)?;
+                    let turn_count: i64 = row.get(5)?;
+                    let summary: Option<String> = row.get(6)?;
+                    let tags_json: Option<String> = row.get(7)?;
+                    let is_favorite: i64 = row.get(8).unwrap_or(0);
+                    let session_type: String = row.get(9)?;
+                    let vault_path: Option<String> = row.get(10)?;
+                    let notes: Option<String> = row.get(11).ok().flatten();
+                    let tags: Vec<String> = tags_json
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                        .unwrap_or_default();
+                    let date = start_time.chars().take(10).collect::<String>();
+                    Ok(SessionListItem {
+                        id,
+                        agent,
+                        project,
+                        model,
+                        date,
+                        start_time,
+                        turn_count,
+                        summary,
+                        tags,
+                        is_favorite: is_favorite != 0,
+                        session_type,
+                        vault_path,
+                        notes,
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SecallError::SessionNotFound(session_id.to_string())
+                }
+                _ => SecallError::Database(e),
+            })
+    }
+}
+
+// ─── REST listing types ────────────────────────────────────────────────────
+
+#[derive(Debug, Default, Clone)]
+pub struct SessionListFilter {
+    pub project: Option<String>,
+    pub agent: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    /// 단일 태그 (P32 호환). `tags`와 동시 사용 시 AND 매칭.
+    pub tag: Option<String>,
+    /// 다중 태그 AND 매칭 (P34 신규). 빈 벡터는 영향 없음.
+    pub tags: Vec<String>,
+    pub favorite: Option<bool>,
+    pub q: Option<String>,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionListItem {
+    pub id: String,
+    pub agent: String,
+    pub project: Option<String>,
+    pub model: Option<String>,
+    pub date: String,
+    pub start_time: String,
+    pub turn_count: i64,
+    pub summary: Option<String>,
+    pub tags: Vec<String>,
+    pub is_favorite: bool,
+    pub session_type: String,
+    pub vault_path: Option<String>,
+    /// P34 Task 00: 사용자 노트 (free-form markdown)
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionListPage {
+    pub items: Vec<SessionListItem>,
+    pub total: i64,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+/// P34 Task 07: 세션 단위 통계 — turn role 분포 + tool 사용 빈도.
+/// SessionDetail mini-chart 응답에 사용.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionStats {
+    pub user_turns: i64,
+    pub assistant_turns: i64,
+    pub system_turns: i64,
+    /// 상위 빈도 tool name → count (내림차순, 최대 8개)
+    pub tool_counts: Vec<(String, i64)>,
 }
