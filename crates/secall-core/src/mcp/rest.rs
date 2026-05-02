@@ -448,11 +448,13 @@ async fn spawn_command_job(
     let metadata = Some(args_value.clone());
 
     let spawn_result = executor
-        .try_spawn(kind, metadata, move |tx| {
+        .try_spawn(kind, metadata, move |tx, cancel_token| {
             let adapters = adapters.clone();
             let args_value = args_value.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                // P36 Task 01 — sink 가 cancel 토큰을 보유하면 어댑터가
+                // is_cancelled() 폴링으로 안전 지점에서 자발적 종료 가능.
+                let sink = BroadcastSink::new(tx, cancel_token);
                 let fut = match kind {
                     JobKind::Sync => (adapters.sync_fn)(args_value, sink),
                     JobKind::Ingest => (adapters.ingest_fn)(args_value, sink),
@@ -665,16 +667,30 @@ fn job_event_stream(
 }
 
 async fn api_cancel_job(
-    State(_executor): State<Arc<JobExecutor>>,
-    AxumPath(_id): AxumPath<String>,
+    State(executor): State<Arc<JobExecutor>>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": "cancellation not supported in P33 MVP — planned for v1.1",
-        })),
-    )
-        .into_response()
+    // P36 Task 01 — JobRegistry::cancel 위임.
+    // - true (활성/이미 종료) → 200 + cancelled:true (idempotent)
+    // - false (미등록 / evict 됨) → 404
+    if executor.registry.cancel(&id).await {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "cancelled": true,
+                "job_id": id,
+            })),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "job not found or already evicted",
+            })),
+        )
+            .into_response()
+    }
 }
 
 #[cfg(test)]

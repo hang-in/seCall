@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useCancelJob } from "@/hooks/useJob";
 import { useJobStream } from "@/hooks/useJobStream";
 import type {
   IngestOutcome,
@@ -35,6 +38,7 @@ export function JobItem({ job: initial }: { job: JobState }) {
   }, enabled);
 
   const outcome = renderOutcome(job);
+  const isActive = job.status === "started" || job.status === "running";
 
   return (
     <div className="border border-border rounded p-3 space-y-2 bg-card">
@@ -43,9 +47,12 @@ export function JobItem({ job: initial }: { job: JobState }) {
           <span className="font-medium">{job.kind}</span>
           <StatusBadge status={job.status} />
         </div>
-        <span className="font-mono text-xs opacity-60">
-          {job.id.slice(0, 8)}
-        </span>
+        <div className="flex items-center gap-2">
+          {isActive && <CancelButton jobId={job.id} kind={job.kind} />}
+          <span className="font-mono text-xs opacity-60">
+            {job.id.slice(0, 8)}
+          </span>
+        </div>
       </div>
       {job.current_phase && (
         <div className="text-xs text-muted-foreground">
@@ -143,6 +150,50 @@ function applyEvent(prev: JobState, e: ProgressEvent): JobState {
         completed_at: new Date().toISOString(),
       };
   }
+}
+
+/**
+ * 취소 버튼. status가 active(started/running)일 때만 마운트되며,
+ * confirm 후 useCancelJob mutation 발화. pending 동안 disabled + 로더 표시.
+ * 성공 시 status가 interrupted/failed 등으로 갱신되면 부모가 언마운트.
+ */
+function CancelButton({
+  jobId,
+  kind,
+}: {
+  jobId: string;
+  kind: JobState["kind"];
+}) {
+  const cancel = useCancelJob();
+
+  const onClick = () => {
+    if (cancel.isPending) return;
+    if (!window.confirm(`이 ${kind} 작업을 취소하시겠습니까?`)) return;
+    cancel.mutate(jobId);
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={cancel.isPending}
+      className="h-7 px-2 text-xs"
+    >
+      {cancel.isPending ? (
+        <>
+          <Loader2 className="size-3 animate-spin" />
+          취소 중…
+        </>
+      ) : (
+        <>
+          <X className="size-3" />
+          취소
+        </>
+      )}
+    </Button>
+  );
 }
 
 function StatusBadge({ status }: { status: JobStatus }) {

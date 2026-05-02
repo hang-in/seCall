@@ -1,6 +1,8 @@
 import { useNavigate } from "react-router";
-import { ChevronRight, Loader2 } from "lucide-react";
-import { useActiveJobs } from "@/hooks/useJob";
+import { ChevronRight, Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useActiveJobs, useCancelJob } from "@/hooks/useJob";
+import type { JobKind } from "@/lib/types";
 
 /**
  * 글로벌 상단 진행 배너.
@@ -31,6 +33,7 @@ export function JobBanner() {
           </span>
         )}
       </div>
+      <CancelButton jobId={first.id} kind={first.kind} />
       <button
         onClick={() => navigate("/commands")}
         className="flex items-center gap-1 text-xs hover:underline"
@@ -38,5 +41,43 @@ export function JobBanner() {
         보기 <ChevronRight className="size-3" />
       </button>
     </div>
+  );
+}
+
+/**
+ * 배너용 취소 버튼. 첫 번째 활성 job 한정.
+ * confirm 후 useCancelJob 발화. pending 시 disabled + 로더.
+ * 다중 active job은 단일 큐 정책상 거의 발생하지 않으며, 개별 취소는 JobItem에서 가능.
+ */
+function CancelButton({ jobId, kind }: { jobId: string; kind: JobKind }) {
+  const cancel = useCancelJob();
+
+  const onClick = () => {
+    if (cancel.isPending) return;
+    if (!window.confirm(`이 ${kind} 작업을 취소하시겠습니까?`)) return;
+    cancel.mutate(jobId);
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={cancel.isPending}
+      className="h-7 px-2 text-xs"
+    >
+      {cancel.isPending ? (
+        <>
+          <Loader2 className="size-3 animate-spin" />
+          취소 중…
+        </>
+      ) : (
+        <>
+          <X className="size-3" />
+          취소
+        </>
+      )}
+    </Button>
   );
 }

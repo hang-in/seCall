@@ -89,3 +89,24 @@ export function useStartJob(kind: JobKind) {
     },
   });
 }
+
+/**
+ * Job 취소 mutation. POST /api/jobs/{id}/cancel 호출.
+ *
+ * - onSuccess 시 ["jobs"] (active/recent) 와 ["job", jobId] 캐시 invalidate.
+ * - onError 는 콘솔 로그만 (sonner toast 통합은 별도 task).
+ * - 백엔드(Task 01)가 NOT_IMPLEMENTED 상태여도 graceful 처리.
+ */
+export function useCancelJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.cancelJob(jobId),
+    onSuccess: (_data, jobId) => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["job", jobId] });
+    },
+    onError: (err) => {
+      console.error("[useCancelJob] cancel failed:", err);
+    },
+  });
+}

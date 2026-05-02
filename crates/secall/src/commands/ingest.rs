@@ -122,6 +122,7 @@ pub async fn run(
         force,
         no_semantic,
         format,
+        None,
     )
     .await?;
 
@@ -240,6 +241,12 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
 
     // ── parse_and_insert phase ──
     sink.phase_start("parse_and_insert").await;
+    // P36 — cancel check before entering long inner loop
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (detect phase 완료)")
+            .await;
+        return Ok(IngestOutcome::default());
+    }
     let stats = ingest_sessions(
         &config,
         &db,
@@ -250,6 +257,7 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
         force,
         no_semantic,
         &OutputFormat::Text,
+        Some(sink),
     )
     .await?;
     sink.message(&format!(
@@ -281,6 +289,13 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
         graph_nodes_added: None,
         graph_edges_added: None,
     };
+
+    // P36 — cancel check between parse_and_insert and graph phase
+    if sink.is_cancelled() {
+        sink.message("취소 요청 — 부분 결과로 종료합니다 (parse_and_insert phase 완료)")
+            .await;
+        return Ok(outcome);
+    }
 
     // ── graph phase (auto_graph) ──
     if auto_graph && !outcome.new_session_ids.is_empty() {
@@ -322,6 +337,10 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
 }
 
 /// ingest 핵심 로직 — sync.rs에서도 재사용
+///
+/// P36 — `sink` 가 `Some` 이면 file 단위 루프 시작과 vector/semantic sub-loop
+/// 시작 지점에서 `is_cancelled()` 폴링하여 부분 누적 통계로 early return 한다.
+/// CLI 경로(NoopSink) 는 항상 `false` 반환이므로 동작 변화 없음.
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest_sessions(
     config: &Config,
@@ -333,6 +352,7 @@ pub async fn ingest_sessions(
     force: bool,
     no_semantic: bool,
     format: &OutputFormat,
+    sink: Option<&dyn ProgressSink>,
 ) -> Result<IngestStats> {
     let mut ingested = 0usize;
     let mut skipped = 0usize;
@@ -367,7 +387,30 @@ pub async fn ingest_sessions(
             .collect::<anyhow::Result<_>>()?
     };
 
-    for session_path in &paths {
+    let total_paths = paths.len();
+    for (path_idx, session_path) in paths.iter().enumerate() {
+        // P36 — cancel check at top of file loop (safe: no DB tx open)
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message(&format!(
+                    "취소 요청 — {}/{} 파일까지 처리 후 종료합니다",
+                    path_idx, total_paths
+                ))
+                .await;
+                return Ok(IngestStats {
+                    ingested,
+                    skipped,
+                    errors,
+                    skipped_min_turns,
+                    hook_failures,
+                    new_session_ids,
+                    error_details,
+                });
+            }
+            if total_paths > 0 {
+                s.progress((path_idx as f32) / (total_paths as f32)).await;
+            }
+        }
         // detect_parser()를 한 번 호출 — 포맷 탐지와 라우팅을 동시에 결정
         let parser = match detect_parser(session_path) {
             Ok(p) => p,
@@ -521,6 +564,25 @@ pub async fn ingest_sessions(
         eprintln!("Embedding {total} session(s)...");
         let tz = config.timezone();
         for (i, session) in vector_tasks.iter().enumerate() {
+            // P36 — cancel check at top of embedding sub-loop
+            if let Some(s) = sink {
+                if s.is_cancelled() {
+                    s.message(&format!(
+                        "취소 요청 — embedding {}/{} 후 종료합니다",
+                        i, total
+                    ))
+                    .await;
+                    return Ok(IngestStats {
+                        ingested,
+                        skipped,
+                        errors,
+                        skipped_min_turns,
+                        hook_failures,
+                        new_session_ids,
+                        error_details,
+                    });
+                }
+            }
             let short = &session.id[..8.min(session.id.len())];
             eprintln!(
                 "  [{}/{total}] {short} ({} turns)",
@@ -572,7 +634,27 @@ pub async fn ingest_sessions(
             "Extracting semantic edges for {} session(s)...",
             new_session_ids.len()
         );
-        for session_id in &new_session_ids {
+        let total_sem = new_session_ids.len();
+        for (sem_idx, session_id) in new_session_ids.iter().enumerate() {
+            // P36 — cancel check at top of semantic loop (before LLM-ish call)
+            if let Some(s) = sink {
+                if s.is_cancelled() {
+                    s.message(&format!(
+                        "취소 요청 — semantic {}/{} 후 종료합니다",
+                        sem_idx, total_sem
+                    ))
+                    .await;
+                    return Ok(IngestStats {
+                        ingested,
+                        skipped,
+                        errors,
+                        skipped_min_turns,
+                        hook_failures,
+                        new_session_ids: new_session_ids.clone(),
+                        error_details,
+                    });
+                }
+            }
             let short = &session_id[..8.min(session_id.len())];
             // vault에서 세션 마크다운 읽기
             let vault_path_opt = match db.get_session_vault_path(session_id) {
