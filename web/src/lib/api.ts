@@ -6,6 +6,7 @@ import type {
   SessionDetail,
   SessionListPage,
   SyncArgs,
+  TagsResponse,
   WikiPage,
   WikiUpdateArgs,
 } from "@/lib/types";
@@ -72,6 +73,11 @@ export const api = {
 
   listProjects: () => jfetch<{ projects: string[] }>("/api/projects"),
   listAgents: () => jfetch<{ agents: string[] }>("/api/agents"),
+
+  listTags: (withCounts: boolean = true) =>
+    jfetch<TagsResponse>(
+      `/api/tags?with_counts=${withCounts ? "true" : "false"}`,
+    ),
 
   setTags: (id: string, tags: string[]) =>
     jfetch<{ session_id: string; tags: string[] }>(

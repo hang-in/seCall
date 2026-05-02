@@ -142,6 +142,9 @@ secall serve --port 8080
 - Wiki body (Phase 1): `GET /api/wiki/{project}`
 - Session metadata (Phase 0): `/api/sessions`, `/api/projects`, `/api/agents`, `PATCH /api/sessions/{id}/{tags,favorite}`
 - Session notes (Phase 2): `PATCH /api/sessions/{id}/notes`
+- Tag listing (Phase 3): `GET /api/tags?with_counts={true|false}`
+  - `true` (default): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
+  - `false`: `{ "tags": ["rust", "search", ...] }`
 - Commands (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
 - Job management (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, planned for v1.1)
 
@@ -326,6 +329,11 @@ secall serve --port 8080
 - Graph visualization upgrade — dagre auto-layout + per-type node colors / icons + edge label toggle + legend
 - Session metadata mini-chart — turn role distribution (user/assistant/system) + top 5 tool usage frequency
 - Per-session user notes — markdown editor (1s autosave, `PATCH /api/sessions/{id}/notes`)
+
+**Phase 3 features** (P35, performance + accuracy):
+- `/api/tags` endpoint — accurate full tag set with usage counts (replaces 100-session heuristic)
+- SessionList infinite scroll — IntersectionObserver-based auto-load (page_size=100)
+- Code-split — per-route + vendor (react/query/radix/viz) chunks, initial entry JS ≤ 250 kB (gzip)
 
 ### Keyboard shortcuts (Phase 2)
 
@@ -711,6 +719,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` endpoint (with_counts option, removes 100-session heuristic), SessionList infinite scroll (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunks, initial entry JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7 |
 | 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): command triggers (Sync/Ingest/Wiki Update), SSE progress streaming (per phase), Job system (single queue + 7-day cleanup + interrupted recovery), global progress banner + toast, graph incremental (`secall ingest --auto-graph`, `secall sync --no-graph`), wiki body GET endpoint (`/api/wiki/{project}`), DB v6 (`jobs` table) |
 | 2026-04-15 | v0.3.2 | Gemini API backend (semantic graph + diary), Codex wiki backend (PR #29), REST API server (`secall serve`), Obsidian plugin (search/daily/graph views), daily work log (`secall log`), semantic edges (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), auto-disable graph semantic in BM25-only mode (#25) |

@@ -1,8 +1,9 @@
 import { Loader2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { SessionListItem } from "./SessionListItem";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useListHotkeys } from "@/hooks/useListHotkeys";
-import { useSemanticRecall, useSessionsList } from "@/hooks/useSessions";
+import { useInfiniteSessions, useSemanticRecall } from "@/hooks/useSessions";
 import type {
   RecallResultItem,
   SearchMode,
@@ -58,14 +59,21 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   // 시맨틱 모드 + 비어있지 않은 query에서만 recall 호출. 그 외엔 keyword 리스트.
   const useSemantic = mode === "semantic" && trimmed.length > 0;
 
-  // useSessionsList는 항상 enabled (기존 시그니처 유지). semantic 모드에서는 그 결과를 사용 안 함.
-  // 별도 enabled 토글이 필요하면 Task 03에서 useSessionsList 시그니처 확장 시 정리.
-  const keywordList = useSessionsList({
-    q: trimmed === "" ? undefined : trimmed,
-    page: 1,
-    page_size: pageSize,
-    ...filters,
-  });
+  // P35 Task 02 — keyword 모드는 무한 스크롤 (`useInfiniteSessions`).
+  // semantic 모드에서는 결과를 사용하지 않지만, Rules of Hooks 때문에 항상 호출.
+  const keywordList = useInfiniteSessions(
+    {
+      q: trimmed === "" ? undefined : trimmed,
+      ...filters,
+    },
+    pageSize,
+  );
+
+  // 모든 페이지의 items 평탄화. total은 첫 페이지 메타에서 가져온다.
+  const allItems: Session[] = (keywordList.data?.pages ?? []).flatMap(
+    (p) => p.items,
+  );
+  const total = keywordList.data?.pages[0]?.total ?? 0;
 
   const semanticList = useSemanticRecall(query, filters, {
     enabled: useSemantic,
@@ -78,10 +86,18 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     ? semanticList.data
       ? recallToSessions(semanticList.data.results)
       : []
-    : (keywordList.data?.items ?? []);
+    : allItems;
   useListHotkeys(hotkeyItems, id, (sid) =>
     navigate(`/sessions/${encodeURIComponent(sid)}`),
   );
+
+  // P35 Task 02 — sentinel(= 리스트 끝) 진입 시 다음 페이지 prefetch.
+  // hasNextPage가 false면 observer 자체가 attach되지 않는다.
+  const sentinelRef = useInfiniteScroll({
+    onIntersect: () => keywordList.fetchNextPage(),
+    hasMore: keywordList.hasNextPage ?? false,
+    enabled: !keywordList.isFetchingNextPage,
+  });
 
   if (useSemantic) {
     if (semanticList.isLoading) {
@@ -149,10 +165,8 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     );
   }
 
-  // ── keyword 모드 (기존 흐름) ───────────────────────────────
-  const { data, isLoading, isError, error, isFetching } = keywordList;
-
-  if (isLoading) {
+  // ── keyword 모드 (P35 Task 02 — 무한 스크롤) ───────────────
+  if (keywordList.isLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
         <Loader2 className="size-4 animate-spin mr-2" /> 불러오는 중…
@@ -160,15 +174,16 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     );
   }
 
-  if (isError) {
+  if (keywordList.isError) {
+    const err = keywordList.error;
     return (
       <div className="p-6 text-rose-400 text-sm whitespace-pre-wrap">
-        세션 로드 실패: {error instanceof Error ? error.message : String(error)}
+        세션 로드 실패: {err instanceof Error ? err.message : String(err)}
       </div>
     );
   }
 
-  if (!data || data.items.length === 0) {
+  if (allItems.length === 0) {
     return (
       <div className="p-8 text-muted-foreground text-sm text-center">
         조건에 맞는 세션이 없습니다.
@@ -178,13 +193,13 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
 
   return (
     <div>
-      {isFetching && (
+      {keywordList.isFetching && !keywordList.isFetchingNextPage && (
         <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border">
           업데이트 중…
         </div>
       )}
       <div className="divide-y divide-border">
-        {data.items.map((s) => (
+        {allItems.map((s) => (
           <SessionListItem
             key={s.id}
             session={s}
@@ -194,11 +209,23 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
           />
         ))}
       </div>
-      {data.total > data.items.length && (
-        <div className="p-3 text-[11px] text-muted-foreground text-center border-t border-border">
-          {data.items.length} / {data.total} (페이지네이션 Phase 1)
+
+      {/* sentinel — IntersectionObserver 타겟. hasNextPage=false면 hook이 attach 안 함. */}
+      <div ref={sentinelRef} className="h-10" aria-hidden />
+
+      {keywordList.isFetchingNextPage && (
+        <div className="p-3 text-[11px] text-muted-foreground text-center border-t border-border flex items-center justify-center gap-2">
+          <Loader2 className="size-3 animate-spin" /> 추가 로드 중…
         </div>
       )}
+
+      {!keywordList.hasNextPage &&
+        allItems.length > 0 &&
+        allItems.length === total && (
+          <div className="p-3 text-[10px] text-muted-foreground text-center border-t border-border">
+            끝 — 총 {total} 세션
+          </div>
+        )}
     </div>
   );
 }

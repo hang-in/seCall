@@ -204,3 +204,35 @@ fn tag_normalize_helpers_match_rest_endpoint_behavior() {
         vec!["a", "b"]
     );
 }
+
+#[test]
+fn rest_list_all_tags_with_counts_desc_then_alpha() {
+    let db = Database::open_memory().unwrap();
+    db.insert_session(&make_session("s1", "p", 0)).unwrap();
+    db.insert_session(&make_session("s2", "p", 1)).unwrap();
+    db.insert_session(&make_session("s3", "p", 2)).unwrap();
+
+    db.update_session_tags("s1", &["rust".into(), "alpha".into()])
+        .unwrap();
+    db.update_session_tags("s2", &["rust".into(), "search".into()])
+        .unwrap();
+    db.update_session_tags("s3", &["rust".into()]).unwrap();
+
+    let tags = db.list_all_tags().unwrap();
+    // rust(3) > alpha(1)/search(1) (alpha < search 알파벳)
+    assert_eq!(tags.len(), 3);
+    assert_eq!(tags[0].name, "rust");
+    assert_eq!(tags[0].count, 3);
+    assert_eq!(tags[1].name, "alpha");
+    assert_eq!(tags[2].name, "search");
+}
+
+#[test]
+fn rest_list_all_tags_excludes_null_and_empty_arrays() {
+    let db = Database::open_memory().unwrap();
+    db.insert_session(&make_session("s-null", "p", 0)).unwrap();
+    db.insert_session(&make_session("s-empty", "p", 1)).unwrap();
+    db.update_session_tags("s-empty", &[]).unwrap(); // 빈 배열 저장 가정
+    let tags = db.list_all_tags().unwrap();
+    assert!(tags.is_empty());
+}

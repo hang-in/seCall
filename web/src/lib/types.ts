@@ -69,6 +69,17 @@ export interface WikiPage {
 
 export type SearchMode = "keyword" | "semantic";
 
+/** `/api/tags?with_counts=true` 응답의 한 항목. 백엔드 `TagCount` 직렬화 형태. */
+export interface TagCount {
+  name: string;
+  count: number;
+}
+
+/** `/api/tags` 응답. with_counts 분기에 따라 결과 형태가 다름. */
+export interface TagsResponse {
+  tags: TagCount[] | string[];
+}
+
 /**
  * `/api/recall` 결과 항목 — turn 단위.
  * 백엔드 `SearchResult` (crates/secall-core/src/search/bm25.rs):
