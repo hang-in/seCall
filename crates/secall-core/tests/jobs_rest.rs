@@ -53,14 +53,18 @@ async fn try_spawn_via_adapter_writes_to_db_on_complete() {
     let args = serde_json::json!({ "local_only": true, "dry_run": true });
     let args_for_spawn = args.clone();
     let (id, _tx) = exec
-        .try_spawn(JobKind::Sync, Some(args.clone()), move |tx| {
-            let adapters = adapters.clone();
-            let args_for_spawn = args_for_spawn.clone();
-            async move {
-                let sink = BroadcastSink::new(tx);
-                (adapters.sync_fn)(args_for_spawn, sink).await
-            }
-        })
+        .try_spawn(
+            JobKind::Sync,
+            Some(args.clone()),
+            move |tx, cancel_token| {
+                let adapters = adapters.clone();
+                let args_for_spawn = args_for_spawn.clone();
+                async move {
+                    let sink = BroadcastSink::new(tx, cancel_token);
+                    (adapters.sync_fn)(args_for_spawn, sink).await
+                }
+            },
+        )
         .await
         .expect("first spawn must succeed");
 
@@ -87,10 +91,10 @@ async fn second_try_spawn_returns_none_while_running() {
 
     let adapters_a = adapters.clone();
     let first = exec
-        .try_spawn(JobKind::Sync, None, move |tx| {
+        .try_spawn(JobKind::Sync, None, move |tx, cancel_token| {
             let adapters_a = adapters_a.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                let sink = BroadcastSink::new(tx, cancel_token);
                 (adapters_a.sync_fn)(serde_json::json!({}), sink).await
             }
         })
@@ -102,10 +106,10 @@ async fn second_try_spawn_returns_none_while_running() {
 
     let adapters_b = adapters.clone();
     let second = exec
-        .try_spawn(JobKind::Ingest, None, move |tx| {
+        .try_spawn(JobKind::Ingest, None, move |tx, cancel_token| {
             let adapters_b = adapters_b.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                let sink = BroadcastSink::new(tx, cancel_token);
                 (adapters_b.ingest_fn)(serde_json::json!({}), sink).await
             }
         })
@@ -123,10 +127,10 @@ async fn registry_get_returns_running_state_during_execution() {
 
     let adapters_a = adapters.clone();
     let (id, _tx) = exec
-        .try_spawn(JobKind::Sync, None, move |tx| {
+        .try_spawn(JobKind::Sync, None, move |tx, cancel_token| {
             let adapters_a = adapters_a.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                let sink = BroadcastSink::new(tx, cancel_token);
                 (adapters_a.sync_fn)(serde_json::json!({}), sink).await
             }
         })
@@ -151,10 +155,10 @@ async fn broadcast_subscriber_receives_phase_and_done_events() {
 
     let adapters_a = adapters.clone();
     let (id, _tx) = exec
-        .try_spawn(JobKind::Sync, None, move |tx| {
+        .try_spawn(JobKind::Sync, None, move |tx, cancel_token| {
             let adapters_a = adapters_a.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                let sink = BroadcastSink::new(tx, cancel_token);
                 (adapters_a.sync_fn)(serde_json::json!({}), sink).await
             }
         })
@@ -197,10 +201,10 @@ async fn list_recent_jobs_returns_persisted_rows() {
 
     let adapters_a = adapters.clone();
     let (id, _tx) = exec
-        .try_spawn(JobKind::Ingest, None, move |tx| {
+        .try_spawn(JobKind::Ingest, None, move |tx, cancel_token| {
             let adapters_a = adapters_a.clone();
             async move {
-                let sink = BroadcastSink::new(tx);
+                let sink = BroadcastSink::new(tx, cancel_token);
                 (adapters_a.ingest_fn)(serde_json::json!({"force": false}), sink).await
             }
         })
