@@ -579,6 +579,23 @@ impl SeCallMcpServer {
         Ok(serde_json::json!({ "agents": db.list_agents()? }))
     }
 
+    /// P35 Task 00: 전체 태그 목록 (빈도 포함/미포함).
+    /// `with_counts=true` (기본): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
+    /// `with_counts=false`: `{ "tags": ["rust", "search", ...] }`
+    pub fn do_list_tags(&self, with_counts: bool) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        let tags = db.list_all_tags()?;
+        if with_counts {
+            Ok(serde_json::json!({ "tags": tags }))
+        } else {
+            let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+            Ok(serde_json::json!({ "tags": names }))
+        }
+    }
+
     pub fn do_set_tags(
         &self,
         session_id: &str,

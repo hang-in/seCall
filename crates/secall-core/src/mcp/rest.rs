@@ -142,6 +142,7 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/sessions", get(api_list_sessions))
         .route("/api/projects", get(api_list_projects))
         .route("/api/agents", get(api_list_agents))
+        .route("/api/tags", get(api_list_tags))
         .route("/api/sessions/{id}/tags", patch(api_set_tags))
         .route("/api/sessions/{id}/favorite", patch(api_set_favorite))
         .route("/api/sessions/{id}/notes", patch(api_set_notes))
@@ -365,6 +366,23 @@ async fn api_list_projects(State(s): State<Arc<SeCallMcpServer>>) -> impl IntoRe
 
 async fn api_list_agents(State(s): State<Arc<SeCallMcpServer>>) -> impl IntoResponse {
     match s.do_list_agents() {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// P35 Task 00: `/api/tags` 쿼리 파라미터.
+/// `with_counts` 미지정 시 기본 `true`.
+#[derive(Debug, Deserialize, Default)]
+struct TagsListQuery {
+    with_counts: Option<bool>,
+}
+
+async fn api_list_tags(
+    State(s): State<Arc<SeCallMcpServer>>,
+    Query(q): Query<TagsListQuery>,
+) -> impl IntoResponse {
+    match s.do_list_tags(q.with_counts.unwrap_or(true)) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

@@ -235,6 +235,27 @@ impl Database {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// 전체 세션의 태그를 빈도 기준으로 집계.
+    /// `sessions.tags`는 JSON 배열 문자열(`'["rust","search"]'`). `json_each`로 펼친 뒤
+    /// COUNT(*) 내림차순, 동률이면 태그명 알파벳 오름차순으로 정렬.
+    /// `tags`가 NULL이거나 빈 배열인 세션은 결과에 포함되지 않음.
+    pub fn list_all_tags(&self) -> Result<Vec<TagCount>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT json_each.value AS tag, COUNT(*) AS cnt
+             FROM sessions, json_each(sessions.tags)
+             WHERE sessions.tags IS NOT NULL AND json_valid(sessions.tags)
+             GROUP BY tag
+             ORDER BY cnt DESC, tag ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(TagCount {
+                name: r.get(0)?,
+                count: r.get(1)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     // ─── Lint helpers ────────────────────────────────────────────────────────
 
     /// Return vault_path for a single session
@@ -1055,4 +1076,12 @@ pub struct SessionStats {
     pub system_turns: i64,
     /// 상위 빈도 tool name → count (내림차순, 최대 8개)
     pub tool_counts: Vec<(String, i64)>,
+}
+
+/// P35 Task 00: 태그 + 사용 빈도. `/api/tags` 응답 및
+/// `Database::list_all_tags`의 반환 타입.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TagCount {
+    pub name: String,
+    pub count: i64,
 }

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { SessionFilterState, SessionsListParams } from "@/lib/types";
 
@@ -15,6 +15,32 @@ export function useSessionsList(params: SessionsListParams) {
   return useQuery({
     queryKey: ["sessions", "list", params],
     queryFn: () => api.listSessions(params),
+    placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * 무한 스크롤 — `/api/sessions?page=N&page_size=...`.
+ *
+ * - 백엔드는 `{ items, total, page, page_size }` 반환 (P32).
+ * - getNextPageParam: `items.length < page_size` 또는 누적 >= total이면 더 없음.
+ * - keyword 모드 전용. semantic 모드는 do_recall이 페이지네이션 없으므로 useSemanticRecall 그대로.
+ */
+export function useInfiniteSessions(
+  params: Omit<SessionsListParams, "page" | "page_size">,
+  pageSize: number = 50,
+) {
+  return useInfiniteQuery({
+    queryKey: ["sessions", "infinite", params, pageSize],
+    queryFn: ({ pageParam }) =>
+      api.listSessions({ ...params, page: pageParam, page_size: pageSize }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const fetchedSoFar = lastPage.page * lastPage.page_size;
+      if (lastPage.items.length < lastPage.page_size) return undefined;
+      if (fetchedSoFar >= lastPage.total) return undefined;
+      return lastPage.page + 1;
+    },
     placeholderData: (prev) => prev,
   });
 }

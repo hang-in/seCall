@@ -141,6 +141,9 @@ secall serve --port 8080
 - 위키 본문 (Phase 1): `GET /api/wiki/{project}`
 - 세션 메타 (Phase 0): `/api/sessions`, `/api/projects`, `/api/agents`, `PATCH /api/sessions/{id}/{tags,favorite}`
 - 세션 노트 (Phase 2): `PATCH /api/sessions/{id}/notes`
+- 태그 목록 (Phase 3): `GET /api/tags?with_counts={true|false}`
+  - `true` (기본): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
+  - `false`: `{ "tags": ["rust", "search", ...] }`
 - 명령 (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
 - Job 관리 (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE), `POST /api/jobs/{id}/cancel` (501, v1.1 예정)
 
@@ -325,6 +328,11 @@ secall serve --port 8080
 - 그래프 시각화 강화 — dagre 자동 레이아웃 + 노드 타입별 색상/아이콘 + 엣지 라벨 토글 + 범례
 - 세션 메타 mini-chart — turn role 분포 (user/assistant/system) + tool 사용 빈도 top 5
 - 사용자 노트 편집 — 세션별 markdown 노트 (autosave 1s, `PATCH /api/sessions/{id}/notes`)
+
+**Phase 3 기능** (P35, 성능 + 정확도):
+- `/api/tags` 엔드포인트 — 모든 태그 + 사용 빈도 정확 노출 (sessions 100건 휴리스틱 제거)
+- SessionList 무한 스크롤 — IntersectionObserver 기반 자동 로드 (page_size=100)
+- Code-split — 라우트별 + vendor (react/query/radix/viz) chunk 분리, 초기 진입 JS ≤ 250 kB (gzip)
 
 ### 키보드 단축키 (Phase 2)
 
@@ -717,6 +725,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` 엔드포인트 (with_counts 옵션, 100세션 휴리스틱 제거), SessionList 무한 스크롤 (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunk, 초기 진입 JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): 시맨틱 검색 모드 활성, 검색어 하이라이트, 다중 태그 + 날짜 quick range, 키보드 단축키 (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), 관련 세션 패널, 그래프 시각화 강화 (dagre + 노드 색상/아이콘 + 범례), 세션 메타 mini-chart, 사용자 노트 편집 (`PATCH /api/sessions/{id}/notes`), DB 스키마 v7 |
 | 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): 명령 트리거 (Sync/Ingest/Wiki Update), SSE 진행 스트리밍 (phase별), Job 시스템 (단일 큐 + 7일 cleanup + interrupted 보정), 글로벌 진행 배너 + toast, 그래프 자동 증분 (`secall ingest --auto-graph`, `secall sync --no-graph`), 위키 본문 GET 엔드포인트 (`/api/wiki/{project}`), DB v6 (`jobs` 테이블) |
 | 2026-04-17 | v0.3.3 | LM Studio (OpenAI 호환) 시맨틱 백엔드 추가 (`--backend lmstudio`, #35), `secall sync --no-semantic` 플래그 추가 — GPU 메모리 경합 방지 (#34), Gemini Web ZIP ingest 지원 (#31), `graph semantic` CLI 백엔드 설정 옵션 (#30) |
