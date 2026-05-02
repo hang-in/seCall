@@ -114,6 +114,12 @@ impl Database {
             self.conn
                 .execute("ALTER TABLE sessions ADD COLUMN notes TEXT", [])?;
         }
+        if current < 8 && !self.column_exists("sessions", "semantic_extracted_at")? {
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN semantic_extracted_at INTEGER",
+                [],
+            )?;
+        }
         if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO config(key, value) VALUES ('schema_version', ?1)",
@@ -1224,5 +1230,180 @@ mod tests {
         assert_eq!(stats.assistant_turns, 0);
         assert_eq!(stats.system_turns, 0);
         assert!(stats.tool_counts.is_empty());
+    }
+
+    // ─── P37 Task 00: semantic_extracted_at 컬럼 (v8) ────────────────────────
+
+    use crate::store::session_repo::GraphRebuildFilter;
+
+    #[test]
+    fn test_v8_semantic_extracted_at_column_exists() {
+        let db = Database::open_memory().unwrap();
+        assert!(db
+            .column_exists("sessions", "semantic_extracted_at")
+            .unwrap());
+    }
+
+    #[test]
+    fn test_v8_migrates_v6_db() {
+        // v6 raw 스키마(notes/semantic_extracted_at 없음)에서 마이그레이션이
+        // 두 컬럼을 모두 추가하고 기존 row 보존하는지
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, agent TEXT NOT NULL, model TEXT, project TEXT,
+                cwd TEXT, git_branch TEXT, start_time TEXT NOT NULL, end_time TEXT,
+                turn_count INTEGER DEFAULT 0, tokens_in INTEGER DEFAULT 0,
+                tokens_out INTEGER DEFAULT 0, tools_used TEXT, tags TEXT,
+                vault_path TEXT, host TEXT, summary TEXT, ingested_at TEXT NOT NULL,
+                status TEXT DEFAULT 'raw', session_type TEXT DEFAULT 'interactive',
+                is_favorite INTEGER DEFAULT 0
+            );
+            CREATE TABLE turns (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER NOT NULL, role TEXT NOT NULL, timestamp TEXT, content TEXT NOT NULL, has_tool INTEGER DEFAULT 0, tool_names TEXT, thinking TEXT, tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0, UNIQUE(session_id, turn_index));
+            CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, error TEXT, result TEXT, metadata TEXT);
+            CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
+            INSERT INTO config(key, value) VALUES ('schema_version', '6');
+            INSERT INTO sessions(id, agent, start_time, ingested_at) VALUES ('preserve-1', 'claude-code', '2026-04-01T00:00:00Z', '2026-04-02T00:00:00Z');",
+        )
+        .unwrap();
+        let db = Database::from_connection(conn);
+        db.migrate().unwrap();
+
+        // v7 + v8 컬럼 모두 추가됨
+        assert!(db.column_exists("sessions", "notes").unwrap());
+        assert!(db
+            .column_exists("sessions", "semantic_extracted_at")
+            .unwrap());
+        assert_eq!(
+            db.schema_version().unwrap(),
+            crate::store::schema::CURRENT_SCHEMA_VERSION
+        );
+
+        // 기존 row 보존 확인 — id가 살아있고 semantic_extracted_at은 NULL
+        let (id, sem): (String, Option<i64>) = db
+            .conn()
+            .query_row(
+                "SELECT id, semantic_extracted_at FROM sessions WHERE id = 'preserve-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(id, "preserve-1");
+        assert!(sem.is_none(), "기존 row의 semantic_extracted_at은 NULL");
+    }
+
+    #[test]
+    fn test_update_semantic_extracted_at_sets_value() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("sem-1")).unwrap();
+
+        db.update_semantic_extracted_at("sem-1", 1234).unwrap();
+
+        let value: Option<i64> = db
+            .conn()
+            .query_row(
+                "SELECT semantic_extracted_at FROM sessions WHERE id = 'sem-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, Some(1234));
+    }
+
+    #[test]
+    fn test_update_semantic_extracted_at_missing_session_no_op() {
+        let db = Database::open_memory().unwrap();
+        // 미존재 세션 업데이트는 에러 없이 통과 (0 affected)
+        let res = db.update_semantic_extracted_at("nonexistent", 9999);
+        assert!(res.is_ok(), "미존재 세션은 에러 안 남");
+    }
+
+    #[test]
+    fn test_list_sessions_for_graph_rebuild_session_only() {
+        let db = Database::open_memory().unwrap();
+        db.insert_session(&make_test_session("s-1")).unwrap();
+        db.insert_session(&make_test_session("s-2")).unwrap();
+        db.insert_session(&make_test_session("s-3")).unwrap();
+
+        let filter = GraphRebuildFilter {
+            session: Some("s-2".to_string()),
+            // 다른 필드는 무시되어야 함
+            all: true,
+            retry_failed: true,
+            since: Some("2026-01-01".to_string()),
+        };
+        let ids = db.list_sessions_for_graph_rebuild(filter).unwrap();
+        assert_eq!(ids, vec!["s-2"]);
+
+        // 미존재 ID는 빈 결과
+        let filter_missing = GraphRebuildFilter {
+            session: Some("nonexistent".to_string()),
+            ..Default::default()
+        };
+        let empty = db.list_sessions_for_graph_rebuild(filter_missing).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_list_sessions_for_graph_rebuild_all_overrides_filters() {
+        let db = Database::open_memory().unwrap();
+        // 3개 세션 — start_time 순서대로
+        for (id, day) in [("a-1", 1u32), ("a-2", 2u32), ("a-3", 3u32)] {
+            let mut s = make_test_session(id);
+            s.start_time = chrono::Utc.with_ymd_and_hms(2026, 4, day, 0, 0, 0).unwrap();
+            db.insert_session(&s).unwrap();
+        }
+        // a-1만 추출 완료 표시 — retry_failed라면 제외되어야 하나, all=true로 포함되어야 함
+        db.update_semantic_extracted_at("a-1", 100).unwrap();
+
+        let filter = GraphRebuildFilter {
+            all: true,
+            retry_failed: true,                    // 무시
+            since: Some("2030-01-01".to_string()), // 무시 (정상이라면 0 결과)
+            session: None,
+        };
+        let mut ids = db.list_sessions_for_graph_rebuild(filter).unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["a-1", "a-2", "a-3"]);
+    }
+
+    #[test]
+    fn test_list_sessions_for_graph_rebuild_retry_failed_only_null() {
+        let db = Database::open_memory().unwrap();
+        for id in ["r-1", "r-2", "r-3"] {
+            db.insert_session(&make_test_session(id)).unwrap();
+        }
+        // r-1, r-3만 추출 완료 — r-2만 NULL 상태 유지
+        db.update_semantic_extracted_at("r-1", 111).unwrap();
+        db.update_semantic_extracted_at("r-3", 333).unwrap();
+
+        let filter = GraphRebuildFilter {
+            retry_failed: true,
+            ..Default::default()
+        };
+        let ids = db.list_sessions_for_graph_rebuild(filter).unwrap();
+        assert_eq!(ids, vec!["r-2"]);
+    }
+
+    #[test]
+    fn test_list_sessions_for_graph_rebuild_since_filters_by_date() {
+        let db = Database::open_memory().unwrap();
+
+        // 4/1, 4/5, 4/10 세션
+        for (id, day) in [("d-1", 1u32), ("d-5", 5u32), ("d-10", 10u32)] {
+            let mut s = make_test_session(id);
+            s.start_time = chrono::Utc.with_ymd_and_hms(2026, 4, day, 0, 0, 0).unwrap();
+            db.insert_session(&s).unwrap();
+        }
+
+        // since=2026-04-05 → d-5, d-10 매칭 (start_time은 RFC3339 "2026-04-05T..." 등)
+        // ORDER BY start_time DESC → d-10 먼저
+        let filter = GraphRebuildFilter {
+            since: Some("2026-04-05".to_string()),
+            ..Default::default()
+        };
+        let ids = db.list_sessions_for_graph_rebuild(filter).unwrap();
+        assert_eq!(ids, vec!["d-10", "d-5"]);
     }
 }

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useCancelJob } from "@/hooks/useJob";
 import { useJobStream } from "@/hooks/useJobStream";
 import type {
+  GraphRebuildOutcome,
   IngestOutcome,
   JobState,
   JobStatus,
@@ -264,6 +265,17 @@ function renderOutcome(job: JobState): string | null {
     case "wiki_update": {
       const r = job.result as WikiOutcome;
       return `${r.backend} → ${r.target} · ${r.pages_written} pages`;
+    }
+    case "graph_rebuild": {
+      const r = job.result as GraphRebuildOutcome;
+      const parts = [
+        `processed=${r.processed}`,
+        `succeeded=${r.succeeded}`,
+      ];
+      if (r.failed) parts.push(`failed=${r.failed}`);
+      if (r.skipped) parts.push(`skipped=${r.skipped}`);
+      if (r.edges_added) parts.push(`+${r.edges_added}e`);
+      return parts.join(" · ");
     }
   }
 }

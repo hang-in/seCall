@@ -84,6 +84,25 @@ pub async fn run(port: u16) -> Result<()> {
                 .await?
             })
         }),
+        // P37 Task 02 — graph rebuild 어댑터.
+        // `run_rebuild` 가 내부에서 `Database` (rusqlite, !Sync) 를 await 너머로 들고 있으므로
+        // sync/ingest/wiki 와 동일하게 spawn_blocking + current-thread runtime 으로 격리한다.
+        graph_rebuild_fn: Box::new(|val, sink: BroadcastSink| {
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+                    rt.block_on(async move {
+                        let args: crate::commands::graph::GraphRebuildArgs =
+                            serde_json::from_value(val)?;
+                        let outcome = crate::commands::graph::run_rebuild(args, &sink).await?;
+                        Ok::<_, anyhow::Error>(serde_json::to_value(outcome)?)
+                    })
+                })
+                .await?
+            })
+        }),
     };
 
     let executor = Arc::new(JobExecutor::with_adapters(db_arc.clone(), cmd_adapters));

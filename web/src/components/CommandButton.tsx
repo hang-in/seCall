@@ -3,6 +3,7 @@ import { Loader2, Play } from "lucide-react";
 import { useStartJob } from "@/hooks/useJob";
 import { JobOptionsDialog } from "./JobOptionsDialog";
 import type {
+  GraphRebuildArgs,
   IngestArgs,
   JobKind,
   SyncArgs,
@@ -19,7 +20,9 @@ export function CommandButton({ kind, label, description }: Props) {
   const [open, setOpen] = useState(false);
   const mutation = useStartJob(kind);
 
-  const handleSubmit = (args: SyncArgs | IngestArgs | WikiUpdateArgs) => {
+  const handleSubmit = (
+    args: SyncArgs | IngestArgs | WikiUpdateArgs | GraphRebuildArgs,
+  ) => {
     mutation.mutate(args);
     setOpen(false);
   };

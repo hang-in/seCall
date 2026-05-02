@@ -358,6 +358,24 @@ enum GraphAction {
     Stats,
     /// Export graph to vault/graph/graph.json
     Export,
+    /// Rebuild semantic edges for selected sessions (P37)
+    Rebuild {
+        /// Only process sessions started since this date (YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Single session ID (overrides other filters)
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Process all sessions (overrides --retry-failed and --since)
+        #[arg(long)]
+        all: bool,
+
+        /// Only process sessions with NULL semantic_extracted_at
+        #[arg(long)]
+        retry_failed: bool,
+    },
 }
 
 #[tokio::main]
@@ -540,6 +558,20 @@ async fn main() -> anyhow::Result<()> {
             }
             GraphAction::Export => {
                 commands::graph::run_export()?;
+            }
+            GraphAction::Rebuild {
+                since,
+                session,
+                all,
+                retry_failed,
+            } => {
+                commands::graph::run_rebuild_cli(commands::graph::GraphRebuildArgs {
+                    since,
+                    session,
+                    all,
+                    retry_failed,
+                })
+                .await?;
             }
         },
         Commands::Config { action } => match action {

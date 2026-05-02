@@ -145,6 +145,10 @@ secall serve --port 8080
   - `true` (기본): `{ "tags": [{ "name": "rust", "count": 12 }, ...] }`
   - `false`: `{ "tags": ["rust", "search", ...] }`
 - 명령 (Phase 1): `POST /api/commands/{sync,ingest,wiki-update}`
+- 그래프 재구축 (P37): `POST /api/commands/graph-rebuild`
+  - body: `{ since?, session?, all?, retry_failed? }`
+  - 응답: `{ job_id, status: "started" }`
+  - 단일 큐 정책: 다른 mutating job 실행 중이면 `409 Conflict`
 - Job 관리 (Phase 1): `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream` (SSE)
 - Job 취소 (P36): `POST /api/jobs/{id}/cancel`
   - 200: `{ "cancelled": true, "job_id": "..." }` — 활성 job 취소 성공 (이미 완료/취소된 job 도 동일 응답으로 idempotent)
@@ -346,6 +350,14 @@ secall serve --port 8080
 - REST: `POST /api/jobs/{id}/cancel` — 활성 200, idempotent 200, 미등록/evict 404
 - Web UI: `JobBanner` 와 활성 `JobItem` 에 **취소** 버튼 + `window.confirm` 다이얼로그 (`useCancelJob` mutation hook)
 
+**Graph Sync 자동화** (P37, 시맨틱 그래프 재구축):
+- 이미 ingest 된 세션의 시맨틱 그래프를 별도로 재구축 가능 — embedding 만 끝낸 세션 backfill, 모델/프롬프트 교체 후 일괄 재처리 등
+- DB 스키마 v8: `sessions.semantic_extracted_at` 컬럼으로 시맨틱 추출 상태 추적 (NULL = 미처리)
+- CLI: `secall graph rebuild [--since DATE] [--session ID] [--all] [--retry-failed]`
+- REST: `POST /api/commands/graph-rebuild` — P33 Job 시스템 + P36 cancel 통합
+- Web UI: Commands 페이지 4번째 카드 "Graph Rebuild" + 옵션 다이얼로그 (since / session / all / retry-failed)
+- 우선순위: `--session` > `--all` > `--retry-failed` > `--since` (동시 지정 시 위 순서로 적용) — CLI / REST / Web UI 모두 동일
+
 ### 키보드 단축키 (Phase 2)
 
 | 키 | 동작 |
@@ -373,6 +385,13 @@ secall sync --local-only --dry-run
 secall sync --no-graph         # graph 자동 증분 비활성 (sync 기본은 활성)
 secall ingest --auto --auto-graph   # ingest 시 graph 자동 증분 활성 (기본 비활성)
 secall wiki update --backend claude
+
+# P37 — 시맨틱 그래프 재구축 (semantic_extracted_at 상태 추적)
+secall graph rebuild --retry-failed              # 미처리(NULL) 세션 일괄 backfill
+secall graph rebuild --since 2026-04-01          # 특정 날짜 이후 세션
+secall graph rebuild --session abc12345          # 단일 세션
+secall graph rebuild --all                       # 전체 재구축 (기존 결과 덮어쓰기)
+# 우선순위: --session > --all > --retry-failed > --since (동시 지정 시 위 순서로 적용)
 ```
 
 ### Job 시스템
@@ -622,6 +641,7 @@ secall config path
 | `secall mcp [--http <addr>]` | MCP 서버 시작 |
 | `secall config show\|set\|path` | 설정 확인/변경 |
 | `secall graph build\|stats\|export` | Knowledge Graph 관리 |
+| `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | 시맨틱 그래프 재구축 (P37) — 우선순위: `--session` > `--all` > `--retry-failed` > `--since` |
 | `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | 위키 생성 (백엔드 선택 가능) |
 | `secall wiki status` | 위키 상태 확인 |
 | `secall log [YYYY-MM-DD]` | 날짜별 작업 일기 생성 |
@@ -737,6 +757,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-03 | v0.8.0 | Graph Sync 자동화 (P37): DB 스키마 v8 (`sessions.semantic_extracted_at` 컬럼으로 시맨틱 추출 상태 추적), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (`extract_one_session_semantic` helper 분리, 우선순위: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, P33 단일 큐 + P36 cancel 통합), web UI Commands 페이지 4번째 카드 "Graph Rebuild" + 옵션 다이얼로그 |
 | 2026-05-02 | v0.7.0 | Job Cancellation (P36): `tokio_util::sync::CancellationToken` 통합 (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` 추가, sync/ingest/wiki 어댑터 safe-point polling (phase 사이·file/session 루프·LLM 호출 직전), 부분 결과 보존, `POST /api/jobs/{id}/cancel` 활성화 (200 idempotent / 404 unknown, 최종 이벤트 `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI 취소 버튼 (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
 | 2026-05-02 | v0.6.0 | Web UI Phase 3 (P35): `/api/tags` 엔드포인트 (with_counts 옵션, 100세션 휴리스틱 제거), SessionList 무한 스크롤 (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunk, 초기 진입 JS ≤ 250 kB gzip) |
 | 2026-05-02 | v0.5.0 | Web UI Phase 2 (P34): 시맨틱 검색 모드 활성, 검색어 하이라이트, 다중 태그 + 날짜 quick range, 키보드 단축키 (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), 관련 세션 패널, 그래프 시각화 강화 (dagre + 노드 색상/아이콘 + 범례), 세션 메타 mini-chart, 사용자 노트 편집 (`PATCH /api/sessions/{id}/notes`), DB 스키마 v7 |

@@ -23,10 +23,12 @@ use std::pin::Pin;
 
 use crate::jobs::BroadcastSink;
 
+pub mod graph_rebuild_adapter;
 pub mod ingest_adapter;
 pub mod sync_adapter;
 pub mod wiki_adapter;
 
+pub use graph_rebuild_adapter::GraphRebuildAdapterFn;
 pub use ingest_adapter::IngestAdapterFn;
 pub use sync_adapter::SyncAdapterFn;
 pub use wiki_adapter::WikiUpdateAdapterFn;
@@ -35,6 +37,7 @@ pub use wiki_adapter::WikiUpdateAdapterFn;
 pub type SyncArgsValue = serde_json::Value;
 pub type IngestArgsValue = serde_json::Value;
 pub type WikiUpdateArgsValue = serde_json::Value;
+pub type GraphRebuildArgsValue = serde_json::Value;
 
 /// 단일 어댑터 클로저 시그니처.
 ///
@@ -64,4 +67,7 @@ pub struct CommandAdapters {
     /// `secall::commands::wiki::run_with_progress(WikiUpdateArgs, &BroadcastSink)`의 wrapper.
     /// 자세한 사양은 [`wiki_adapter`] 참조.
     pub wiki_update_fn: WikiUpdateAdapterFn,
+    /// `secall::commands::graph::run_rebuild(GraphRebuildArgs, &BroadcastSink)`의 wrapper.
+    /// 자세한 사양은 [`graph_rebuild_adapter`] 참조.
+    pub graph_rebuild_fn: GraphRebuildAdapterFn,
 }

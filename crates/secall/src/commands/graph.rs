@@ -2,9 +2,15 @@ use anyhow::Result;
 use secall_core::{
     graph::{build::build_graph, export::export_graph_json, semantic::extract_and_store},
     ingest::markdown::{extract_body_text, parse_session_frontmatter},
-    store::{get_default_db_path, Database},
+    jobs::ProgressSink,
+    store::{get_default_db_path, session_repo::GraphRebuildFilter, Database},
     vault::Config,
 };
+
+use super::ingest::{
+    extract_one_session_semantic, unload_embedding_model_if_needed, ExtractOneResult,
+};
+use super::NoopSink;
 
 /// 전체 세션에 대해 시맨틱 엣지만 재추출. 임베딩은 건드리지 않음.
 pub async fn run_semantic(
@@ -184,4 +190,222 @@ pub fn run_export() -> Result<()> {
 
     eprintln!("Exported to {}", output_path.display());
     Ok(())
+}
+
+// ─── P37 Task 01: graph rebuild ─────────────────────────────────────────────
+
+/// `graph rebuild` 명령 인자 — REST DTO/Job 어댑터(Task 02)에서 동일 구조 사용.
+///
+/// 우선순위는 `GraphRebuildFilter` 와 동일: `session` > `all` > `retry_failed` > `since`.
+/// 모든 필드 비활성이면 빈 결과 반환.
+#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
+pub struct GraphRebuildArgs {
+    pub since: Option<String>,
+    pub session: Option<String>,
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub retry_failed: bool,
+}
+
+impl From<GraphRebuildArgs> for GraphRebuildFilter {
+    fn from(args: GraphRebuildArgs) -> Self {
+        GraphRebuildFilter {
+            since: args.since,
+            session: args.session,
+            all: args.all,
+            retry_failed: args.retry_failed,
+        }
+    }
+}
+
+/// `graph rebuild` 결과 요약 — REST 응답 / SSE Done payload 용.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct GraphRebuildOutcome {
+    pub processed: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub edges_added: usize,
+}
+
+/// Progress 보고가 가능한 graph rebuild 본체.
+///
+/// CLI 는 `NoopSink`, REST/Job 은 `BroadcastSink` 로 호출.
+/// P36 cancel 패턴: 매 세션 시작 지점에서 `is_cancelled()` 폴링 → 부분 outcome 으로 early return.
+pub async fn run_rebuild(
+    args: GraphRebuildArgs,
+    sink: &dyn ProgressSink,
+) -> Result<GraphRebuildOutcome> {
+    let config = Config::load_or_default();
+    let db = Database::open(&get_default_db_path())?;
+
+    // 1. 처리 대상 ID 목록
+    let filter: GraphRebuildFilter = args.into();
+    let ids = db.list_sessions_for_graph_rebuild(filter)?;
+
+    if ids.is_empty() {
+        sink.message("처리할 세션 없음").await;
+        return Ok(GraphRebuildOutcome::default());
+    }
+
+    // 2. 임베딩 모델 unload — 시맨틱 추출 진입 시점에 한 번만
+    unload_embedding_model_if_needed(&config).await;
+
+    let total = ids.len();
+    let mut outcome = GraphRebuildOutcome::default();
+
+    sink.message(&format!("Graph rebuild: {} session(s) to process", total))
+        .await;
+
+    let now_secs = chrono::Utc::now().timestamp();
+
+    for (i, id) in ids.iter().enumerate() {
+        // 3. 안전 지점 cancel 폴링 (P36 패턴)
+        if sink.is_cancelled() {
+            sink.message(&format!("취소 요청 — {}/{} 처리 후 종료합니다", i, total))
+                .await;
+            return Ok(outcome);
+        }
+        if total > 0 {
+            sink.progress((i as f32) / (total as f32)).await;
+        }
+
+        // 4. 단일 세션 시맨틱 추출 (ingest 와 공유)
+        match extract_one_session_semantic(&db, &config, id).await {
+            ExtractOneResult::Extracted(n) => {
+                outcome.succeeded += 1;
+                outcome.edges_added += n;
+                // 성공 시에만 timestamp 갱신
+                if let Err(e) = db.update_semantic_extracted_at(id, now_secs) {
+                    let short = &id[..8.min(id.len())];
+                    tracing::warn!(
+                        session = short,
+                        error = %e,
+                        "failed to update semantic_extracted_at"
+                    );
+                }
+            }
+            ExtractOneResult::Skipped(_reason) => {
+                outcome.skipped += 1;
+            }
+            ExtractOneResult::Failed(_e) => {
+                outcome.failed += 1;
+            }
+        }
+        outcome.processed += 1;
+    }
+
+    sink.message(&format!(
+        "완료: succeeded={}, failed={}, skipped={}, edges_added={}",
+        outcome.succeeded, outcome.failed, outcome.skipped, outcome.edges_added
+    ))
+    .await;
+
+    Ok(outcome)
+}
+
+/// CLI wrapper — `NoopSink` 사용 (P36 wiki `run_update` 패턴).
+pub async fn run_rebuild_cli(args: GraphRebuildArgs) -> Result<()> {
+    let outcome = run_rebuild(args, &NoopSink).await?;
+    eprintln!(
+        "Graph rebuild complete: processed={}, succeeded={}, failed={}, skipped={}, edges_added={}",
+        outcome.processed, outcome.succeeded, outcome.failed, outcome.skipped, outcome.edges_added,
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::Mutex;
+
+    /// `run_rebuild` 는 `SECALL_DB_PATH` 환경변수를 통해 DB 를 연다.
+    /// 테스트들이 병렬 실행될 때 같은 환경변수를 동시에 set/unset 하면 race 가 발생하므로
+    /// 환경변수 변경을 직렬화한다.
+    // P37 rework — tokio::sync::Mutex 사용 (clippy::await_holding_lock 회피).
+    // std::sync::Mutex 가드를 .await 너머로 들고 가면 CI -D warnings 모드에서 error.
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+    /// vault_path 가 설정되지 않은(또는 vault 가 비어있는) 세션은
+    /// `extract_one_session_semantic` 이 Skipped 로 판정한다.
+    /// 본 테스트들은 filter 가 정확한 ID 세트를 선택하는지(processed 값)만 검증.
+    fn insert_minimal_session(db: &Database, id: &str) {
+        use chrono::Utc;
+        use secall_core::ingest::{AgentKind, Session, TokenUsage};
+
+        let session = Session {
+            id: id.to_string(),
+            agent: AgentKind::ClaudeCode,
+            model: None,
+            project: None,
+            cwd: None,
+            git_branch: None,
+            host: None,
+            start_time: Utc::now(),
+            end_time: None,
+            turns: Vec::new(),
+            total_tokens: TokenUsage::default(),
+            session_type: "interactive".to_string(),
+        };
+        use secall_core::store::SessionRepo;
+        db.insert_session(&session).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_rebuild_retry_failed_only_processes_null_sessions() {
+        let _env_guard = ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("index.sqlite");
+        std::env::set_var("SECALL_DB_PATH", &path);
+
+        let db = Database::open(&get_default_db_path()).unwrap();
+
+        insert_minimal_session(&db, "rf-null-1");
+        insert_minimal_session(&db, "rf-null-2");
+        insert_minimal_session(&db, "rf-done");
+        // rf-done 만 추출 완료 처리 → retry_failed 대상에서 제외
+        db.update_semantic_extracted_at("rf-done", 999).unwrap();
+        drop(db);
+
+        let args = GraphRebuildArgs {
+            retry_failed: true,
+            ..Default::default()
+        };
+        let outcome = run_rebuild(args, &NoopSink).await.unwrap();
+
+        // 두 NULL 세션만 처리됨 (vault 누락이라 모두 skipped 로 카운트되지만
+        // processed 는 NULL 세션 수와 정확히 일치)
+        assert_eq!(outcome.processed, 2);
+        assert_eq!(outcome.skipped, 2);
+        assert_eq!(outcome.succeeded, 0);
+        assert_eq!(outcome.failed, 0);
+
+        std::env::remove_var("SECALL_DB_PATH");
+    }
+
+    #[tokio::test]
+    async fn test_run_rebuild_session_filter_processes_one() {
+        let _env_guard = ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("index.sqlite");
+        std::env::set_var("SECALL_DB_PATH", &path);
+
+        let db = Database::open(&get_default_db_path()).unwrap();
+
+        insert_minimal_session(&db, "sf-1");
+        insert_minimal_session(&db, "sf-2");
+        insert_minimal_session(&db, "sf-3");
+        drop(db);
+
+        let args = GraphRebuildArgs {
+            session: Some("sf-2".to_string()),
+            ..Default::default()
+        };
+        let outcome = run_rebuild(args, &NoopSink).await.unwrap();
+
+        assert_eq!(outcome.processed, 1);
+
+        std::env::remove_var("SECALL_DB_PATH");
+    }
 }

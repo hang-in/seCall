@@ -1,4 +1,5 @@
 import type {
+  GraphRebuildArgs,
   IngestArgs,
   JobStartResponse,
   JobState,
@@ -133,6 +134,12 @@ export const api = {
 
   startWikiUpdate: (args: WikiUpdateArgs) =>
     jfetch<JobStartResponse>("/api/commands/wiki-update", {
+      method: "POST",
+      body: JSON.stringify(args),
+    }),
+
+  startGraphRebuild: (args: GraphRebuildArgs) =>
+    jfetch<JobStartResponse>("/api/commands/graph-rebuild", {
       method: "POST",
       body: JSON.stringify(args),
     }),

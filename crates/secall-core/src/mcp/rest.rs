@@ -150,6 +150,11 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/commands/sync", post(api_command_sync))
         .route("/api/commands/ingest", post(api_command_ingest))
         .route("/api/commands/wiki-update", post(api_command_wiki_update))
+        // P37 Task 02 — graph rebuild
+        .route(
+            "/api/commands/graph-rebuild",
+            post(api_command_graph_rebuild),
+        )
         .route("/api/jobs", get(api_list_jobs))
         .route("/api/jobs/{id}", get(api_get_job))
         .route("/api/jobs/{id}/stream", get(api_job_stream))
@@ -182,7 +187,7 @@ pub async fn start_rest_server(
     tracing::info!(addr = %addr, "REST API server listening");
     tracing::info!(
         "endpoints: /api/recall, /api/get, /api/status, /api/wiki, /api/graph, /api/daily, \
-         /api/commands/{{sync,ingest,wiki-update}}, /api/jobs, /api/jobs/:id, \
+         /api/commands/{{sync,ingest,wiki-update,graph-rebuild}}, /api/jobs, /api/jobs/:id, \
          /api/jobs/:id/stream, /api/jobs/:id/cancel"
     );
 
@@ -459,6 +464,7 @@ async fn spawn_command_job(
                     JobKind::Sync => (adapters.sync_fn)(args_value, sink),
                     JobKind::Ingest => (adapters.ingest_fn)(args_value, sink),
                     JobKind::WikiUpdate => (adapters.wiki_update_fn)(args_value, sink),
+                    JobKind::GraphRebuild => (adapters.graph_rebuild_fn)(args_value, sink),
                 };
                 fut.await
             }
@@ -511,6 +517,17 @@ async fn api_command_wiki_update(
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     spawn_command_job(executor, JobKind::WikiUpdate, body).await
+}
+
+/// P37 Task 02 — `POST /api/commands/graph-rebuild`.
+///
+/// 단일 mutating job 정책상 다른 sync/ingest/wiki/graph_rebuild 가 진행 중이면 409.
+/// body 는 `GraphRebuildArgs` (`{since, session, all, retry_failed}`) 의 JSON 형태.
+async fn api_command_graph_rebuild(
+    State(executor): State<Arc<JobExecutor>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    spawn_command_job(executor, JobKind::GraphRebuild, body).await
 }
 
 #[derive(Debug, Deserialize, Default)]
