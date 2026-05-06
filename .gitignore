@@ -5,3 +5,14 @@
 desktop_conversation/
 web/dist/
 web/node_modules/
+
+# Sensitive — never commit
+.env
+.env.*
+!.env.example
+
+# tunaFlow local agent runtime
+.omc/
+docs/agents/agents.disabled/
+docs/agents/*.pre-sentinel
+docs/agentSessionHistory.md

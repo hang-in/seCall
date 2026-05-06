@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use secall_core::{
     jobs::ProgressSink,
+    search::OllamaEmbedder,
     store::{get_default_db_path, Database},
     vault::Config,
+    wiki::WikiIndexer,
 };
 
 /// `wiki update` 명령 인자 — REST DTO/Job 어댑터에서 동일 구조 사용.
@@ -584,6 +586,44 @@ pub fn run_status() -> Result<()> {
 
     println!("Wiki: {}", wiki_dir.display());
     println!("Pages: {page_count}");
+    Ok(())
+}
+
+pub async fn vectorize(force: bool, model: &str, ollama_url: &str) -> Result<()> {
+    let config = Config::load_or_default();
+    let db = Database::open(&get_default_db_path())?;
+    let embedder = OllamaEmbedder::new(Some(ollama_url), Some(model));
+    let indexer = WikiIndexer {
+        vault_path: &config.vault.path,
+        db: &db,
+        embedder: &embedder,
+        model_id: model,
+    };
+
+    println!("Scanning wiki pages under: {}", config.vault.path.display());
+    let result = if force {
+        indexer.reindex_all().await?
+    } else {
+        indexer.index_all().await?
+    };
+
+    println!(
+        "Wiki vectorize complete: scanned={} indexed={} skipped={} deleted={} failed={}",
+        result.scanned,
+        result.indexed,
+        result.skipped,
+        result.deleted,
+        result.failed.len()
+    );
+
+    for (path, err) in &result.failed {
+        eprintln!("  FAIL {path}: {err}");
+    }
+
+    if !result.failed.is_empty() {
+        anyhow::bail!("{} pages failed to index", result.failed.len());
+    }
+
     Ok(())
 }
 
