@@ -46,10 +46,6 @@ Verification results for Task 02:
 ✅ `RUSTFLAGS="-Dwarnings" cargo clippy --all-targets --all-features` — exit 0
 ```
 
----
+> 이전 commit 본문 마지막에 자동 생성기가 동일 섹션을 두 번 출력하다 truncated 됐음 (Gemini PR #47 review). 중복/잘림 부분 제거하고 위 단일 본문으로 정리.
 
-## 구현 요약
-
-**Task 01 — AgentKind 확장 + opencode 파서 구현**
-- `types.rs`: `
-
+<!-- tunaflow:result-end -->

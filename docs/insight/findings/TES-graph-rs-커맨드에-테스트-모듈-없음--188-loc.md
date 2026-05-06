@@ -3,8 +3,9 @@
 - **Category**: test
 - **Severity**: major
 - **Fix Difficulty**: auto
-- **Status**: open
+- **Status**: resolved
 - **File**: crates/secall/src/commands/graph.rs:10
+- **Resolved Note**: `crates/secall/src/commands/graph.rs` 에 `#[cfg(test)] mod tests` (라인 318-412) 가 이미 존재. Gemini PR #47 review 에서 확인.
 
 ## Description
 

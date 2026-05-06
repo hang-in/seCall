@@ -3,8 +3,9 @@
 - **Category**: test
 - **Severity**: minor
 - **Fix Difficulty**: guided
-- **Status**: in_progress
+- **Status**: resolved
 - **File**: crates/secall-core/src/store/db.rs:658
+- **Resolved Note**: `crates/secall-core/src/store/db.rs` 의 테스트 모듈에 `test_get_sessions_for_date_filters_by_date` / `test_get_topics_for_sessions_with_edges` 가 이미 존재. Gemini PR #47 review 에서 확인.
 
 ## Description
 

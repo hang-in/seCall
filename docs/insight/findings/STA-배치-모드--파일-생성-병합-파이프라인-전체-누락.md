@@ -3,8 +3,9 @@
 - **Category**: stability
 - **Severity**: critical
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: resolved
 - **File**: crates/secall/src/commands/wiki.rs:95
+- **Resolved Note**: `crates/secall/src/commands/wiki.rs` 의 배치 모드 (라인 250-400 부근) 에 파일 생성 + 병합 파이프라인이 이미 구현돼 있음. Gemini PR #47 review 에서 확인 — finding 의 117/415 라인 번호도 코드 이동으로 outdated.
 
 ## Description
 
