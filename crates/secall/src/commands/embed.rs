@@ -13,7 +13,9 @@ use secall_core::{
 
 enum WorkItem {
     /// Default mode — pre-filter loaded the Session, embed pending chunks.
-    Cached(Session),
+    /// Boxed so the enum size doesn't balloon to the Session size for the
+    /// `Rebuild` variant too (clippy `large_enum_variant`).
+    Cached(Box<Session>),
     /// `--all` mode — only sid; the worker reloads the Session after deleting
     /// existing vectors for wholesale rebuild.
     Rebuild(String),
@@ -71,7 +73,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
                 }
             };
             match indexer.has_pending_chunks(&db, &session, tz) {
-                Ok(true) => filtered.push(WorkItem::Cached(session)),
+                Ok(true) => filtered.push(WorkItem::Cached(Box::new(session))),
                 Ok(false) => {} // silent skip
                 Err(_) => filtered.push(WorkItem::Rebuild(sid.clone())),
             }
@@ -117,8 +119,8 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
                         return;
                     }
                 };
-                let session = match item {
-                    WorkItem::Cached(s) => s,
+                let session: Session = match item {
+                    WorkItem::Cached(s) => *s,
                     WorkItem::Rebuild(sid) => {
                         // --all (또는 pre-filter 로드 실패) — 기존 vector drop 후 reload
                         if all {
