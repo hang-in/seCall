@@ -55,3 +55,4 @@ web-ui = ["dep:rust-embed", "dep:mime_guess"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

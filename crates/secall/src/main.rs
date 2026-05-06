@@ -380,6 +380,11 @@ enum GraphAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // P39 — `.env` 자동 로드 (cwd 또는 부모 디렉토리). secall sync 등 명령이
+    // SECALL_GEMINI_API_KEY 같은 env var 를 사용하기 전에 로드. 파일 없으면
+    // silently skip (운영 환경에서 env var 직접 export 한 경우 문제 없음).
+    let _ = dotenvy::dotenv();
+
     // stderr 전용 — stdout은 MCP 프로토콜 전용
     tracing_subscriber::fmt()
         .with_env_filter(
