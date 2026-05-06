@@ -105,7 +105,11 @@ pub async fn run(
     // Build search engine (BM25 + optional vector)
     let tok = create_tokenizer(&config.search.tokenizer)
         .map_err(|e| anyhow!("tokenizer init failed: {e}"))?;
-    let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
+    let vector_indexer = if no_embed {
+        None
+    } else {
+        secall_core::search::vector::create_vector_indexer(&config).await
+    };
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     // Collect paths to ingest
@@ -230,7 +234,11 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
 
     let tok = create_tokenizer(&config.search.tokenizer)
         .map_err(|e| anyhow!("tokenizer init failed: {e}"))?;
-    let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
+    let vector_indexer = if no_embed {
+        None
+    } else {
+        secall_core::search::vector::create_vector_indexer(&config).await
+    };
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     // ── detect phase ──
@@ -572,6 +580,8 @@ pub async fn ingest_sessions(
             "Skipping vector embedding for {} session(s) (--no-embed)",
             vector_tasks.len()
         );
+        // 후속 semantic / wiki 단계가 길어질 수 있어 사용 끝난 핸들 즉시 해제.
+        vector_tasks.clear();
     }
     if !no_embed && !vector_tasks.is_empty() {
         let total = vector_tasks.len();

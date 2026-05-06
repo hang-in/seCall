@@ -209,7 +209,7 @@ enum Commands {
         #[arg(long)]
         no_graph: bool,
 
-        /// Skip vector embedding during ingest phase (BM25/structure indexing only).
+        /// Skip vector embedding during ingest phase (BM25/structure indexing only). Run `secall embed` separately to fill in vectors later.
         #[arg(long)]
         no_embed: bool,
     },
