@@ -177,47 +177,56 @@ fn test_auto_commit_non_git_dir_returns_false() {
 
 // ─── push() 회귀 — bare remote 로 commit + push 함께 검증 ───────────────────
 
-/// `init_repo_with_initial_commit` + `git init --bare` remote + `push -u origin main`.
+/// `init_repo_with_initial_commit` + `git init --bare` remote + `push -u origin <branch>`.
 /// 반환된 두 TempDir 는 호출부에서 alive 유지 (drop 시 cleanup).
-fn init_repo_with_bare_remote() -> (TempDir, TempDir) {
+/// `branch` 는 `VaultGit::new` 인자와 일치해야 함.
+fn init_repo_with_bare_remote(branch: &str) -> (TempDir, TempDir) {
     let remote = TempDir::new().expect("remote tempdir");
     run(remote.path(), &["init", "--bare"]);
 
     let work = init_repo_with_initial_commit();
     let url = remote.path().to_str().expect("remote utf8");
     run(work.path(), &["remote", "add", "origin", url]);
-    run(work.path(), &["push", "-u", "origin", "main"]);
+    run(work.path(), &["push", "-u", "origin", branch]);
 
     (work, remote)
 }
 
-/// bare remote 의 main 브랜치 트리에 있는 파일 경로 목록 (개행 분리).
+/// bare remote 의 지정 브랜치 트리에 있는 파일 경로 목록 (개행 분리).
 /// `git init --bare` 의 default HEAD 가 main 을 안 가리킬 수 있어 ref 직접 지정.
-fn remote_head_files(remote: &Path) -> String {
+fn remote_head_files(remote: &Path, branch: &str) -> String {
+    let ref_name = format!("refs/heads/{branch}");
     let out = Command::new("git")
-        .args(["ls-tree", "-r", "--name-only", "refs/heads/main"])
+        .args(["ls-tree", "-r", "--name-only", &ref_name])
         .current_dir(remote)
         .output()
         .expect("git ls-tree");
     assert!(
         out.status.success(),
-        "ls-tree failed: {}",
+        "ls-tree {ref_name} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("utf8")
 }
 
+/// substring match 가 아닌 정확한 경로 라인 매칭 — `foo.json` 이 `foo.json.bak` 에
+/// false-positive 매칭되는 것 회피.
+fn contains_exact_path(file_list: &str, target: &str) -> bool {
+    file_list.lines().any(|l| l == target)
+}
+
 #[test]
 fn test_push_stages_new_dirs_and_top_level_files() {
     // 핵심 회귀: 명시 패턴 (raw/ wiki/ index.md log.md) 외 경로도 push() 가 모두 포함.
-    let (work, remote) = init_repo_with_bare_remote();
+    let branch = "main";
+    let (work, remote) = init_repo_with_bare_remote(branch);
     let wp = work.path();
 
     write(wp, "graph/edges.json", "{}\n");
     write(wp, "SCHEMA.md", "# v1\n");
     write(wp, "log/2026-05-06.md", "log entry\n");
 
-    let git = VaultGit::new(wp, "main");
+    let git = VaultGit::new(wp, branch);
     let result = git
         .push("regression: ensure new dirs+files captured")
         .expect("push");
@@ -232,17 +241,17 @@ fn test_push_stages_new_dirs_and_top_level_files() {
         porcelain(wp)
     );
 
-    let remote_files = remote_head_files(remote.path());
+    let remote_files = remote_head_files(remote.path(), branch);
     assert!(
-        remote_files.contains("graph/edges.json"),
+        contains_exact_path(&remote_files, "graph/edges.json"),
         "graph/edges.json not pushed: {remote_files}"
     );
     assert!(
-        remote_files.contains("SCHEMA.md"),
+        contains_exact_path(&remote_files, "SCHEMA.md"),
         "SCHEMA.md not pushed: {remote_files}"
     );
     assert!(
-        remote_files.contains("log/2026-05-06.md"),
+        contains_exact_path(&remote_files, "log/2026-05-06.md"),
         "log/2026-05-06.md not pushed: {remote_files}"
     );
 }
@@ -251,17 +260,18 @@ fn test_push_stages_new_dirs_and_top_level_files() {
 fn test_push_stages_deletions() {
     // 삭제도 git add -A 로 잡혀야 remote 에 반영됨 (예전 명시 패턴은 신규 dir 만 누락이 아니라
     // top-level 삭제도 누락 가능했음).
-    let (work, remote) = init_repo_with_bare_remote();
+    let branch = "main";
+    let (work, remote) = init_repo_with_bare_remote(branch);
     let wp = work.path();
 
     write(wp, "wiki/topic.md", "topic\n");
     run(wp, &["add", "wiki/topic.md"]);
     run(wp, &["commit", "-m", "add topic"]);
-    run(wp, &["push", "origin", "main"]);
+    run(wp, &["push", "origin", branch]);
 
     std::fs::remove_file(wp.join("wiki/topic.md")).expect("rm topic");
 
-    let git = VaultGit::new(wp, "main");
+    let git = VaultGit::new(wp, branch);
     let result = git.push("regression: deletion captured").expect("push");
     assert!(
         result.committed > 0,
@@ -269,17 +279,18 @@ fn test_push_stages_deletions() {
     );
     assert!(porcelain(wp).trim().is_empty(), "local should be clean");
 
-    let remote_files = remote_head_files(remote.path());
+    let remote_files = remote_head_files(remote.path(), branch);
     assert!(
-        !remote_files.contains("wiki/topic.md"),
+        !contains_exact_path(&remote_files, "wiki/topic.md"),
         "deletion should be reflected on remote: {remote_files}"
     );
 }
 
 #[test]
 fn test_push_no_changes_returns_committed_zero() {
-    let (work, _remote) = init_repo_with_bare_remote();
-    let git = VaultGit::new(work.path(), "main");
+    let branch = "main";
+    let (work, _remote) = init_repo_with_bare_remote(branch);
+    let git = VaultGit::new(work.path(), branch);
     let result = git.push("noop").expect("push");
     assert_eq!(result.committed, 0, "clean repo should report 0 committed");
 }
