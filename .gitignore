@@ -19,3 +19,6 @@ docs/agentSessionHistory.md
 
 # scripts 실행 로그 (스크립트 본체는 commit, 결과 로그는 제외)
 scripts/*.log
+
+# 외부 커뮤니티 게시 임시 콘텐츠 (다모앙 등) — 사용자가 직접 게시, repo 보존 X
+docs/community/damoang-*.md
