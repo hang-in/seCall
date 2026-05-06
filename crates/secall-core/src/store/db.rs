@@ -9,7 +9,7 @@ use crate::error::SecallError;
 use super::schema::{
     CREATE_CONFIG, CREATE_GRAPH_EDGES, CREATE_GRAPH_INDEXES, CREATE_GRAPH_NODES, CREATE_INDEXES,
     CREATE_INGEST_LOG, CREATE_JOBS, CREATE_QUERY_CACHE, CREATE_SESSIONS, CREATE_TURNS,
-    CREATE_TURNS_FTS, CURRENT_SCHEMA_VERSION,
+    CREATE_TURNS_FTS, CREATE_WIKI_VECTORS, CURRENT_SCHEMA_VERSION,
 };
 
 pub struct Database {
@@ -119,6 +119,9 @@ impl Database {
                 "ALTER TABLE sessions ADD COLUMN semantic_extracted_at INTEGER",
                 [],
             )?;
+        }
+        if current < 9 {
+            self.conn.execute_batch(CREATE_WIKI_VECTORS)?;
         }
         if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(

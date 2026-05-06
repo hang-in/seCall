@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -44,7 +44,16 @@ pub struct GetParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StatusParams {}
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WikiSearchMode {
+    #[default]
+    Keyword,
+    Semantic,
+    Hybrid,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct WikiSearchParams {
     /// Search query matched against wiki filename and content
     pub query: String,
@@ -52,6 +61,9 @@ pub struct WikiSearchParams {
     pub category: Option<String>,
     /// Max results (default 5)
     pub limit: Option<usize>,
+    /// Search mode: keyword(default), semantic, hybrid
+    #[serde(default)]
+    pub mode: Option<WikiSearchMode>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

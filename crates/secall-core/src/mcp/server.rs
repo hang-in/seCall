@@ -9,12 +9,14 @@ use rmcp::{
 
 use super::instructions::build_instructions;
 use super::tools::{
-    GetParams, GraphQueryParams, QueryType, RecallParams, StatusParams, WikiSearchParams,
+    GetParams, GraphQueryParams, QueryType, RecallParams, StatusParams, WikiSearchMode,
+    WikiSearchParams,
 };
 use crate::search::bm25::{SearchFilters, SearchResult};
 use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
+use crate::search::{Embedder, OllamaEmbedder};
 use crate::store::db::Database;
-use crate::store::SessionRepo;
+use crate::store::{SessionRepo, WikiVectorRepo};
 
 #[derive(Clone)]
 pub struct SeCallMcpServer {
@@ -23,6 +25,34 @@ pub struct SeCallMcpServer {
     db: Arc<Mutex<Database>>,
     search: Arc<SearchEngine>,
     vault_path: PathBuf,
+}
+
+#[derive(Clone)]
+struct WikiMatch {
+    path: String,
+    title: String,
+    preview: String,
+    name_match: bool,
+    created: Option<String>,
+    updated: Option<String>,
+    score: f32,
+}
+
+fn run_future_blocking<T, F>(future: F) -> anyhow::Result<T>
+where
+    T: Send,
+    F: std::future::Future<Output = anyhow::Result<T>> + Send,
+{
+    std::thread::scope(|scope| {
+        let task = scope.spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(future)
+        });
+        task.join()
+            .map_err(|_| anyhow::anyhow!("wiki search worker thread panicked"))?
+    })
 }
 
 /// 공통 로직 메서드 — REST 핸들러와 MCP tool 모두에서 호출
@@ -295,45 +325,124 @@ impl SeCallMcpServer {
     }
 
     pub fn do_wiki_search(&self, params: WikiSearchParams) -> anyhow::Result<serde_json::Value> {
-        let wiki_dir = self.vault_path.join("wiki");
+        let mode = params.mode.unwrap_or_default();
+        let matches = match mode {
+            WikiSearchMode::Keyword => self.do_wiki_search_keyword(&params),
+            WikiSearchMode::Semantic => self.do_wiki_search_semantic(&params).or_else(|err| {
+                tracing::warn!(error = %err, "semantic wiki search failed, falling back to keyword");
+                self.do_wiki_search_keyword(&params)
+            }),
+            WikiSearchMode::Hybrid => self.do_wiki_search_hybrid(&params).or_else(|err| {
+                tracing::warn!(error = %err, "hybrid wiki search failed, falling back to keyword");
+                self.do_wiki_search_keyword(&params)
+            }),
+        }?;
+
+        Ok(wiki_matches_to_json(matches))
+    }
+
+    fn do_wiki_search_keyword(&self, params: &WikiSearchParams) -> anyhow::Result<Vec<WikiMatch>> {
         let limit = params.limit.unwrap_or(5);
+        let mut matches = self.collect_keyword_matches(params)?;
+        matches.sort_by(|a, b| {
+            b.name_match
+                .cmp(&a.name_match)
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        matches.truncate(limit);
+        Ok(matches)
+    }
+
+    fn do_wiki_search_semantic(&self, params: &WikiSearchParams) -> anyhow::Result<Vec<WikiMatch>> {
+        let limit = params.limit.unwrap_or(5);
+        let mut matches = self.collect_semantic_matches(params)?;
+        matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.name_match.cmp(&a.name_match))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        matches.truncate(limit);
+        Ok(matches)
+    }
+
+    fn do_wiki_search_hybrid(&self, params: &WikiSearchParams) -> anyhow::Result<Vec<WikiMatch>> {
+        let limit = params.limit.unwrap_or(5);
+        let keyword = self.collect_keyword_matches(params)?;
+        let semantic = self.collect_semantic_matches(params)?;
+        let mut merged = std::collections::HashMap::<String, WikiMatch>::new();
+        let mut rrf_scores = std::collections::HashMap::<String, f32>::new();
+
+        for (rank, item) in keyword.iter().enumerate() {
+            *rrf_scores.entry(item.path.clone()).or_insert(0.0) += 1.0 / (60.0 + rank as f32 + 1.0);
+            merged
+                .entry(item.path.clone())
+                .or_insert_with(|| item.clone());
+        }
+        for (rank, item) in semantic.iter().enumerate() {
+            *rrf_scores.entry(item.path.clone()).or_insert(0.0) += 1.0 / (60.0 + rank as f32 + 1.0);
+            merged
+                .entry(item.path.clone())
+                .and_modify(|existing| {
+                    existing.name_match = existing.name_match || item.name_match;
+                    if existing.created.is_none() {
+                        existing.created = item.created.clone();
+                    }
+                    if existing.updated.is_none() {
+                        existing.updated = item.updated.clone();
+                    }
+                })
+                .or_insert_with(|| item.clone());
+        }
+
+        let mut matches: Vec<WikiMatch> = merged
+            .into_iter()
+            .filter_map(|(path, mut item)| {
+                item.score = *rrf_scores.get(&path)?;
+                Some(item)
+            })
+            .collect();
+
+        matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.name_match.cmp(&a.name_match))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        matches.truncate(limit);
+        Ok(matches)
+    }
+
+    fn collect_keyword_matches(&self, params: &WikiSearchParams) -> anyhow::Result<Vec<WikiMatch>> {
+        let wiki_dir = self.vault_path.join("wiki");
+        if !wiki_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let search_root = wiki_search_root(&self.vault_path, params.category.as_deref())?;
+        if !search_root.exists() {
+            return Ok(Vec::new());
+        }
+
         let query_lower = params.query.to_lowercase();
 
-        if !wiki_dir.exists() {
-            return Ok(serde_json::json!({ "results": [], "count": 0 }));
-        }
-
-        let search_root = if let Some(ref cat) = params.category {
-            match cat.as_str() {
-                "projects" | "topics" | "decisions" => wiki_dir.join(cat),
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "invalid category '{}': must be one of projects, topics, decisions",
-                        cat
-                    ));
-                }
-            }
-        } else {
-            wiki_dir.clone()
-        };
-
-        if !search_root.exists() {
-            return Ok(serde_json::json!({ "results": [], "count": 0 }));
-        }
-
-        struct Match {
-            path: String,
-            title: String,
-            preview: String,
-            name_match: bool,
-            created: Option<String>,
-            updated: Option<String>,
-        }
-
-        let mut matches: Vec<Match> = walkdir::WalkDir::new(&search_root)
+        let matches = walkdir::WalkDir::new(&search_root)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .map(|ext| ext == "md")
+                    .unwrap_or(false)
+            })
             .filter_map(|entry| {
                 let path = entry.path();
                 let filename = path
@@ -343,7 +452,6 @@ impl SeCallMcpServer {
                     .to_lowercase();
                 let content = std::fs::read_to_string(path).ok()?;
                 let content_lower = content.to_lowercase();
-
                 let name_match = filename.contains(&query_lower);
                 let body_match = content_lower.contains(&query_lower);
 
@@ -351,60 +459,87 @@ impl SeCallMcpServer {
                     return None;
                 }
 
-                let rel = path
-                    .strip_prefix(&self.vault_path)
-                    .unwrap_or(path)
-                    .to_string_lossy()
-                    .to_string();
-
-                let title = content
-                    .lines()
-                    .find(|l| l.starts_with("# "))
-                    .map(|l| l.trim_start_matches("# ").to_string())
-                    .unwrap_or_else(|| {
-                        path.file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
-                    });
-
-                let preview: String = content.chars().take(500).collect();
-                let (created, updated) = extract_wiki_dates(&content);
-
-                Some(Match {
-                    path: rel,
-                    title,
-                    preview,
+                Some(build_wiki_match(
+                    &self.vault_path,
+                    path,
+                    &content,
                     name_match,
-                    created,
-                    updated,
-                })
+                    if name_match { 2.0 } else { 1.0 },
+                ))
             })
             .collect();
 
-        matches.sort_by_key(|m| !m.name_match);
-        matches.truncate(limit);
+        Ok(matches)
+    }
 
-        let results: Vec<serde_json::Value> = matches
-            .into_iter()
-            .map(|m| {
-                let mut obj = serde_json::json!({
-                    "path": m.path,
-                    "title": m.title,
-                    "preview": m.preview,
-                });
-                if let Some(created) = m.created {
-                    obj["created"] = serde_json::Value::String(created);
-                }
-                if let Some(updated) = m.updated {
-                    obj["updated"] = serde_json::Value::String(updated);
-                }
-                obj
-            })
-            .collect();
+    fn collect_semantic_matches(
+        &self,
+        params: &WikiSearchParams,
+    ) -> anyhow::Result<Vec<WikiMatch>> {
+        let wiki_dir = self.vault_path.join("wiki");
+        if !wiki_dir.exists() {
+            return Ok(Vec::new());
+        }
 
-        let count = results.len();
-        Ok(serde_json::json!({ "results": results, "count": count }))
+        let query_embedding = {
+            let base_url = std::env::var("OLLAMA_BASE_URL").ok();
+            let model = std::env::var("OLLAMA_EMBED_MODEL").ok();
+            let embedder = OllamaEmbedder::new(base_url.as_deref(), model.as_deref());
+            run_future_blocking(embedder.embed(&params.query))?
+        };
+
+        let category_prefix = params
+            .category
+            .as_deref()
+            .map(validated_wiki_category)
+            .transpose()?
+            .map(|category| format!("wiki/{category}/"));
+
+        let rows = {
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+            db.list_wiki_vectors()?
+        };
+
+        let query_lower = params.query.to_lowercase();
+        let mut matches = Vec::new();
+
+        for row in rows {
+            if let Some(prefix) = category_prefix.as_deref() {
+                if !row.wiki_path.starts_with(prefix) {
+                    continue;
+                }
+            }
+            if row.embedding.is_empty() {
+                continue;
+            }
+
+            let full_path = self.vault_path.join(&row.wiki_path);
+            let content = match std::fs::read_to_string(&full_path) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            let score =
+                crate::store::wiki_vector_repo::cosine_similarity(&query_embedding, &row.embedding);
+            let name_match = full_path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&query_lower);
+
+            matches.push(build_wiki_match(
+                &self.vault_path,
+                &full_path,
+                &content,
+                name_match,
+                score,
+            ));
+        }
+
+        Ok(matches)
     }
 
     pub fn do_graph_query(&self, params: GraphQueryParams) -> anyhow::Result<serde_json::Value> {
@@ -836,6 +971,87 @@ pub async fn start_mcp_http_server(
 
     axum::serve(tcp_listener, router).await?;
     Ok(())
+}
+
+fn wiki_search_root(
+    vault_path: &std::path::Path,
+    category: Option<&str>,
+) -> anyhow::Result<PathBuf> {
+    let wiki_dir = vault_path.join("wiki");
+    if let Some(category) = category {
+        Ok(wiki_dir.join(validated_wiki_category(category)?))
+    } else {
+        Ok(wiki_dir)
+    }
+}
+
+fn validated_wiki_category(category: &str) -> anyhow::Result<&str> {
+    match category {
+        "projects" | "topics" | "decisions" => Ok(category),
+        _ => Err(anyhow::anyhow!(
+            "invalid category '{}': must be one of projects, topics, decisions",
+            category
+        )),
+    }
+}
+
+fn build_wiki_match(
+    vault_path: &std::path::Path,
+    path: &std::path::Path,
+    content: &str,
+    name_match: bool,
+    score: f32,
+) -> WikiMatch {
+    let rel = path
+        .strip_prefix(vault_path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let title = content
+        .lines()
+        .find(|line| line.starts_with("# "))
+        .map(|line| line.trim_start_matches("# ").to_string())
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
+    let preview = content.chars().take(500).collect();
+    let (created, updated) = extract_wiki_dates(content);
+
+    WikiMatch {
+        path: rel,
+        title,
+        preview,
+        name_match,
+        created,
+        updated,
+        score,
+    }
+}
+
+fn wiki_matches_to_json(matches: Vec<WikiMatch>) -> serde_json::Value {
+    let results: Vec<serde_json::Value> = matches
+        .into_iter()
+        .map(|item| {
+            let mut obj = serde_json::json!({
+                "path": item.path,
+                "title": item.title,
+                "preview": item.preview,
+                "score": item.score,
+            });
+            if let Some(created) = item.created {
+                obj["created"] = serde_json::Value::String(created);
+            }
+            if let Some(updated) = item.updated {
+                obj["updated"] = serde_json::Value::String(updated);
+            }
+            obj
+        })
+        .collect();
+    let count = results.len();
+    serde_json::json!({ "results": results, "count": count })
 }
 
 /// 프로젝트명을 wiki 파일명에 안전한 문자열로 정규화.

@@ -309,6 +309,21 @@ enum WikiAction {
 
     /// Show wiki status (page count, last update)
     Status,
+
+    /// Backfill wiki page embeddings for semantic/hybrid search
+    Vectorize {
+        /// Ignore content hash and reindex every page
+        #[arg(long)]
+        force: bool,
+
+        /// Embedding model ID
+        #[arg(long, default_value = "bge-m3")]
+        model: String,
+
+        /// Ollama base URL
+        #[arg(long, default_value = "http://localhost:11434")]
+        ollama_url: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -533,6 +548,13 @@ async fn main() -> anyhow::Result<()> {
             }
             WikiAction::Status => {
                 commands::wiki::run_status()?;
+            }
+            WikiAction::Vectorize {
+                force,
+                model,
+                ollama_url,
+            } => {
+                commands::wiki::vectorize(force, &model, &ollama_url).await?;
             }
         },
         Commands::Migrate { action } => match action {

@@ -1,4 +1,4 @@
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 pub const CREATE_SESSIONS: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -138,4 +138,15 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_started_at ON jobs(started_at);
+";
+
+pub const CREATE_WIKI_VECTORS: &str = "
+CREATE TABLE IF NOT EXISTS wiki_vectors (
+    wiki_path     TEXT PRIMARY KEY,
+    embedding     BLOB NOT NULL,
+    model_id      TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_vectors_model ON wiki_vectors(model_id);
 ";
