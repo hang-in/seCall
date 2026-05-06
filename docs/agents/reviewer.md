@@ -60,3 +60,12 @@ When reviewing after rework:
   accessing the result report file is the same policy violation as judging
   it. The result report is auto-generated and not part of the review contract.
 - **Findings vs Recommendations**: Only actual defects go in findings. Everything else goes in recommendations.
+
+## Custom Rules
+
+<!-- BEGIN user-customize -->
+<!-- This section is preserved across tunaFlow scaffold refreshes. Add your
+     project-specific Reviewer rules here. tunaFlow will never overwrite
+     content between the BEGIN/END user-customize markers. -->
+
+<!-- END user-customize -->

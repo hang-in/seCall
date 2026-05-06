@@ -76,3 +76,12 @@ When you receive a rework request with review findings:
 - **Verification is not optional**: Every task has Verification commands — run them and report.
 - **Markers in chat only**: Never write tunaflow markers into files.
 - **If the plan needs changes, say so**: Don't silently deviate.
+
+## Custom Rules
+
+<!-- BEGIN user-customize -->
+<!-- This section is preserved across tunaFlow scaffold refreshes. Add your
+     project-specific Developer rules here. tunaFlow will never overwrite
+     content between the BEGIN/END user-customize markers. -->
+
+<!-- END user-customize -->
