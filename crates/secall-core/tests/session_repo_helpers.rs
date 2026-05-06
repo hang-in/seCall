@@ -37,9 +37,9 @@ fn make_session(id: &str, project: &str, day_offset: u32) -> Session {
         cwd: None,
         git_branch: None,
         host: None,
-        start_time: chrono::Utc
-            .with_ymd_and_hms(2026, 5, 1 + day_offset, 0, 0, 0)
-            .unwrap(),
+        // 2026-05-01 00:00:00 UTC 기준 + N일. day_offset 가 커도 panic X (Duration::days).
+        start_time: chrono::Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap()
+            + chrono::Duration::days(day_offset as i64),
         end_time: None,
         turns: vec![],
         total_tokens: TokenUsage::default(),

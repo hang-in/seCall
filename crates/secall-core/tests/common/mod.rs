@@ -112,7 +112,8 @@ pub async fn send_request(
         .expect("router oneshot must not fail");
 
     let status = response.status();
-    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+    // 10 MiB 상한 — 테스트 환경에서도 무한 스트림/대용량 응답으로 인한 메모리 폭주 회피.
+    let body_bytes = axum::body::to_bytes(response.into_body(), 10 * 1024 * 1024)
         .await
         .expect("read response body");
 

@@ -277,12 +277,18 @@ async fn test_graph_empty_returns_empty_results() {
 async fn test_daily_default_date_is_today() {
     let env = make_test_env().await;
 
+    // 자정 경계 race 회피 — 요청 직전/직후 모두 캡처해서 둘 중 하나면 통과.
+    let today_before = chrono::Local::now().format("%Y-%m-%d").to_string();
     let (status, body) =
         send_request(&env.router, Method::POST, "/api/daily", Some(json!({}))).await;
+    let today_after = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     assert_eq!(status, StatusCode::OK, "expected 200, body={body}");
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    assert_eq!(body["date"], today, "date 미지정 시 오늘로 채워져야 함");
+    let date_str = body["date"].as_str().unwrap_or("");
+    assert!(
+        date_str == today_before || date_str == today_after,
+        "date 미지정 시 오늘로 채워져야 함 (before={today_before}, after={today_after}, got={date_str})"
+    );
     assert_eq!(body["total_sessions"], 0);
 }
 
