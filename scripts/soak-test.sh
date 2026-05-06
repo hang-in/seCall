@@ -33,24 +33,21 @@ else
 fi
 
 section "2. cargo test (secall-core)"
-CORE_RESULT=$(cargo test --package secall-core 2>&1)
-echo "$CORE_RESULT" >> "$LOG"
-CORE_PASSED=$(echo "$CORE_RESULT" | grep "^test result:" | head -1 | grep -o '[0-9]* passed' | grep -o '[0-9]*')
-CORE_FAILED=$(echo "$CORE_RESULT" | grep "^test result:" | head -1 | grep -o '[0-9]* failed' | grep -o '[0-9]*')
-if [ "${CORE_FAILED:-0}" = "0" ]; then
+# exit code 우선 — 텍스트 파싱은 Rust 버전마다 달라 fragile.
+# 카운트는 부가 정보로만 표시.
+if cargo test --package secall-core >>"$LOG" 2>&1; then
+  CORE_PASSED=$(grep "^test result:" "$LOG" | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "?")
   pass "secall-core: ${CORE_PASSED} passed"
 else
-  fail "secall-core: ${CORE_FAILED} failed"
+  fail "secall-core: cargo test exited non-zero"
 fi
 
 section "3. cargo test (secall CLI)"
-CLI_RESULT=$(cargo test --package secall 2>&1)
-echo "$CLI_RESULT" >> "$LOG"
-CLI_PASSED=$(echo "$CLI_RESULT" | grep "^test result:" | tail -1 | grep -o '[0-9]* passed' | grep -o '[0-9]*')
-if [ "${CLI_PASSED:-0}" -gt "0" ]; then
+if cargo test --package secall >>"$LOG" 2>&1; then
+  CLI_PASSED=$(grep "^test result:" "$LOG" | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "?")
   pass "secall CLI: ${CLI_PASSED} passed"
 else
-  fail "secall CLI tests"
+  fail "secall CLI: cargo test exited non-zero"
 fi
 
 section "4. TypeScript 타입 체크"
@@ -72,10 +69,12 @@ fi
 
 section "6. 서버 기동"
 cargo build --release 2>&1 | tail -1 | tee -a "$LOG"
-pkill -f "secall serve" 2>/dev/null || true
+# pkill -f 는 다른 도구(에디터/grep 등)도 잡힐 수 있어 정확한 바이너리 경로로 매칭.
+pkill -f "target/release/secall serve" 2>/dev/null || true
 sleep 1
 ./target/release/secall serve --port 8080 &
 SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 sleep 3
 
 check_endpoint() {
@@ -126,7 +125,7 @@ fi
 
 check_endpoint "get invalid" POST "/api/get" \
   '{"session_id":"nonexistent-id-12345","full":false}' \
-  "True"  # 에러 응답이든 빈 응답이든 crash하지 않으면 OK
+  "assert 'error' in d or d == {} or d.get('session') is None"  # 명시적 에러/빈 응답 검증
 
 section "10. POST /api/daily"
 check_endpoint "daily 2026-04-05" POST "/api/daily" \
@@ -219,10 +218,10 @@ else
   fail "graph 50x: ${LOAD_FAIL} failures"
 fi
 
-# ─── Phase 4: 안정성 소크 (5시간 반복) ──────────────────────
+# ─── Phase 4: 안정성 소크 (6시간 반복) ──────────────────────
 
-section "16. 소크 테스트 (5시간, 5분 간격)"
-SOAK_END=$(($(date +%s) + 18000))  # 5시간
+section "16. 소크 테스트 (6시간, 5분 간격)"
+SOAK_END=$(($(date +%s) + 21600))  # 6시간 (파일 상단 주석과 일치)
 SOAK_CYCLE=0
 SOAK_FAIL=0
 

@@ -2,8 +2,7 @@ default:
     @just --list
 
 # 프로덕션 빌드 (web → cargo build --release)
-build:
-    cd web && pnpm install --frozen-lockfile && pnpm build
+build: web
     cargo build --release
 
 # 개발 모드: Vite dev server + axum 둘 다 띄움

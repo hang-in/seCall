@@ -39,5 +39,6 @@ Verification results for Task 02:
 ✅ `cargo run -- sync --help 2>&1 | grep -i "no-semantic"` — `--no-semantic` 출력 확인
 ✅ `cargo test -p secall` — 16 + 4 passed, 0 failed
 
-<!-- tunafl
+<!-- tunaflow:result-end -->
+
 
