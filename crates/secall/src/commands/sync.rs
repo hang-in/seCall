@@ -22,6 +22,9 @@ pub struct SyncArgs {
     /// graph 증분 갱신 비활성화 (기본: false → 활성화)
     #[serde(default)]
     pub no_graph: bool,
+    /// vector embedding sub-loop 스킵 (BM25/구조 인덱싱만 수행)
+    #[serde(default)]
+    pub no_embed: bool,
 }
 
 /// `sync` 결과 요약 — REST 응답 / SSE Done payload용.
@@ -49,6 +52,7 @@ pub async fn run(
     no_wiki: bool,
     no_semantic: bool,
     no_graph: bool,
+    no_embed: bool,
 ) -> Result<()> {
     let args = SyncArgs {
         local_only,
@@ -56,6 +60,7 @@ pub async fn run(
         no_wiki,
         no_semantic,
         no_graph,
+        no_embed,
     };
     let _outcome = run_with_progress(args, &super::NoopSink).await?;
     Ok(())
@@ -71,6 +76,7 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
         no_wiki,
         no_semantic,
         no_graph,
+        no_embed,
     } = args;
 
     let config = Config::load_or_default();
@@ -250,7 +256,7 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
     sink.phase_start("ingest").await;
     eprintln!("Ingesting local sessions...");
     sink.message("Ingesting local sessions...").await;
-    let ingest_result = run_auto_ingest(&config, &db, no_semantic, sink).await?;
+    let ingest_result = run_auto_ingest(&config, &db, no_semantic, no_embed, sink).await?;
     eprintln!(
         "  -> {} ingested, {} skipped, {} errors.",
         ingest_result.ingested, ingest_result.skipped, ingest_result.errors
@@ -519,6 +525,7 @@ async fn run_auto_ingest(
     config: &Config,
     db: &Database,
     no_semantic: bool,
+    no_embed: bool,
     sink: &dyn ProgressSink,
 ) -> Result<IngestStats> {
     use secall_core::ingest::detect::{
@@ -558,6 +565,7 @@ async fn run_auto_ingest(
         0,
         false,
         no_semantic,
+        no_embed,
         &OutputFormat::Text,
         Some(sink),
     )
