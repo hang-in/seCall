@@ -23,10 +23,18 @@ export interface WikiSearchResponse {
   count: number;
 }
 
-export function useWikiSearch(query: string, opts?: { limit?: number; enabled?: boolean }) {
+export type WikiSearchMode = "keyword" | "semantic" | "hybrid";
+
+export function useWikiSearch(
+  query: string,
+  opts?: { limit?: number; mode?: WikiSearchMode; enabled?: boolean },
+) {
+  const mode = opts?.mode ?? "keyword";
+  const limit = opts?.limit ?? 10;
   return useQuery({
-    queryKey: ["wiki", "search", query, opts?.limit ?? 5],
-    queryFn: () => api.wikiSearch({ query, limit: opts?.limit ?? 5 }) as Promise<WikiSearchResponse>,
+    queryKey: ["wiki", "search", query, mode, limit],
+    queryFn: () =>
+      api.wikiSearch({ query, limit, mode }) as Promise<WikiSearchResponse>,
     enabled: opts?.enabled ?? !!query,
   });
 }

@@ -109,7 +109,7 @@ export const api = {
   graph: (q: { node_id: string; depth?: number; relation?: string }) =>
     jfetch<unknown>("/api/graph", { method: "POST", body: JSON.stringify(q) }),
 
-  wikiSearch: (q: { query: string; limit?: number }) =>
+  wikiSearch: (q: { query: string; limit?: number; mode?: "keyword" | "semantic" | "hybrid" }) =>
     jfetch<unknown>("/api/wiki", { method: "POST", body: JSON.stringify(q) }),
 
   /** vault/wiki/projects/*.md 실존 페이지 목록. (sessions DB 의 distinct project 와 별개) */
