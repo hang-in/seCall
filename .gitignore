@@ -16,3 +16,6 @@ web/node_modules/
 docs/agents/agents.disabled/
 docs/agents/*.pre-sentinel
 docs/agentSessionHistory.md
+
+# scripts 실행 로그 (스크립트 본체는 commit, 결과 로그는 제외)
+scripts/*.log
