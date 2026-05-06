@@ -528,7 +528,32 @@ secall wiki update --backend lmstudio --session <id>
 
 # Check wiki status
 secall wiki status
+
+# Backfill page embeddings for semantic / hybrid wiki search (P40)
+secall wiki vectorize                      # incremental — skips unchanged pages by content_hash
+secall wiki vectorize --force              # full reindex (use after switching embedding model)
+secall wiki vectorize --model bge-m3 \
+    --ollama-url http://localhost:11434    # explicit overrides
 ```
+
+Once `wiki vectorize` has populated `wiki_vectors`, the search side accepts a `mode` parameter (default `keyword` — backward compatible):
+
+```bash
+# Keyword (current behavior, no setup required)
+curl -s -X POST http://localhost:3000/api/wiki \
+  -H 'content-type: application/json' \
+  -d '{"query":"vault auto commit"}'
+
+# Pure semantic (page-level cosine over bge-m3 embeddings)
+curl -s -X POST http://localhost:3000/api/wiki \
+  -d '{"query":"git automation","mode":"semantic"}'
+
+# Hybrid: keyword ∪ semantic, fused with RRF (k=60)
+curl -s -X POST http://localhost:3000/api/wiki \
+  -d '{"query":"git 자동화","mode":"hybrid"}'
+```
+
+If Ollama is down or the embedding call fails, `semantic` and `hybrid` automatically fall back to `keyword` so the endpoint never breaks.
 
 Configure the default backend in `config.toml`:
 
@@ -751,6 +776,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-06 | v0.9.0 | Wiki search hybrid mode (P40): `wiki_vectors` table (DB v9, page-level embeddings via bge-m3 + Ollama), `WikiIndexer` with SHA-256 content-hash for idempotent indexing and orphan cleanup, `do_wiki_search` extended with `mode={keyword\|semantic\|hybrid}` param (default `keyword` — backward compatible) and RRF (k=60) fusion for hybrid, automatic keyword fallback when Ollama is unavailable / embedding fails, new CLI `secall wiki vectorize [--force] [--model bge-m3] [--ollama-url ...]` for one-shot backfill, regression coverage in `tests/{db_migrations,wiki_indexer,wiki_search_modes}.rs` |
 | 2026-05-05 | v0.8.2 | P39 wiki pipeline baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` now uses `git add -A` so SCHEMA.md / graph/ / log/ are all staged (`crates/secall-core/src/vault/git.rs:146`, 8 regression tests in `tests/vault_auto_commit.rs`), `secall` binary autoloads `.env` via `dotenvy::dotenv()` on startup (`crates/secall/src/main.rs:382` — Gemini/OpenAI keys injected automatically), 683-session sync baseline measurement (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` backfilled 28 sessions / 840 edges |
 | 2026-05-03 | v0.8.1 | P38 test gap closure: `tests/rest_routes.rs` (REST 22-endpoint route-level regression, 45 tests) + `tests/session_repo_helpers.rs` (cumulative P32~P37 helper regression, 29 tests) — 74 new P38 tests in total, Insight TES-session_repo findings resolved |
 | 2026-05-03 | v0.8.0 | Graph Sync automation (P37): DB schema v8 (`sessions.semantic_extracted_at` column tracks semantic-extraction state), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (with `extract_one_session_semantic` helper extracted, priority: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, integrated with the P33 single-queue + P36 cancellation), 4th "Graph Rebuild" card on the web UI Commands page + options dialog |
