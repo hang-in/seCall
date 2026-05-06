@@ -33,6 +33,9 @@ pub struct IngestArgs {
     pub force: bool,
     #[serde(default)]
     pub no_semantic: bool,
+    /// vector embedding sub-loop 스킵 (BM25/구조 인덱싱만 수행)
+    #[serde(default)]
+    pub no_embed: bool,
     /// ingest 후 신규 세션을 graph에 자동 증분 추가 (기본: false)
     #[serde(default)]
     pub auto_graph: bool,
@@ -89,6 +92,7 @@ pub async fn run(
     min_turns: usize,
     force: bool,
     no_semantic: bool,
+    no_embed: bool,
     auto_graph: bool,
     format: &OutputFormat,
 ) -> Result<()> {
@@ -101,7 +105,11 @@ pub async fn run(
     // Build search engine (BM25 + optional vector)
     let tok = create_tokenizer(&config.search.tokenizer)
         .map_err(|e| anyhow!("tokenizer init failed: {e}"))?;
-    let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
+    let vector_indexer = if no_embed {
+        None
+    } else {
+        secall_core::search::vector::create_vector_indexer(&config).await
+    };
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     // Collect paths to ingest
@@ -121,6 +129,7 @@ pub async fn run(
         min_turns,
         force,
         no_semantic,
+        no_embed,
         format,
         None,
     )
@@ -213,6 +222,7 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
         min_turns,
         force,
         no_semantic,
+        no_embed,
         auto_graph,
     } = args;
 
@@ -224,7 +234,11 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
 
     let tok = create_tokenizer(&config.search.tokenizer)
         .map_err(|e| anyhow!("tokenizer init failed: {e}"))?;
-    let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
+    let vector_indexer = if no_embed {
+        None
+    } else {
+        secall_core::search::vector::create_vector_indexer(&config).await
+    };
     let engine = SearchEngine::new(Bm25Indexer::new(tok), vector_indexer);
 
     // ── detect phase ──
@@ -256,6 +270,7 @@ pub async fn run_with_progress(args: IngestArgs, sink: &dyn ProgressSink) -> Res
         min_turns,
         force,
         no_semantic,
+        no_embed,
         &OutputFormat::Text,
         Some(sink),
     )
@@ -351,6 +366,7 @@ pub async fn ingest_sessions(
     min_turns: usize,
     force: bool,
     no_semantic: bool,
+    no_embed: bool,
     format: &OutputFormat,
     sink: Option<&dyn ProgressSink>,
 ) -> Result<IngestStats> {
@@ -559,7 +575,15 @@ pub async fn ingest_sessions(
     }
 
     // 벡터 인덱싱 일괄 처리 (BM25/vault와 분리하여 체감 속도 개선)
-    if !vector_tasks.is_empty() {
+    if no_embed && !vector_tasks.is_empty() {
+        eprintln!(
+            "Skipping vector embedding for {} session(s) (--no-embed)",
+            vector_tasks.len()
+        );
+        // 후속 semantic / wiki 단계가 길어질 수 있어 사용 끝난 핸들 즉시 해제.
+        vector_tasks.clear();
+    }
+    if !no_embed && !vector_tasks.is_empty() {
         let total = vector_tasks.len();
         eprintln!("Embedding {total} session(s)...");
         let tz = config.timezone();

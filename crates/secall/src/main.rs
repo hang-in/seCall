@@ -54,6 +54,10 @@ enum Commands {
         #[arg(long)]
         no_semantic: bool,
 
+        /// Skip vector embedding (BM25/structure indexing only). Run `secall embed` separately to fill in vectors later.
+        #[arg(long)]
+        no_embed: bool,
+
         /// Automatically run graph incremental extraction for new sessions after ingest
         #[arg(long)]
         auto_graph: bool,
@@ -204,6 +208,10 @@ enum Commands {
         /// Skip graph incremental extraction (default: enabled)
         #[arg(long)]
         no_graph: bool,
+
+        /// Skip vector embedding during ingest phase (BM25/structure indexing only). Run `secall embed` separately to fill in vectors later.
+        #[arg(long)]
+        no_embed: bool,
     },
 
     /// Rebuild DB index from vault markdown files
@@ -423,6 +431,7 @@ async fn main() -> anyhow::Result<()> {
             min_turns,
             force,
             no_semantic,
+            no_embed,
             auto_graph,
         } => {
             commands::ingest::run(
@@ -432,6 +441,7 @@ async fn main() -> anyhow::Result<()> {
                 min_turns,
                 force,
                 no_semantic,
+                no_embed,
                 auto_graph,
                 &cli.format,
             )
@@ -519,8 +529,17 @@ async fn main() -> anyhow::Result<()> {
             no_wiki,
             no_semantic,
             no_graph,
+            no_embed,
         } => {
-            commands::sync::run(local_only, dry_run, no_wiki, no_semantic, no_graph).await?;
+            commands::sync::run(
+                local_only,
+                dry_run,
+                no_wiki,
+                no_semantic,
+                no_graph,
+                no_embed,
+            )
+            .await?;
         }
         Commands::Reindex { from_vault } => {
             commands::reindex::run(from_vault)?;
