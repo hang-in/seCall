@@ -237,7 +237,14 @@ impl Database {
         Ok(count as usize)
     }
 
-    /// Sessions that have no rows in turn_vectors
+    /// Sessions with at least one turn missing a vector row.
+    ///
+    /// Anti-joins `turns` against `turn_vectors` on `(session_id, turn_index)`,
+    /// so this catches both fully-unembedded sessions (zero-vec) and partially
+    /// embedded sessions (some turns committed, others missing — e.g. after
+    /// transient embedder failures).
+    ///
+    /// Sessions with zero rows in `turns` are not returned (nothing to embed).
     pub fn find_sessions_without_vectors(&self) -> Result<Vec<String>> {
         let table_exists: i64 = self.conn().query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
@@ -246,13 +253,41 @@ impl Database {
         )?;
 
         let query = if table_exists == 0 {
-            "SELECT id FROM sessions"
+            "SELECT DISTINCT session_id FROM turns"
         } else {
-            "SELECT id FROM sessions WHERE id NOT IN (SELECT DISTINCT session_id FROM turn_vectors)"
+            "SELECT DISTINCT session_id FROM turns AS t \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM turn_vectors AS v \
+                 WHERE v.session_id = t.session_id AND v.turn_index = t.turn_index \
+             )"
         };
 
         let mut stmt = self.conn().prepare(query)?;
         let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Existing `(turn_index, chunk_seq)` pairs already in `turn_vectors` for
+    /// the given session. Used by `index_session` to skip already-embedded
+    /// chunks (turn-incremental healing).
+    pub fn get_session_chunk_keys(
+        &self,
+        session_id: &str,
+    ) -> Result<std::collections::HashSet<(u32, u32)>> {
+        let table_exists: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
+            [],
+            |r| r.get(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(std::collections::HashSet::new());
+        }
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT turn_index, chunk_seq FROM turn_vectors WHERE session_id = ?1")?;
+        let rows = stmt.query_map([session_id], |row| {
+            Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u32))
+        })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
@@ -273,5 +308,133 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ingest::{AgentKind, Role, Session, TokenUsage, Turn};
+    use crate::store::db::Database;
+    use crate::store::{SessionRepo, VectorRepo};
+    use chrono::TimeZone;
+
+    fn make_session(id: &str) -> Session {
+        Session {
+            id: id.to_string(),
+            agent: AgentKind::ClaudeCode,
+            model: None,
+            project: None,
+            cwd: None,
+            git_branch: None,
+            host: None,
+            start_time: chrono::Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap(),
+            end_time: None,
+            turns: vec![],
+            total_tokens: TokenUsage::default(),
+            session_type: "interactive".to_string(),
+        }
+    }
+
+    fn make_turn(idx: u32) -> Turn {
+        Turn {
+            index: idx,
+            role: Role::User,
+            timestamp: None,
+            content: format!("turn {idx} content"),
+            actions: vec![],
+            tokens: None,
+            thinking: None,
+            is_sidechain: false,
+        }
+    }
+
+    /// 한 세션이 일부 turn에만 vector를 가진 경우, anti-join 기반 detection이
+    /// 그 세션을 healing 대상으로 잡아야 한다 (partial commit 잔여분 healing).
+    #[test]
+    fn test_find_sessions_without_vectors_detects_partial() {
+        let db = Database::open_memory().unwrap();
+        db.init_vector_table().unwrap();
+        db.insert_session(&make_session("partial")).unwrap();
+        db.insert_turn("partial", &make_turn(0)).unwrap();
+        db.insert_turn("partial", &make_turn(1)).unwrap();
+        db.insert_turn("partial", &make_turn(2)).unwrap();
+
+        // turn 0, 1만 임베딩됨 — turn 2 누락
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "partial", 0, 0, "test")
+            .unwrap();
+        db.insert_vector(&[0.0_f32, 1.0, 0.0], "partial", 1, 0, "test")
+            .unwrap();
+
+        let sessions = db.find_sessions_without_vectors().unwrap();
+        assert!(
+            sessions.contains(&"partial".to_string()),
+            "partial session must be returned, got {:?}",
+            sessions
+        );
+    }
+
+    /// 모든 turn에 vector가 있는 세션은 healing 대상에서 제외.
+    #[test]
+    fn test_find_sessions_without_vectors_excludes_complete() {
+        let db = Database::open_memory().unwrap();
+        db.init_vector_table().unwrap();
+        db.insert_session(&make_session("complete")).unwrap();
+        db.insert_turn("complete", &make_turn(0)).unwrap();
+        db.insert_turn("complete", &make_turn(1)).unwrap();
+
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "complete", 0, 0, "test")
+            .unwrap();
+        db.insert_vector(&[0.0_f32, 1.0, 0.0], "complete", 1, 0, "test")
+            .unwrap();
+
+        let sessions = db.find_sessions_without_vectors().unwrap();
+        assert!(
+            !sessions.contains(&"complete".to_string()),
+            "complete session must be excluded, got {:?}",
+            sessions
+        );
+    }
+
+    /// Vector가 전혀 없는 세션도 잡힌다 (zero-vec — 기존 동작 유지).
+    #[test]
+    fn test_find_sessions_without_vectors_detects_zero() {
+        let db = Database::open_memory().unwrap();
+        db.init_vector_table().unwrap();
+        db.insert_session(&make_session("zero")).unwrap();
+        db.insert_turn("zero", &make_turn(0)).unwrap();
+
+        let sessions = db.find_sessions_without_vectors().unwrap();
+        assert!(sessions.contains(&"zero".to_string()));
+    }
+
+    /// `get_session_chunk_keys`는 해당 세션의 `(turn_index, chunk_seq)` 집합을
+    /// 정확히 반환해 turn-incremental 호출자가 누락 chunk만 골라내도록 한다.
+    #[test]
+    fn test_get_session_chunk_keys_returns_existing_pairs() {
+        let db = Database::open_memory().unwrap();
+        db.init_vector_table().unwrap();
+        db.insert_vector(&[1.0_f32, 0.0, 0.0], "A", 0, 0, "test")
+            .unwrap();
+        db.insert_vector(&[0.0_f32, 1.0, 0.0], "A", 0, 1, "test")
+            .unwrap();
+        db.insert_vector(&[0.0_f32, 0.0, 1.0], "A", 1, 0, "test")
+            .unwrap();
+        // Different session — must not leak in
+        db.insert_vector(&[1.0_f32, 1.0, 0.0], "B", 0, 0, "test")
+            .unwrap();
+
+        let keys = db.get_session_chunk_keys("A").unwrap();
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&(0, 0)));
+        assert!(keys.contains(&(0, 1)));
+        assert!(keys.contains(&(1, 0)));
+        assert!(!keys.contains(&(1, 1)));
+
+        let other = db.get_session_chunk_keys("B").unwrap();
+        assert_eq!(other.len(), 1);
+        assert!(other.contains(&(0, 0)));
+
+        let empty = db.get_session_chunk_keys("missing").unwrap();
+        assert!(empty.is_empty());
     }
 }

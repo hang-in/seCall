@@ -69,21 +69,65 @@ impl VectorIndexer {
         Ok(())
     }
 
+    /// Index a session's vectors, turn-incrementally.
+    ///
+    /// Skips chunks whose `(turn_index, chunk_seq)` already exists in
+    /// `turn_vectors` for this session, and INSERTs only the missing ones.
+    /// No DELETE step — already-embedded turns are preserved across calls,
+    /// so partial commits from prior failures get healed without re-embedding
+    /// the entire session. Re-running with no input changes is a no-op.
+    ///
+    /// Callers that need a wholesale rebuild (e.g. model change) should call
+    /// `db.delete_session_vectors(session_id)` first.
+    /// Cheap dry-run check: does this session have any chunk that would need
+    /// to be embedded? Used by `secall embed` to pre-filter no-op sessions
+    /// (already fully embedded, or every turn is chunker-skip) so the actual
+    /// embed pass shows accurate `[i/total]` progress instead of iterating
+    /// over thousands of fast no-ops.
+    ///
+    /// No DB write, no network — just chunker + a single indexed SELECT.
+    pub fn has_pending_chunks(
+        &self,
+        db: &Database,
+        session: &Session,
+        tz: chrono_tz::Tz,
+    ) -> Result<bool> {
+        let all_chunks = chunk_session(session, tz);
+        if all_chunks.is_empty() {
+            return Ok(false);
+        }
+        let existing_keys = db.get_session_chunk_keys(&session.id)?;
+        Ok(all_chunks
+            .iter()
+            .any(|c| !existing_keys.contains(&(c.turn_index, c.seq))))
+    }
+
     pub async fn index_session(
         &self,
         db: &Database,
         session: &Session,
         tz: chrono_tz::Tz,
     ) -> Result<IndexStats> {
-        let chunks = chunk_session(session, tz);
+        let all_chunks = chunk_session(session, tz);
 
         // Ensure vector table exists
         db.init_vector_table()?;
 
+        // Filter out chunks already embedded for this session.
+        let existing_keys = db.get_session_chunk_keys(&session.id)?;
+        let pending_chunks: Vec<&super::chunker::Chunk> = all_chunks
+            .iter()
+            .filter(|c| !existing_keys.contains(&(c.turn_index, c.seq)))
+            .collect();
+
+        if pending_chunks.is_empty() {
+            return Ok(IndexStats::default());
+        }
+
         // Phase 1: 임베딩 계산 — 트랜잭션 밖에서 수행 (CPU 시간 동안 DB lock 없음)
-        let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+        let texts: Vec<&str> = pending_chunks.iter().map(|c| c.text.as_str()).collect();
         let batch_size = self.batch_size;
-        let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; chunks.len()];
+        let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; pending_chunks.len()];
         let mut embed_errors = 0usize;
 
         for (batch_idx, text_batch) in texts.chunks(batch_size).enumerate() {
@@ -139,13 +183,14 @@ impl VectorIndexer {
             }
         }
 
-        // 유효한 임베딩이 하나도 없으면 실패, 부분 성공은 허용
+        // 유효한 임베딩이 하나도 없으면 실패, 부분 성공은 허용 — 나머지는 다음
+        // cycle에서 turn-incremental하게 채워진다.
         let valid_count = embeddings.iter().filter(|e| e.is_some()).count();
-        if valid_count == 0 && !chunks.is_empty() {
+        if valid_count == 0 && !pending_chunks.is_empty() {
             return Err(anyhow::anyhow!(
                 "session {} embedding completely failed: 0/{} chunks embedded",
                 &session.id,
-                chunks.len()
+                pending_chunks.len()
             ));
         }
 
@@ -154,23 +199,18 @@ impl VectorIndexer {
                 session_id = %session.id,
                 embedded = valid_count,
                 skipped = embed_errors,
-                total = chunks.len(),
-                "partial embedding — some chunks skipped"
+                pending = pending_chunks.len(),
+                total = all_chunks.len(),
+                "partial embedding — some chunks skipped (will retry next cycle)"
             );
         }
 
-        // Phase 2: DELETE + INSERT — 세션 단위 트랜잭션으로 원자성 보장
-        // INSERT 실패 시 클로저에서 Err 반환 → with_transaction이 ROLLBACK
-        // 중단 시 트랜잭션 미커밋 → DELETE도 롤백 → 기존 상태 유지
+        // Phase 2: INSERT only — DELETE 단계 없음. 이미 임베딩된 chunk는 보존되므로
+        // partial commit이 발생해도 다음 호출이 잔여분만 채운다 (turn-incremental).
         let mut chunks_embedded = 0usize;
 
         db.with_transaction(|| {
-            let deleted = db.delete_session_vectors(&session.id)?;
-            if deleted > 0 {
-                tracing::info!(session_id = %session.id, deleted, "cleaned up partial vectors");
-            }
-
-            for (chunk, emb_opt) in chunks.iter().zip(embeddings.iter()) {
+            for (chunk, emb_opt) in pending_chunks.iter().zip(embeddings.iter()) {
                 if let Some(embedding) = emb_opt {
                     let _rowid = db.insert_vector(
                         embedding,
