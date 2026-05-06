@@ -110,10 +110,12 @@ task_id: 03
 
 ## 6. 후속 액션
 
-- (보류 결정) 외부 컨트리뷰터에게 본 측정 데이터 + 보류 근거 회신 (Task 04 답변 초안)
-- wiki_search 호출 카운터 (DB column 추가 또는 access log) — P40 재평가 위한 데이터 수집 인프라. 별도 phase 후보 (~1일 작업)
-- 6 개월 cron 재측정 또는 페이지 수 50 도달 시 본 보고서 갱신 (`docs/baseline/p39-p40-decision.md` 새 버전)
-- (즉시 진행 시 — 해당 없음) P40 plan-proposal 초안: chunker 재사용, embedding backend Ollama bge-m3, DB v9 `wiki_vectors`, hybrid mode
+> 결정: **P40 즉시 진행**. 이전 "보류" 분기 액션은 제거됨.
+
+- 외부 컨트리뷰터에게 본 측정 데이터 + 즉시 진행 결정 회신 (Task 04 답변 초안 `docs/community/p39-wiki-vector-response.md`)
+- P40 plan-proposal 초안: chunker 재사용, embedding backend Ollama bge-m3, DB v9 `wiki_vectors`, hybrid mode (`?mode={keyword|semantic|hybrid}`)
+- (선택) wiki_search 호출 카운터 (DB column 추가 또는 access log) — P40 효과 측정 / 향후 chunker 분리 결정 인프라. 별도 phase 후보 (~1일 작업)
+- 6 개월 후 또는 페이지 수 50 도달 시 본 보고서 갱신 (`docs/baseline/p39-p40-decision.md` 새 버전) — chunker 분리 phase 진입 시점 판단 위함
 
 ---
 

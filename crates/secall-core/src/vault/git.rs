@@ -163,9 +163,9 @@ impl<'a> VaultGit<'a> {
 
         let committed = changes.lines().count();
 
-        // raw/, wiki/ 외에 vault 루트 메타데이터(index.md, log.md)도 함께 stage.
-        // vault.write_session()은 index.md와 log.md를 갱신하므로 누락 시 원격 상태 불일치.
-        self.run_git(&["add", "raw/", "wiki/", "index.md", "log.md"])?;
+        // vault 디렉터리 안의 모든 변경을 stage (auto_commit 과 동일 패턴).
+        // 신규 dir (graph/, log/) 및 파일 (SCHEMA.md) 도 누락 없이 포착. .gitignore 안전망.
+        self.run_git(&["add", "-A"])?;
         self.run_git(&["commit", "-m", message])?;
         self.run_git(&["push", "origin", &self.branch])?;
 

@@ -1,9 +1,12 @@
-//! Regression tests for `VaultGit::auto_commit`.
+//! Regression tests for `VaultGit::auto_commit` + `VaultGit::push`.
 //!
 //! 배경: 기존 `auto_commit` 가 `git add raw/ wiki/ index.md log.md .gitignore`
 //! 명시 패턴을 사용했는데, vault 의 신규 디렉터리(`graph/`, `log/`)나
 //! 신규 top-level 파일(`SCHEMA.md`)을 stage 하지 못해 pull rebase 가 실패했다.
 //! P39 Task 00 에서 `git add -A` 로 단순화. 본 파일은 그 회귀 테스트.
+//!
+//! P39 리뷰 권고 (rework): `push()` 도 동일 명시 패턴이라 같은 회귀를 유발했음.
+//! 같은 fix 가 push() 에도 적용됐는지 별도 검증 (bare remote 사용).
 
 use std::path::Path;
 use std::process::Command;
@@ -170,6 +173,115 @@ fn test_auto_commit_non_git_dir_returns_false() {
     let git = VaultGit::new(dir.path(), "main");
     let committed = git.auto_commit().expect("auto_commit");
     assert!(!committed);
+}
+
+// ─── push() 회귀 — bare remote 로 commit + push 함께 검증 ───────────────────
+
+/// `init_repo_with_initial_commit` + `git init --bare` remote + `push -u origin main`.
+/// 반환된 두 TempDir 는 호출부에서 alive 유지 (drop 시 cleanup).
+fn init_repo_with_bare_remote() -> (TempDir, TempDir) {
+    let remote = TempDir::new().expect("remote tempdir");
+    run(remote.path(), &["init", "--bare"]);
+
+    let work = init_repo_with_initial_commit();
+    let url = remote.path().to_str().expect("remote utf8");
+    run(work.path(), &["remote", "add", "origin", url]);
+    run(work.path(), &["push", "-u", "origin", "main"]);
+
+    (work, remote)
+}
+
+/// bare remote 의 main 브랜치 트리에 있는 파일 경로 목록 (개행 분리).
+/// `git init --bare` 의 default HEAD 가 main 을 안 가리킬 수 있어 ref 직접 지정.
+fn remote_head_files(remote: &Path) -> String {
+    let out = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "refs/heads/main"])
+        .current_dir(remote)
+        .output()
+        .expect("git ls-tree");
+    assert!(
+        out.status.success(),
+        "ls-tree failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("utf8")
+}
+
+#[test]
+fn test_push_stages_new_dirs_and_top_level_files() {
+    // 핵심 회귀: 명시 패턴 (raw/ wiki/ index.md log.md) 외 경로도 push() 가 모두 포함.
+    let (work, remote) = init_repo_with_bare_remote();
+    let wp = work.path();
+
+    write(wp, "graph/edges.json", "{}\n");
+    write(wp, "SCHEMA.md", "# v1\n");
+    write(wp, "log/2026-05-06.md", "log entry\n");
+
+    let git = VaultGit::new(wp, "main");
+    let result = git
+        .push("regression: ensure new dirs+files captured")
+        .expect("push");
+    assert!(
+        result.committed > 0,
+        "expected committed > 0, got {}",
+        result.committed
+    );
+    assert!(
+        porcelain(wp).trim().is_empty(),
+        "local should be clean after push; status: {:?}",
+        porcelain(wp)
+    );
+
+    let remote_files = remote_head_files(remote.path());
+    assert!(
+        remote_files.contains("graph/edges.json"),
+        "graph/edges.json not pushed: {remote_files}"
+    );
+    assert!(
+        remote_files.contains("SCHEMA.md"),
+        "SCHEMA.md not pushed: {remote_files}"
+    );
+    assert!(
+        remote_files.contains("log/2026-05-06.md"),
+        "log/2026-05-06.md not pushed: {remote_files}"
+    );
+}
+
+#[test]
+fn test_push_stages_deletions() {
+    // 삭제도 git add -A 로 잡혀야 remote 에 반영됨 (예전 명시 패턴은 신규 dir 만 누락이 아니라
+    // top-level 삭제도 누락 가능했음).
+    let (work, remote) = init_repo_with_bare_remote();
+    let wp = work.path();
+
+    write(wp, "wiki/topic.md", "topic\n");
+    run(wp, &["add", "wiki/topic.md"]);
+    run(wp, &["commit", "-m", "add topic"]);
+    run(wp, &["push", "origin", "main"]);
+
+    std::fs::remove_file(wp.join("wiki/topic.md")).expect("rm topic");
+
+    let git = VaultGit::new(wp, "main");
+    let result = git.push("regression: deletion captured").expect("push");
+    assert!(
+        result.committed > 0,
+        "deletion should produce committed > 0"
+    );
+    assert!(porcelain(wp).trim().is_empty(), "local should be clean");
+
+    let remote_files = remote_head_files(remote.path());
+    assert!(
+        !remote_files.contains("wiki/topic.md"),
+        "deletion should be reflected on remote: {remote_files}"
+    );
+}
+
+#[test]
+fn test_push_no_changes_returns_committed_zero() {
+    let (work, _remote) = init_repo_with_bare_remote();
+    let git = VaultGit::new(work.path(), "main");
+    let result = git.push("noop").expect("push");
+    assert_eq!(result.committed, 0, "clean repo should report 0 committed");
 }
 
 #[test]
