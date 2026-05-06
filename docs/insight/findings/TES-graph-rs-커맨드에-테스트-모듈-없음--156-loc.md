@@ -3,7 +3,7 @@
 - **Category**: test
 - **Severity**: minor
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall/src/commands/graph.rs:28
 
 ## Description

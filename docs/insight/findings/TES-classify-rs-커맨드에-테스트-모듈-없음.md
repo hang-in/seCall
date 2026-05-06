@@ -4,20 +4,22 @@
 - **Severity**: minor
 - **Fix Difficulty**: guided
 - **Status**: open
-- **File**: crates/secall/src/commands/classify.rs:25
+- **File**: crates/secall/src/commands/classify.rs:55
 
 ## Description
 
-classify.rs의 `run_backfill` 함수는 `ingest.rs`의 `CompiledRule`과 `apply_classification`을 재사용하므로 핵심 로직은 `ingest.rs` 테스트에서 커버됩니다. 그러나 backfill 특유의 흐름(전체 세션 순회, dry_run 분기)은 테스트되지 않습니다. ingest.rs에 이미 10개의 분류 테스트가 있어 severity는 minor로 판단합니다.
+run_backfill의 핵심 분류 로직(apply_classification)은 ingest.rs 테스트 9개로 잘 커버되어 있습니다. 그러나 classify.rs 자체의 dry_run 분기(eprintln만 하고 DB 미갱신), regex 컴파일 실패 시 조기 반환, updated 카운트 집계 로직은 별도 테스트가 없습니다. dry_run=true일 때 DB가 실제로 변경되지 않는다는 보장을 코드로 검증할 수 없습니다.
 
-**Evidence**: `let compiled_rules: Vec<super::ingest::CompiledRule> = classification
-    .rules
-    .iter()
-    .map(|rule| { ... })
-    .collect::<anyhow::Result<_>>()?;`
+**Evidence**: `if dry_run {
+    eprintln!("  [dry-run] {} → {}", short_id, new_type);
+} else {
+    db.update_session_type(session_id, &new_type)?;
+    tracing::debug!(session = short_id, session_type = new_type, "classified");
+}
+updated += 1;`
 
 ## Snippet
 
 ```
-pub async fn run_backfill(dry_run: bool) -> Result<()> { ... }
+// #[cfg(test)] 모듈 없음 (72줄 전체)
 ```

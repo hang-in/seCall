@@ -3,7 +3,7 @@
 - **Category**: test
 - **Severity**: major
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall/src/commands/log.rs:29
 
 ## Description

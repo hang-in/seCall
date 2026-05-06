@@ -3,7 +3,7 @@
 - **Category**: stability
 - **Severity**: major
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall-core/src/graph/build.rs:76
 
 ## Description

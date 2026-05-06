@@ -3,7 +3,7 @@
 - **Category**: test
 - **Severity**: minor
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall-core/src/store/db.rs:658
 
 ## Description
