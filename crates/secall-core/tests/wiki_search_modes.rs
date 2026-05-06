@@ -10,10 +10,11 @@ use secall_core::{
     store::{Database, WikiVectorRepo},
 };
 use serde_json::json;
+use tokio::sync::Mutex as TokioMutex;
 
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+fn env_lock() -> &'static TokioMutex<()> {
+    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| TokioMutex::new(()))
 }
 
 fn make_server(vault_path: &std::path::Path, db: Database) -> SeCallMcpServer {
@@ -85,7 +86,7 @@ fn test_keyword_mode_default_when_mode_none() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_semantic_mode_returns_results() {
-    let _guard = env_lock().lock().expect("env lock");
+    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
@@ -126,7 +127,7 @@ async fn test_semantic_mode_returns_results() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hybrid_mode_combines_both() {
-    let _guard = env_lock().lock().expect("env lock");
+    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
@@ -186,9 +187,9 @@ async fn test_hybrid_mode_combines_both() {
         .any(|path| path == "wiki/projects/semantic-hit.md"));
 }
 
-#[test]
-fn test_semantic_fallback_on_embed_failure() {
-    let _guard = env_lock().lock().expect("env lock");
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_semantic_fallback_on_embed_failure() {
+    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
