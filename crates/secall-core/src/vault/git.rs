@@ -142,8 +142,8 @@ impl<'a> VaultGit<'a> {
             "auto-committing unstaged vault changes before pull"
         );
 
-        // vault 관련 파일만 stage (raw/, wiki/, index.md, log.md, .gitignore)
-        self.run_git(&["add", "raw/", "wiki/", "index.md", "log.md", ".gitignore"])?;
+        // vault 디렉터리 안의 모든 변경을 stage (신규 dir 포함, .gitignore 가 안전망).
+        self.run_git(&["add", "-A"])?;
         self.run_git(&["commit", "-m", "auto: uncommitted vault changes"])?;
 
         Ok(true)

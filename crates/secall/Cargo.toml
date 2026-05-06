@@ -25,6 +25,7 @@ reqwest = { version = "0.12", features = ["json"] }
 regex.workspace = true
 async-trait.workspace = true
 kiwi-rs.workspace = true
+dotenvy.workspace = true
 
 [features]
 default = ["web-ui"]
