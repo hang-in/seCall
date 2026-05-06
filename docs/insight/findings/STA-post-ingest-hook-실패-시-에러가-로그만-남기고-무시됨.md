@@ -3,7 +3,7 @@
 - **Category**: stability
 - **Severity**: major
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall/src/commands/ingest.rs:603
 
 ## Description

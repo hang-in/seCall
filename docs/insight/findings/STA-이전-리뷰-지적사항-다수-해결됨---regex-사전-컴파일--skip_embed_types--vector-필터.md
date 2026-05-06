@@ -3,7 +3,7 @@
 - **Category**: stability
 - **Severity**: info
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: crates/secall/src/commands/classify.rs:30
 
 ## Description

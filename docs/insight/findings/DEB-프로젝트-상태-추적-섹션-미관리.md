@@ -3,7 +3,7 @@
 - **Category**: debt
 - **Severity**: info
 - **Fix Difficulty**: guided
-- **Status**: open
+- **Status**: in_progress
 - **File**: CLAUDE.md:94
 
 ## Description
