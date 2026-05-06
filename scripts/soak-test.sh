@@ -34,19 +34,23 @@ fi
 
 section "2. cargo test (secall-core)"
 # exit code 우선 — 텍스트 파싱은 Rust 버전마다 달라 fragile.
-# 카운트는 부가 정보로만 표시.
-if cargo test --package secall-core >>"$LOG" 2>&1; then
-  CORE_PASSED=$(grep "^test result:" "$LOG" | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "?")
+# 출력을 변수에 직접 캡처해서 다른 cargo 호출의 summary 와 섞이지 않게 함.
+if CORE_OUT=$(cargo test --package secall-core 2>&1); then
+  echo "$CORE_OUT" >> "$LOG"
+  CORE_PASSED=$(echo "$CORE_OUT" | grep -E "^test result:.*passed" | grep -oE '[0-9]+ passed' | head -1 | grep -oE '[0-9]+' || echo "?")
   pass "secall-core: ${CORE_PASSED} passed"
 else
+  echo "$CORE_OUT" >> "$LOG"
   fail "secall-core: cargo test exited non-zero"
 fi
 
 section "3. cargo test (secall CLI)"
-if cargo test --package secall >>"$LOG" 2>&1; then
-  CLI_PASSED=$(grep "^test result:" "$LOG" | tail -1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "?")
+if CLI_OUT=$(cargo test --package secall 2>&1); then
+  echo "$CLI_OUT" >> "$LOG"
+  CLI_PASSED=$(echo "$CLI_OUT" | grep -E "^test result:.*passed" | grep -oE '[0-9]+ passed' | head -1 | grep -oE '[0-9]+' || echo "?")
   pass "secall CLI: ${CLI_PASSED} passed"
 else
+  echo "$CLI_OUT" >> "$LOG"
   fail "secall CLI: cargo test exited non-zero"
 fi
 
@@ -261,7 +265,7 @@ fi
 
 # ─── 정리 ───────────────────────────────────────────────────
 
-kill $SERVER_PID 2>/dev/null || true
+# 서버 종료는 line 78 에서 등록한 EXIT trap 이 처리.
 
 section "SUMMARY"
 log "Total: $TOTAL tests, $PASS passed, $FAIL failed"
