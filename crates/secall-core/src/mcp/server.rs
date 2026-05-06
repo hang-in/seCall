@@ -341,7 +341,8 @@ impl SeCallMcpServer {
                 Err(_) => continue,
             };
             let path = entry.path();
-            if !path.extension().map(|e| e == "md").unwrap_or(false) {
+            // `.md` 확장자를 가진 디렉토리가 들어올 가능성 차단 (실제 파일만 통과).
+            if !path.is_file() || !path.extension().map(|e| e == "md").unwrap_or(false) {
                 continue;
             }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {

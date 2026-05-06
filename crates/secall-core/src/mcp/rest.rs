@@ -233,9 +233,12 @@ async fn api_wiki(
 }
 
 async fn api_wiki_list(State(s): State<Arc<SeCallMcpServer>>) -> impl IntoResponse {
-    match s.do_wiki_list() {
-        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
-        Err(e) => error_response(e),
+    // do_wiki_list 는 std::fs::read_dir/metadata 동기 호출을 사용하므로 spawn_blocking 으로 감싸
+    // Tokio 워커 스레드를 차단하지 않게 함.
+    match tokio::task::spawn_blocking(move || s.do_wiki_list()).await {
+        Ok(Ok(json)) => (StatusCode::OK, Json(json)).into_response(),
+        Ok(Err(e)) => error_response(e),
+        Err(e) => error_response(anyhow::anyhow!("wiki_list task join: {e}")),
     }
 }
 

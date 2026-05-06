@@ -30,5 +30,7 @@ export function useStartNode(): string | null {
   // (이후 expand 시엔 backend 응답의 r.node_id 가 이미 prefixed 라 별도 처리 불필요.)
   const raw =
     explicitFromUrl ?? selectedFromStore ?? fallback.data?.items[0]?.id ?? null;
-  return raw ? `session:${raw}` : null;
+  if (!raw) return null;
+  // raw 가 이미 `session:` 접두를 포함한 경우(직접 호출처 등) 중복 접두 방지.
+  return raw.startsWith("session:") ? raw : `session:${raw}`;
 }
