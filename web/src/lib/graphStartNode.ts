@@ -25,9 +25,10 @@ export function useStartNode(): string | null {
     staleTime: 60_000,
   });
 
-  return (
-    explicitFromUrl ??
-    selectedFromStore ??
-    (fallback.data?.items[0]?.id ?? null)
-  );
+  // Backend 의 graph_nodes/edges 는 type prefix 를 포함한 ID(`session:UUID`) 를 사용.
+  // 시작 노드는 항상 session 이므로 raw UUID 에 `session:` 접두를 붙여 backend 와 일치시킨다.
+  // (이후 expand 시엔 backend 응답의 r.node_id 가 이미 prefixed 라 별도 처리 불필요.)
+  const raw =
+    explicitFromUrl ?? selectedFromStore ?? fallback.data?.items[0]?.id ?? null;
+  return raw ? `session:${raw}` : null;
 }

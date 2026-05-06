@@ -324,6 +324,53 @@ impl SeCallMcpServer {
         }))
     }
 
+    /// `vault/wiki/projects/*.md` 디렉토리를 스캔해 실제 존재하는 wiki 페이지 목록 반환.
+    /// 응답 형태: `{ "projects": [{"project": "<safe_name>", "updated": "<rfc3339>"}, ...], "count": N }`
+    /// — secall-web 의 좌측 wiki 리스트가 sessions DB 의 distinct project 가 아닌
+    ///   실제 wiki 페이지 기준으로 표시되도록 분리된 endpoint.
+    pub fn do_wiki_list(&self) -> anyhow::Result<serde_json::Value> {
+        let projects_dir = self.vault_path.join("wiki").join("projects");
+        if !projects_dir.exists() {
+            return Ok(serde_json::json!({"projects": [], "count": 0}));
+        }
+
+        let mut projects: Vec<serde_json::Value> = Vec::new();
+        for entry in std::fs::read_dir(&projects_dir)? {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if !path.extension().map(|e| e == "md").unwrap_or(false) {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let updated = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
+            projects.push(serde_json::json!({
+                "project": stem,
+                "updated": updated,
+            }));
+        }
+
+        projects.sort_by(|a, b| {
+            a["project"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["project"].as_str().unwrap_or(""))
+        });
+
+        let count = projects.len();
+        Ok(serde_json::json!({
+            "projects": projects,
+            "count": count,
+        }))
+    }
+
     pub fn do_wiki_search(&self, params: WikiSearchParams) -> anyhow::Result<serde_json::Value> {
         let mode = params.mode.unwrap_or_default();
         let matches = match mode {

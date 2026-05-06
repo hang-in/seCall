@@ -1,7 +1,6 @@
 import { useNavigate, useParams } from "react-router";
 import { Loader2 } from "lucide-react";
-import { useProjects } from "@/hooks/useSessions";
-import { useWikiPage } from "@/hooks/useWiki";
+import { useWikiList, useWikiPage } from "@/hooks/useWiki";
 import { MarkdownView } from "@/components/MarkdownView";
 
 /**
@@ -17,7 +16,7 @@ export default function WikiRoute() {
   const { project } = useParams<{ project?: string }>();
   const navigate = useNavigate();
 
-  const projectsQuery = useProjects();
+  const projectsQuery = useWikiList();
   const wikiQuery = useWikiPage(project);
 
   return (
@@ -39,22 +38,27 @@ export default function WikiRoute() {
           </div>
         )}
         <div className="divide-y divide-border">
-          {projectsQuery.data?.projects.map((p) => (
+          {projectsQuery.data?.projects.map((item) => (
             <button
-              key={p}
+              key={item.project}
               type="button"
-              onClick={() => navigate(`/wiki/${encodeURIComponent(p)}`)}
+              onClick={() => navigate(`/wiki/${encodeURIComponent(item.project)}`)}
               className={`block w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors ${
-                p === project ? "bg-accent font-medium" : ""
+                item.project === project ? "bg-accent font-medium" : ""
               }`}
             >
-              {p}
+              <div>{item.project}</div>
+              {item.updated && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  {item.updated.slice(0, 10)}
+                </div>
+              )}
             </button>
           ))}
         </div>
         {projectsQuery.data && projectsQuery.data.projects.length === 0 && (
           <div className="p-3 text-xs text-muted-foreground italic">
-            프로젝트가 없습니다
+            위키 페이지가 없습니다 (vault/wiki/projects/*.md)
           </div>
         )}
       </aside>

@@ -112,6 +112,9 @@ export const api = {
   wikiSearch: (q: { query: string; limit?: number }) =>
     jfetch<unknown>("/api/wiki", { method: "POST", body: JSON.stringify(q) }),
 
+  /** vault/wiki/projects/*.md 실존 페이지 목록. (sessions DB 의 distinct project 와 별개) */
+  wikiList: () => jfetch<unknown>("/api/wiki", { method: "GET" }),
+
   /** 단일 위키 페이지 본문. 파일 없으면 HTTP 404 → throw. */
   getWikiPage: (project: string) =>
     jfetch<WikiPage>(`/api/wiki/${encodeURIComponent(project)}`),

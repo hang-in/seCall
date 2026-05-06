@@ -135,7 +135,7 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/recall", post(api_recall))
         .route("/api/get", post(api_get))
         .route("/api/status", get(api_status))
-        .route("/api/wiki", post(api_wiki))
+        .route("/api/wiki", post(api_wiki).get(api_wiki_list))
         .route("/api/wiki/{project}", get(api_wiki_get))
         .route("/api/graph", post(api_graph))
         .route("/api/daily", post(api_daily))
@@ -227,6 +227,13 @@ async fn api_wiki(
     Json(p): Json<WikiSearchParams>,
 ) -> impl IntoResponse {
     match s.do_wiki_search(p) {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn api_wiki_list(State(s): State<Arc<SeCallMcpServer>>) -> impl IntoResponse {
+    match s.do_wiki_list() {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

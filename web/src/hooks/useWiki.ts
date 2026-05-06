@@ -45,3 +45,27 @@ export function useWikiPage(project: string | undefined) {
     retry: false, // 404는 재시도 의미 없음 — 사용자가 다른 프로젝트 누르면 새 쿼리
   });
 }
+
+/**
+ * `vault/wiki/projects/*.md` 실존 페이지 목록 — `GET /api/wiki`.
+ *
+ * 좌측 리스트는 sessions DB 의 distinct project (`/api/projects`) 가 아닌
+ * 실제 wiki 페이지 기준으로 표시해야 클릭 시 404 가 안 남.
+ */
+export interface WikiListItem {
+  project: string;
+  updated: string | null;
+}
+
+export interface WikiListResponse {
+  projects: WikiListItem[];
+  count: number;
+}
+
+export function useWikiList() {
+  return useQuery<WikiListResponse>({
+    queryKey: ["wiki", "list"],
+    queryFn: () => api.wikiList() as Promise<WikiListResponse>,
+    staleTime: 30_000,
+  });
+}
