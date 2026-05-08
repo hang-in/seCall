@@ -49,6 +49,8 @@ type SimLink = SimulationLinkDatum<SimNode>;
 interface Props {
   nodes: NodeData[];
   edges: EdgeData[];
+  /** 표시 안 할 노드 타입 set (예: {"session"} 면 session 만 숨김). 비면 전체 표시. */
+  hiddenTypes?: ReadonlySet<string>;
   onSessionClick?: (id: string) => void;
 }
 
@@ -76,7 +78,21 @@ function baseRadius(type: string): number {
   return BASE_R[type] ?? 3;
 }
 
-export function ObsidianGraph({ nodes, edges, onSessionClick }: Props) {
+export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Props) {
+  // 필터링된 노드/엣지 — 양쪽 노드가 visible 한 엣지만 통과.
+  const filtered = useMemo(() => {
+    if (!hiddenTypes || hiddenTypes.size === 0) return { nodes, edges };
+    const visibleNodes = nodes.filter((n) => !hiddenTypes.has(n.type));
+    const visibleIds = new Set(visibleNodes.map((n) => n.id));
+    const visibleEdges = edges.filter(
+      (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
+    );
+    return { nodes: visibleNodes, edges: visibleEdges };
+  }, [nodes, edges, hiddenTypes]);
+  // 이후 코드는 filtered.nodes / filtered.edges 사용.
+  const fNodes = filtered.nodes;
+  const fEdges = filtered.edges;
+  // 아래 기존 nodes/edges 참조를 이 alias 가 그대로 받도록 사실상 대체.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -96,7 +112,7 @@ export function ObsidianGraph({ nodes, edges, onSessionClick }: Props) {
   const { adjacency, degree } = useMemo(() => {
     const adj = new Map<string, Set<string>>();
     const deg = new Map<string, number>();
-    for (const e of edges) {
+    for (const e of fEdges) {
       if (!adj.has(e.source)) adj.set(e.source, new Set());
       if (!adj.has(e.target)) adj.set(e.target, new Set());
       adj.get(e.source)!.add(e.target);
@@ -105,19 +121,19 @@ export function ObsidianGraph({ nodes, edges, onSessionClick }: Props) {
       deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
     }
     return { adjacency: adj, degree: deg };
-  }, [edges]);
+  }, [fEdges]);
 
   // d3-force simulation: 마운트 시 한 번 ticking 한 뒤 좌표 고정
   const positioned = useMemo(() => {
-    if (nodes.length === 0) return { nodes: [] as SimNode[], edges: [] as SimLink[] };
-    const simNodes: SimNode[] = nodes.map((n) => ({
+    if (fNodes.length === 0) return { nodes: [] as SimNode[], edges: [] as SimLink[] };
+    const simNodes: SimNode[] = fNodes.map((n) => ({
       id: n.id,
       type: n.type,
       label: n.label,
       x: (Math.random() - 0.5) * 100,
       y: (Math.random() - 0.5) * 100,
     }));
-    const simLinks: SimLink[] = edges
+    const simLinks: SimLink[] = fEdges
       .filter((e) => simNodes.some((n) => n.id === e.source) && simNodes.some((n) => n.id === e.target))
       .map((e) => ({ source: e.source, target: e.target }));
 
@@ -137,7 +153,7 @@ export function ObsidianGraph({ nodes, edges, onSessionClick }: Props) {
     // pre-tick to settle
     for (let i = 0; i < 300; i++) sim.tick();
     return { nodes: simNodes, edges: simLinks };
-  }, [nodes, edges]);
+  }, [fNodes, fEdges]);
 
   const radius = (n: SimNode): number => {
     const d = degree.get(n.id) ?? 0;

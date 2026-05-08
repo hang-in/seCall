@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,6 +31,7 @@ interface GraphApiResult {
 export default function GraphRoute() {
   const startNodeId = useStartNode();
   const navigate = useNavigate();
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error } = useQuery<GraphApiResult>({
     queryKey: ["graph", "expand", startNodeId, 2],
@@ -99,45 +101,138 @@ export default function GraphRoute() {
         <ObsidianGraph
           nodes={uniqueNodes}
           edges={edges}
+          hiddenTypes={hiddenTypes}
           onSessionClick={(sid) => navigate(`/sessions/${encodeURIComponent(sid)}`)}
         />
       </div>
-      <aside className="w-[260px] shrink-0 border-l border-hairline bg-[var(--surface)] p-ds-4 overflow-auto">
-        <div className="space-y-ds-4">
-          <section>
-            <div className="eyebrow mb-ds-2">Filters</div>
-            <div className="text-t-meta text-text-3 italic">
-              (다음 단계에서 type 별 toggle 추가)
-            </div>
-          </section>
-          <section>
-            <div className="eyebrow mb-ds-2">Stats</div>
-            <div className="space-y-ds-1 text-t-small text-text-2">
-              <div className="flex items-center justify-between">
-                <span>Nodes</span>
-                <span className="font-mono text-text-3 tabular-nums">
-                  {uniqueNodes.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Edges</span>
-                <span className="font-mono text-text-3 tabular-nums">{edges.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Depth</span>
-                <span className="font-mono text-text-3 tabular-nums">{data.depth}</span>
-              </div>
-            </div>
-          </section>
-          <section>
-            <div className="eyebrow mb-ds-2">Start</div>
-            <div className="font-mono text-t-mono text-text-3 break-all">
-              {startNodeId}
-            </div>
-          </section>
-        </div>
-      </aside>
+      <GraphSidebar
+        nodes={uniqueNodes}
+        edges={edges}
+        hiddenTypes={hiddenTypes}
+        onToggleType={(t) =>
+          setHiddenTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(t)) next.delete(t);
+            else next.add(t);
+            return next;
+          })
+        }
+        startNodeId={startNodeId}
+        depth={data.depth}
+      />
     </div>
+  );
+}
+
+interface SidebarProps {
+  nodes: Array<{ id: string; type: string; label?: string }>;
+  edges: Array<{ source: string; target: string }>;
+  hiddenTypes: Set<string>;
+  onToggleType: (t: string) => void;
+  startNodeId: string;
+  depth: number;
+}
+
+const TYPE_DOT: Record<string, string> = {
+  project: "var(--accent)",
+  topic: "var(--info)",
+  agent: "var(--success)",
+  tool: "var(--warn)",
+  session: "var(--text-3)",
+};
+
+function GraphSidebar({
+  nodes,
+  edges,
+  hiddenTypes,
+  onToggleType,
+  startNodeId,
+  depth,
+}: SidebarProps) {
+  // 타입별 카운트
+  const typeCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of nodes) m.set(n.type, (m.get(n.type) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [nodes]);
+
+  const visibleNodeCount = nodes.filter((n) => !hiddenTypes.has(n.type)).length;
+  const visibleEdgeCount = edges.filter((e) => {
+    const src = nodes.find((n) => n.id === e.source);
+    const tgt = nodes.find((n) => n.id === e.target);
+    return src && tgt && !hiddenTypes.has(src.type) && !hiddenTypes.has(tgt.type);
+  }).length;
+
+  return (
+    <aside className="w-[260px] shrink-0 border-l border-hairline bg-[var(--surface)] p-ds-4 overflow-auto">
+      <div className="space-y-ds-4">
+        <section>
+          <div className="eyebrow mb-ds-2">Filters</div>
+          <div className="space-y-ds-1">
+            {typeCounts.map(([t, n]) => {
+              const visible = !hiddenTypes.has(t);
+              return (
+                <label
+                  key={t}
+                  className="flex items-center gap-ds-2 px-ds-2 py-ds-1 rounded-md cursor-pointer hover:bg-surface-2 transition-colors duration-fast ease-ds"
+                >
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={() => onToggleType(t)}
+                    className="size-3.5 cursor-pointer accent-[var(--accent)]"
+                  />
+                  <span
+                    className="size-1.5 rounded-full shrink-0"
+                    style={{ background: TYPE_DOT[t] ?? "var(--text-3)" }}
+                    aria-hidden
+                  />
+                  <span
+                    className={`text-t-small flex-1 ${
+                      visible ? "text-text-2" : "text-text-4"
+                    }`}
+                  >
+                    {t}
+                  </span>
+                  <span className="font-mono text-t-meta text-text-3 tabular-nums">
+                    {n}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <div className="eyebrow mb-ds-2">Stats</div>
+          <div className="space-y-ds-1 text-t-small text-text-2">
+            <div className="flex items-center justify-between">
+              <span>Nodes</span>
+              <span className="font-mono text-text-3 tabular-nums">
+                {visibleNodeCount} / {nodes.length}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Edges</span>
+              <span className="font-mono text-text-3 tabular-nums">
+                {visibleEdgeCount} / {edges.length}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Depth</span>
+              <span className="font-mono text-text-3 tabular-nums">{depth}</span>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div className="eyebrow mb-ds-2">Start</div>
+          <div className="font-mono text-t-mono text-text-3 break-all">
+            {startNodeId}
+          </div>
+        </section>
+      </div>
+    </aside>
   );
 }
 
