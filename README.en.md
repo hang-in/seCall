@@ -597,19 +597,24 @@ secall graph export
 
 ## Configuration
 
-Manage settings via the `secall config` command. No need to edit config.toml directly.
+Manage settings via `secall config`. The same values are also exposed through the web UI `/settings` and REST `/api/config`.
 
 ```bash
 # View current settings
 secall config show
+secall config llm show
 
 # Change a setting
 secall config set output.timezone Asia/Seoul
 secall config set search.tokenizer kiwi
 secall config set embedding.backend ollama
+secall config llm set log.backend haiku
 
 # Show config file path
 secall config path
+
+# Edit from the web UI (read-only by default)
+secall serve --port 8080 --allow-config-edit
 ```
 
 ### Available Keys
@@ -628,10 +633,15 @@ secall config path
 | `ingest.classification.skip_embed_types` | Session types to skip vector embedding | `[]` |
 | `graph.semantic_backend` | Semantic edge extraction backend (`gemini` / `ollama` / `none`) | `none` |
 | `graph.gemini_model` | Gemini model name | `gemini-2.5-flash` |
+| `graph.ollama_model` | Ollama / LM Studio semantic model | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.backends.<name>.api_url` | Backend API endpoint | (default) |
 | `wiki.backends.<name>.model` | Model name for the backend | (default) |
 | `wiki.backends.<name>.max_tokens` | Max tokens to generate | `4096` |
+| `log.backend` | Daily diary backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | falls back to `graph.semantic_backend` |
+| `log.model` | Daily diary model override | backend default |
+| `log.api_url` | Daily diary API URL override | backend default |
+| `log.max_tokens` | Daily diary max generation tokens | backend default |
 
 Config file location:
 - **macOS**: `~/Library/Application Support/secall/config.toml`
@@ -654,10 +664,13 @@ Config file location:
 | `secall lint` | Verify index/vault integrity |
 | `secall mcp [--http <addr>]` | Start MCP server |
 | `secall config show\|set\|path` | View/change settings |
+| `secall config llm show\|set\|where` | View/change only LLM-related settings |
 | `secall graph build\|stats\|export` | Knowledge graph management |
 | `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | Rebuild semantic graph (P37) — priority: `--session` > `--all` > `--retry-failed` > `--since` |
 | `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | Wiki generation with backend selection |
 | `secall wiki status` | Wiki status |
+| `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]` | Generate a daily work log |
+| `secall serve [--port <port>] [--allow-config-edit]` | Start REST API + Web UI (`/settings` save requires the flag) |
 | `secall log [YYYY-MM-DD]` | Generate daily work diary |
 | `secall serve [--port <port>]` | Start REST API server (default: 8080) |
 | `secall model download\|info\|check` | ONNX model management |
@@ -771,6 +784,7 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-09 | v0.9.1 | P41 LLM config integration: `secall log --backend/--model`, new `[log]` section, centralized default-model constants + warnings, `GET /api/config` / `PATCH /api/config/{section}`, web `/settings`, `secall config llm show\|set\|where` |
 | 2026-05-06 | v0.9.0 | Wiki search hybrid mode (P40): `wiki_vectors` table (DB v9, page-level embeddings via bge-m3 + Ollama), `WikiIndexer` with SHA-256 content-hash for idempotent indexing and orphan cleanup, `do_wiki_search` extended with `mode={keyword\|semantic\|hybrid}` param (default `keyword` — backward compatible) and RRF (k=60) fusion for hybrid, automatic keyword fallback when Ollama is unavailable / embedding fails, new CLI `secall wiki vectorize [--force] [--model bge-m3] [--ollama-url ...]` for one-shot backfill, regression coverage in `tests/{db_migrations,wiki_indexer,wiki_search_modes}.rs` |
 | 2026-05-05 | v0.8.2 | P39 wiki pipeline baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` now uses `git add -A` so SCHEMA.md / graph/ / log/ are all staged (`crates/secall-core/src/vault/git.rs:146`, 8 regression tests in `tests/vault_auto_commit.rs`), `secall` binary autoloads `.env` via `dotenvy::dotenv()` on startup (`crates/secall/src/main.rs:382` — Gemini/OpenAI keys injected automatically), 683-session sync baseline measurement (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` backfilled 28 sessions / 840 edges |
 | 2026-05-03 | v0.8.1 | P38 test gap closure: `tests/rest_routes.rs` (REST 22-endpoint route-level regression, 45 tests) + `tests/session_repo_helpers.rs` (cumulative P32~P37 helper regression, 29 tests) — 74 new P38 tests in total, Insight TES-session_repo findings resolved |

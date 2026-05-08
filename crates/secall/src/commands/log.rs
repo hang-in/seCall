@@ -1,10 +1,16 @@
 use anyhow::Result;
 use secall_core::{
+    llm::defaults::{warn_using_default, LOG_GEMINI_DEFAULT, LOG_OLLAMA_DEFAULT},
     store::{get_default_db_path, Database},
     vault::Config,
+    wiki::{ClaudeBackend, CodexBackend, HaikuBackend, LmStudioBackend, OllamaBackend, WikiBackend},
 };
 
-pub async fn run(date: Option<String>) -> Result<()> {
+pub async fn run(
+    date: Option<String>,
+    backend: Option<String>,
+    model: Option<String>,
+) -> Result<()> {
     let config = Config::load_or_default();
     let db = Database::open(&get_default_db_path())?;
 
@@ -120,45 +126,21 @@ pub async fn run(date: Option<String>) -> Result<()> {
         과장하지 말고 실제 작업 내용을 간결하게 서술하세요.";
 
     // LLM 백엔드로 일기 생성
-    let body = if config.graph.semantic_backend == "ollama" {
-        let base_url = config
-            .graph
-            .ollama_url
-            .as_deref()
-            .unwrap_or("http://localhost:11434");
-        let model = config.graph.ollama_model.as_deref().unwrap_or("gemma4:e4b");
-        eprintln!("Generating work log with {} ({})...", model, target_date);
-        match call_ollama(base_url, model, system_prompt, &user_prompt).await {
-            Ok(text) => text,
-            Err(e) => {
-                eprintln!("Ollama failed ({}), using template output", e);
-                generate_template(&target_date, &by_project, &topic_labels, total)
-            }
+    let body = match generate_log_body(
+        &config,
+        backend.as_deref(),
+        model.as_deref(),
+        system_prompt,
+        &user_prompt,
+        &target_date,
+    )
+    .await
+    {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("Log generation failed ({}), using template output", e);
+            generate_template(&target_date, &by_project, &topic_labels, total)
         }
-    } else if config.graph.semantic_backend == "gemini" {
-        let api_key = config
-            .graph
-            .gemini_api_key
-            .clone()
-            .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
-            .ok_or_else(|| anyhow::anyhow!("gemini api key not set"))?;
-        let model = config
-            .graph
-            .gemini_model
-            .as_deref()
-            .unwrap_or("gemini-2.5-flash")
-            .to_string();
-        eprintln!("Generating work log with {} ({})...", model, target_date);
-        let full_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
-        match call_gemini(&full_prompt, &api_key, &model).await {
-            Ok(text) => text,
-            Err(e) => {
-                eprintln!("Gemini failed ({}), using template output", e);
-                generate_template(&target_date, &by_project, &topic_labels, total)
-            }
-        }
-    } else {
-        generate_template(&target_date, &by_project, &topic_labels, total)
     };
 
     // 결과 출력
@@ -174,38 +156,146 @@ pub async fn run(date: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn call_ollama(base_url: &str, model: &str, system: &str, user: &str) -> Result<String> {
-    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
-    let payload = serde_json::json!({
-        "model": model,
-        "stream": false,
-        "options": {"temperature": 0.3},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ]
-    });
+pub fn resolve_backend_name(config: &Config, cli_backend: Option<&str>) -> String {
+    cli_backend
+        .map(ToOwned::to_owned)
+        .or_else(|| config.log.backend.clone())
+        .or_else(|| {
+            if config.graph.semantic_backend.is_empty() {
+                None
+            } else {
+                Some(config.graph.semantic_backend.clone())
+            }
+        })
+        .unwrap_or_else(|| "ollama".to_string())
+}
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client.post(&url).json(&payload).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("Ollama error {}", resp.status());
+fn resolve_log_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> Option<String> {
+    if let Some(model) = cli_model {
+        return Some(model.to_string());
     }
 
-    #[derive(serde::Deserialize)]
-    struct OllamaResp {
-        message: OllamaMsg,
-    }
-    #[derive(serde::Deserialize)]
-    struct OllamaMsg {
-        content: String,
+    if let Some(model) = config.log.model.clone() {
+        return Some(model);
     }
 
-    let r: OllamaResp = resp.json().await?;
-    Ok(r.message.content)
+    match backend_name {
+        "ollama" => Some(
+            config.graph.ollama_model.clone().unwrap_or_else(|| {
+                warn_using_default("log.model", LOG_OLLAMA_DEFAULT);
+                LOG_OLLAMA_DEFAULT.to_string()
+            }),
+        ),
+        "gemini" => Some(
+            config.graph.gemini_model.clone().unwrap_or_else(|| {
+                warn_using_default("graph.gemini_model", LOG_GEMINI_DEFAULT);
+                LOG_GEMINI_DEFAULT.to_string()
+            }),
+        ),
+        _ => None,
+    }
+}
+
+fn resolve_log_api_url<'a>(config: &'a Config, backend_name: &str) -> Option<&'a str> {
+    config.log.api_url.as_deref().or(match backend_name {
+        "ollama" | "lmstudio" => config.graph.ollama_url.as_deref(),
+        _ => None,
+    })
+}
+
+fn resolve_log_max_tokens(config: &Config) -> u32 {
+    config.log.max_tokens.unwrap_or(4096)
+}
+
+fn build_backend_prompt(system_prompt: &str, user_prompt: &str) -> String {
+    format!("{system_prompt}\n\n{user_prompt}")
+}
+
+async fn generate_log_body(
+    config: &Config,
+    cli_backend: Option<&str>,
+    cli_model: Option<&str>,
+    system_prompt: &str,
+    user_prompt: &str,
+    target_date: &str,
+) -> Result<String> {
+    let backend_name = resolve_backend_name(config, cli_backend);
+    let resolved_model = resolve_log_model(config, &backend_name, cli_model);
+    eprintln!(
+        "Generating work log with {}{} ({})...",
+        backend_name,
+        resolved_model
+            .as_deref()
+            .map(|m| format!(":{m}"))
+            .unwrap_or_default(),
+        target_date
+    );
+
+    match backend_name.as_str() {
+        "claude" => {
+            let model = resolved_model.unwrap_or_else(|| "sonnet".to_string());
+            let backend = ClaudeBackend {
+                model,
+                vault_path: config.vault.path.clone(),
+            };
+            backend
+                .generate(&build_backend_prompt(system_prompt, user_prompt))
+                .await
+        }
+        "codex" => {
+            let model = resolved_model.unwrap_or_else(|| "gpt-5.4".to_string());
+            let backend = CodexBackend {
+                model,
+                vault_path: config.vault.path.clone(),
+            };
+            backend
+                .generate(&build_backend_prompt(system_prompt, user_prompt))
+                .await
+        }
+        "haiku" => {
+            let backend = HaikuBackend::from_env(
+                resolved_model,
+                resolve_log_max_tokens(config),
+                system_prompt.to_string(),
+            )?;
+            backend.generate(user_prompt).await
+        }
+        "ollama" => {
+            let backend = OllamaBackend {
+                api_url: resolve_log_api_url(config, "ollama")
+                    .unwrap_or("http://localhost:11434")
+                    .to_string(),
+                model: resolved_model.unwrap_or_else(|| LOG_OLLAMA_DEFAULT.to_string()),
+                max_tokens: resolve_log_max_tokens(config),
+            };
+            backend
+                .generate(&build_backend_prompt(system_prompt, user_prompt))
+                .await
+        }
+        "lmstudio" => {
+            let backend = LmStudioBackend {
+                api_url: resolve_log_api_url(config, "lmstudio")
+                    .unwrap_or("http://localhost:1234")
+                    .to_string(),
+                model: resolved_model.unwrap_or_else(|| "gemma-4-e4b-it".to_string()),
+                max_tokens: resolve_log_max_tokens(config),
+            };
+            backend
+                .generate(&build_backend_prompt(system_prompt, user_prompt))
+                .await
+        }
+        "gemini" => {
+            let api_key = config
+                .graph
+                .gemini_api_key
+                .clone()
+                .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
+                .ok_or_else(|| anyhow::anyhow!("gemini api key not set"))?;
+            let model = resolved_model.unwrap_or_else(|| LOG_GEMINI_DEFAULT.to_string());
+            call_gemini(&build_backend_prompt(system_prompt, user_prompt), &api_key, &model).await
+        }
+        _ => anyhow::bail!("Unknown log backend: {}", backend_name),
+    }
 }
 
 async fn call_gemini(prompt: &str, api_key: &str, model: &str) -> Result<String> {
@@ -324,5 +414,19 @@ mod tests {
         let b_pos = result.find("## B").unwrap();
         assert!(a_pos < b_pos);
         assert!(result.contains("entry B2"));
+    }
+
+    #[test]
+    fn test_resolve_backend_priority_cli_then_log_then_graph_then_default() {
+        let mut config = Config::default();
+        config.log.backend = Some("claude".to_string());
+        config.graph.semantic_backend = "gemini".to_string();
+        assert_eq!(resolve_backend_name(&config, Some("haiku")), "haiku");
+
+        config.log.backend = None;
+        assert_eq!(resolve_backend_name(&config, None), "gemini");
+
+        config.graph.semantic_backend.clear();
+        assert_eq!(resolve_backend_name(&config, None), "ollama");
     }
 }

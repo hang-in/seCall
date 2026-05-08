@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::llm::defaults::{
+    GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_OLLAMA_DEFAULT,
+};
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -15,6 +19,7 @@ pub struct Config {
     pub output: OutputConfig,
     pub wiki: WikiConfig,
     pub graph: GraphConfig,
+    pub log: LogConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -99,7 +104,7 @@ pub struct HooksConfig {
 pub struct WikiBackendConfig {
     /// API 엔드포인트 (Claude 백엔드는 사용 안 함)
     pub api_url: Option<String>,
-    /// 모델 이름
+    /// 모델 이름 (backend별 기본값: claude=sonnet, codex=gpt-5.4)
     pub model: Option<String>,
     /// 최대 생성 토큰 수
     #[serde(default = "default_wiki_max_tokens")]
@@ -129,7 +134,7 @@ pub struct WikiConfig {
     /// 백엔드별 설정 맵
     #[serde(default)]
     pub backends: std::collections::HashMap<String, WikiBackendConfig>,
-    /// --review 시 사용할 모델: "sonnet" | "opus"
+    /// --review 시 사용할 모델: "sonnet" | "opus" (기본: sonnet)
     #[serde(default)]
     pub review_model: Option<String>,
 }
@@ -179,6 +184,19 @@ impl Default for GraphConfig {
             gemini_model: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LogConfig {
+    /// Daily log backend (None이면 graph.semantic_backend → "ollama" 폴백)
+    pub backend: Option<String>,
+    /// Model override for the selected log backend
+    pub model: Option<String>,
+    /// API base URL override for ollama / lmstudio
+    pub api_url: Option<String>,
+    /// Max generation tokens override
+    pub max_tokens: Option<u32>,
 }
 
 /// 단일 세션 분류 규칙
@@ -242,6 +260,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             wiki: WikiConfig::default(),
             graph: GraphConfig::default(),
+            log: LogConfig::default(),
         }
     }
 }
@@ -365,9 +384,29 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        let tmp_path = path.with_extension(format!(
+            "toml.tmp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::write(&tmp_path, content)?;
+        std::fs::rename(&tmp_path, &path)?;
         Ok(())
     }
+}
+
+pub fn default_graph_ollama_model() -> &'static str {
+    GRAPH_OLLAMA_DEFAULT
+}
+
+pub fn default_graph_anthropic_model() -> &'static str {
+    GRAPH_ANTHROPIC_DEFAULT
+}
+
+pub fn default_graph_gemini_model() -> &'static str {
+    GRAPH_GEMINI_DEFAULT
 }
 
 #[cfg(test)]

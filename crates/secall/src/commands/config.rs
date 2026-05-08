@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
+use secall_core::vault::config::WikiBackendConfig;
 use secall_core::vault::Config;
 
 pub fn run_show() -> Result<()> {
@@ -12,44 +14,194 @@ pub fn run_show() -> Result<()> {
     println!("Config file: {}", config_path.display());
     println!();
 
-    println!("[vault]");
-    println!("  path       = {}", config.vault.path.display());
-    match &config.vault.git_remote {
-        Some(remote) => println!("  git_remote = {}", remote),
-        None => println!("  git_remote = (not set)"),
-    }
-    println!("  branch     = {}", config.vault.branch);
+    println!("Vault");
+    println!("  path: {}", config.vault.path.display());
+    println!(
+        "  git_remote: {}",
+        config.vault.git_remote.as_deref().unwrap_or("(not set)")
+    );
+    println!("  branch: {}", config.vault.branch);
     println!();
 
-    println!("[search]");
-    println!("  tokenizer     = {}", config.search.tokenizer);
-    println!("  default_limit = {}", config.search.default_limit);
+    print_llm_summary(&config);
+
+    println!("Search");
+    println!("  tokenizer: {}", config.search.tokenizer);
+    println!("  default_limit: {}", config.search.default_limit);
     println!();
 
-    println!("[embedding]");
-    println!("  backend      = {}", config.embedding.backend);
-    if let Some(url) = &config.embedding.ollama_url {
-        println!("  ollama_url   = {}", url);
-    }
-    if let Some(model) = &config.embedding.ollama_model {
-        println!("  ollama_model = {}", model);
-    }
-    if let Some(device) = &config.embedding.openvino_device {
-        println!("  openvino_device = {}", device);
-    }
+    println!("OpenVINO");
+    println!(
+        "  dir: {}",
+        config.openvino.dir.as_deref().unwrap_or("(auto-detect)")
+    );
     println!();
 
-    println!("[openvino]");
-    match &config.openvino.dir {
-        Some(dir) => println!("  dir = {}", dir),
-        None => println!("  dir = (auto-detect)"),
-    }
-    println!();
-
-    println!("[output]");
-    println!("  timezone = {}", config.output.timezone);
+    println!("Output");
+    println!("  timezone: {}", config.output.timezone);
 
     Ok(())
+}
+
+pub fn run_llm_show() -> Result<()> {
+    let config = Config::load_or_default();
+    print_llm_summary(&config);
+    Ok(())
+}
+
+pub fn run_llm_where() -> Result<()> {
+    println!("{}", Config::config_path().display());
+    println!("LLM entry points:");
+    println!("  CLI: secall config llm show");
+    println!("  CLI: secall config llm set <key> <value>");
+    println!("  REST: GET /api/config");
+    println!("  REST: PATCH /api/config/{{wiki|graph|log|embedding}}");
+    println!("  Web: /settings");
+    Ok(())
+}
+
+fn print_llm_summary(config: &Config) {
+    println!("Wiki");
+    println!("  default_backend: {}", config.wiki.default_backend);
+    println!(
+        "  review_model: {}",
+        config.wiki.review_model.as_deref().unwrap_or("sonnet")
+    );
+    if config.wiki.backends.is_empty() {
+        println!("  backends: (not configured)");
+    } else {
+        println!("  backends:");
+        for (name, backend) in &config.wiki.backends {
+            print_backend_config(name, backend);
+        }
+    }
+    println!();
+
+    println!("Graph");
+    println!("  semantic: {}", config.graph.semantic);
+    println!("  semantic_backend: {}", config.graph.semantic_backend);
+    println!(
+        "  ollama_url: {}",
+        config
+            .graph
+            .ollama_url
+            .as_deref()
+            .unwrap_or("http://localhost:11434")
+    );
+    println!(
+        "  ollama_model: {}",
+        config.graph.ollama_model.as_deref().unwrap_or("gemma4:e4b")
+    );
+    println!(
+        "  anthropic_model: {}",
+        config
+            .graph
+            .anthropic_model
+            .as_deref()
+            .unwrap_or("claude-haiku-4-5-20251001")
+    );
+    println!(
+        "  gemini_model: {}",
+        config
+            .graph
+            .gemini_model
+            .as_deref()
+            .unwrap_or("gemini-2.5-flash")
+    );
+    println!(
+        "  gemini_api_key: {}",
+        if config.graph.gemini_api_key.is_some() {
+            "<masked>"
+        } else {
+            "<env: SECALL_GEMINI_API_KEY>"
+        }
+    );
+    println!();
+
+    println!("Log");
+    println!(
+        "  backend: {}",
+        config
+            .log
+            .backend
+            .as_deref()
+            .unwrap_or(config.graph.semantic_backend.as_str())
+    );
+    println!(
+        "  model: {}",
+        config.log.model.as_deref().unwrap_or("(backend default)")
+    );
+    println!(
+        "  api_url: {}",
+        config.log.api_url.as_deref().unwrap_or("(backend default)")
+    );
+    println!(
+        "  max_tokens: {}",
+        config
+            .log
+            .max_tokens
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "(backend default)".to_string())
+    );
+    println!();
+
+    println!("Embedding");
+    println!("  backend: {}", config.embedding.backend);
+    println!(
+        "  ollama_url: {}",
+        config
+            .embedding
+            .ollama_url
+            .as_deref()
+            .unwrap_or("(not set)")
+    );
+    println!(
+        "  ollama_model: {}",
+        config
+            .embedding
+            .ollama_model
+            .as_deref()
+            .unwrap_or("(not set)")
+    );
+    println!(
+        "  openai_model: {}",
+        config
+            .embedding
+            .openai_model
+            .as_deref()
+            .unwrap_or("(not set)")
+    );
+    println!(
+        "  openvino_device: {}",
+        config
+            .embedding
+            .openvino_device
+            .as_deref()
+            .unwrap_or("(not set)")
+    );
+    println!();
+
+    println!("Environment indicators");
+    for (key, present) in [
+        ("ANTHROPIC_API_KEY", std::env::var("ANTHROPIC_API_KEY").is_ok()),
+        (
+            "SECALL_GEMINI_API_KEY",
+            std::env::var("SECALL_GEMINI_API_KEY").is_ok(),
+        ),
+        ("OPENAI_API_KEY", std::env::var("OPENAI_API_KEY").is_ok()),
+    ] {
+        println!("  {}: {}", key, if present { "set" } else { "not set" });
+    }
+}
+
+fn print_backend_config(name: &str, backend: &WikiBackendConfig) {
+    println!(
+        "    {}: model={} api_url={} max_tokens={}",
+        name,
+        backend.model.as_deref().unwrap_or("(default)"),
+        backend.api_url.as_deref().unwrap_or("(default)"),
+        backend.max_tokens
+    );
 }
 
 pub fn run_set(key: &str, value: &str) -> Result<()> {
@@ -75,15 +227,56 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
             }
             #[cfg(target_os = "windows")]
             if value == "kiwi" {
-                eprintln!("Warning: kiwi tokenizer is not supported on Windows. BM25 will fall back to lindera.");
+                eprintln!(
+                    "Warning: kiwi tokenizer is not supported on Windows. BM25 will fall back to lindera."
+                );
             }
             config.search.tokenizer = value.to_string();
         }
         "search.default_limit" => {
-            let n: usize = value
+            config.search.default_limit = value
                 .parse()
                 .context("default_limit must be a positive integer")?;
-            config.search.default_limit = n;
+        }
+        "wiki.default_backend" => {
+            config.wiki.default_backend = value.to_string();
+        }
+        "wiki.review_model" => {
+            config.wiki.review_model = Some(value.to_string());
+        }
+        "graph.semantic_backend" => {
+            config.graph.semantic_backend = value.to_string();
+        }
+        "graph.ollama_url" => {
+            config.graph.ollama_url = Some(value.to_string());
+        }
+        "graph.ollama_model" => {
+            config.graph.ollama_model = Some(value.to_string());
+        }
+        "graph.anthropic_model" => {
+            config.graph.anthropic_model = Some(value.to_string());
+        }
+        "graph.gemini_model" => {
+            config.graph.gemini_model = Some(value.to_string());
+        }
+        "graph.gemini_api_key" => {
+            config.graph.gemini_api_key = Some(value.to_string());
+        }
+        "log.backend" => {
+            config.log.backend = Some(value.to_string());
+        }
+        "log.model" => {
+            config.log.model = Some(value.to_string());
+        }
+        "log.api_url" => {
+            config.log.api_url = Some(value.to_string());
+        }
+        "log.max_tokens" => {
+            config.log.max_tokens = Some(
+                value
+                    .parse()
+                    .context("log.max_tokens must be a positive integer")?,
+            );
         }
         "embedding.backend" => {
             if !["ollama", "ort", "openai", "openvino", "none"].contains(&value) {
@@ -100,6 +293,9 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
         "embedding.ollama_model" => {
             config.embedding.ollama_model = Some(value.to_string());
         }
+        "embedding.openai_model" => {
+            config.embedding.openai_model = Some(value.to_string());
+        }
         "embedding.openvino_device" => {
             if !["NPU", "GPU", "CPU"].contains(&value) {
                 anyhow::bail!("invalid openvino device: '{}'. Valid: NPU, GPU, CPU", value);
@@ -107,7 +303,7 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
             config.embedding.openvino_device = Some(value.to_string());
         }
         "openvino.dir" => {
-            let path = std::path::PathBuf::from(shellexpand::tilde(value).to_string());
+            let path = PathBuf::from(shellexpand::tilde(value).to_string());
             if !path.exists() {
                 eprintln!("Warning: directory does not exist: {}", path.display());
             }
@@ -122,17 +318,10 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
             })?;
             config.output.timezone = value.to_string();
         }
-        _ => {
-            anyhow::bail!(
-                "unknown config key: '{}'\n\nAvailable keys:\n  \
-                vault.path, vault.git_remote, vault.branch\n  \
-                search.tokenizer, search.default_limit\n  \
-                embedding.backend, embedding.ollama_url, embedding.ollama_model, embedding.openvino_device\n  \
-                openvino.dir\n  \
-                output.timezone",
-                key
-            );
+        _ if key.starts_with("wiki.backends.") => {
+            set_wiki_backend_key(&mut config, key, value)?;
         }
+        _ => anyhow::bail!("unknown config key: '{}'", key),
     }
 
     config.save()?;
@@ -140,7 +329,74 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run_path() -> Result<()> {
-    println!("{}", Config::config_path().display());
+fn set_wiki_backend_key(config: &mut Config, key: &str, value: &str) -> Result<()> {
+    let rest = key
+        .strip_prefix("wiki.backends.")
+        .ok_or_else(|| anyhow::anyhow!("invalid wiki backend key: {}", key))?;
+    let (backend_name, field) = rest
+        .rsplit_once('.')
+        .ok_or_else(|| anyhow::anyhow!("invalid wiki backend key: {}", key))?;
+    let entry = config
+        .wiki
+        .backends
+        .entry(backend_name.to_string())
+        .or_default();
+
+    match field {
+        "api_url" => entry.api_url = Some(value.to_string()),
+        "model" => entry.model = Some(value.to_string()),
+        "max_tokens" => {
+            entry.max_tokens = value
+                .parse()
+                .context("wiki backend max_tokens must be a positive integer")?
+        }
+        _ => anyhow::bail!("unknown wiki backend field: {}", field),
+    }
+
     Ok(())
+}
+
+pub fn run_path(copy: bool) -> Result<()> {
+    let path = Config::config_path();
+    println!("{}", path.display());
+    if copy {
+        copy_to_clipboard(&path)?;
+    }
+    Ok(())
+}
+
+fn copy_to_clipboard(path: &std::path::Path) -> Result<()> {
+    let path_text = path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &["pbcopy"];
+    #[cfg(not(target_os = "macos"))]
+    let candidates: &[&str] = &["xclip", "xsel"];
+
+    for cmd in candidates {
+        let child = match *cmd {
+            "xclip" => Command::new(cmd)
+                .args(["-selection", "clipboard"])
+                .stdin(Stdio::piped())
+                .spawn(),
+            "xsel" => Command::new(cmd)
+                .args(["--clipboard", "--input"])
+                .stdin(Stdio::piped())
+                .spawn(),
+            _ => Command::new(cmd).stdin(Stdio::piped()).spawn(),
+        };
+
+        if let Ok(mut child) = child {
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write as _;
+                stdin.write_all(path_text.as_bytes())?;
+            }
+            let status = child.wait()?;
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    anyhow::bail!("clipboard command not available (tried: {})", candidates.join(", "));
 }

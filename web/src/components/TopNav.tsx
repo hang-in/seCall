@@ -1,5 +1,5 @@
-import { NavLink, useLocation } from "react-router";
-import { Keyboard, Moon, Sun } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router";
+import { Keyboard, Moon, Settings, Sun } from "lucide-react";
 import { useTheme } from "@/lib/useTheme";
 import { useUi } from "@/lib/store";
 import { HeaderSearch } from "@/components/HeaderSearch";
@@ -26,6 +26,7 @@ export function TopNav() {
   const { dark, toggle } = useTheme();
   const setHelpOpen = useUi((s) => s.setHelpDialogOpen);
   const location = useLocation();
+  const navigate = useNavigate();
 
   // sessions / wiki 라우트에서만 헤더 검색 노출. mode 후보는 라우트별로 다름.
   const path = location.pathname;
@@ -78,6 +79,15 @@ export function TopNav() {
 
         {/* Right icons */}
         <div className="flex items-center gap-ds-1 shrink-0">
+          <button
+            type="button"
+            aria-label="설정"
+            title="Settings (g x)"
+            onClick={() => navigate("/settings")}
+            className="size-7 inline-flex items-center justify-center rounded-md text-text-3 hover:text-text hover:bg-surface-2 transition-colors duration-fast ease-ds"
+          >
+            <Settings className="size-4" />
+          </button>
           <button
             type="button"
             aria-label="단축키 도움말"

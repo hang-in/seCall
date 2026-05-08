@@ -12,6 +12,43 @@ import type {
   WikiUpdateArgs,
 } from "@/lib/types";
 
+export interface ConfigBackendConfig {
+  api_url?: string | null;
+  model?: string | null;
+  max_tokens?: number;
+}
+
+export interface AppConfig {
+  wiki: {
+    default_backend: string;
+    review_model?: string | null;
+    backends: Record<string, ConfigBackendConfig>;
+  };
+  graph: {
+    semantic: boolean;
+    semantic_backend: string;
+    ollama_url?: string | null;
+    ollama_model?: string | null;
+    anthropic_model?: string | null;
+    gemini_api_key?: string | null;
+    gemini_model?: string | null;
+  };
+  log: {
+    backend?: string | null;
+    model?: string | null;
+    api_url?: string | null;
+    max_tokens?: number | null;
+  };
+  embedding: {
+    backend: string;
+    ollama_url?: string | null;
+    ollama_model?: string | null;
+    openai_model?: string | null;
+    openvino_device?: string | null;
+  };
+  env_indicators?: Record<string, boolean>;
+}
+
 const BASE = ""; // dev/prod 모두 same-origin
 
 async function jfetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -104,6 +141,14 @@ export const api = {
     jfetch<unknown>("/api/daily", {
       method: "POST",
       body: JSON.stringify({ date }),
+    }),
+
+  configGet: () => jfetch<AppConfig>("/api/config"),
+
+  configPatch: (section: "wiki" | "graph" | "log" | "embedding", body: unknown) =>
+    jfetch<AppConfig>(`/api/config/${section}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
     }),
 
   graph: (q: { node_id: string; depth?: number; relation?: string }) =>

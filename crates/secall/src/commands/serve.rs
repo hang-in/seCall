@@ -11,7 +11,7 @@ use secall_core::{
     vault::Config,
 };
 
-pub async fn run(port: u16) -> Result<()> {
+pub async fn run(port: u16, allow_config_edit: bool) -> Result<()> {
     let db_path = get_default_db_path();
     let db = Database::open(&db_path)?;
 
@@ -115,5 +115,9 @@ pub async fn run(port: u16) -> Result<()> {
     let search = SearchEngine::new(bm25, vector);
     let vault_path = config.vault.path.clone();
 
-    start_rest_server(db_arc, search, vault_path, port, executor).await
+    if allow_config_edit {
+        eprintln!("WARN: --allow-config-edit 활성화. 외부에 노출 금지.");
+    }
+
+    start_rest_server(db_arc, search, vault_path, port, executor, allow_config_edit).await
 }

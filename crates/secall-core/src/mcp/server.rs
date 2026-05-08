@@ -17,6 +17,7 @@ use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchE
 use crate::search::{Embedder, OllamaEmbedder};
 use crate::store::db::Database;
 use crate::store::{SessionRepo, WikiVectorRepo};
+use crate::vault::Config;
 
 #[derive(Clone)]
 pub struct SeCallMcpServer {
@@ -25,6 +26,7 @@ pub struct SeCallMcpServer {
     db: Arc<Mutex<Database>>,
     search: Arc<SearchEngine>,
     vault_path: PathBuf,
+    allow_config_edit: bool,
 }
 
 #[derive(Clone)]
@@ -58,11 +60,21 @@ where
 /// 공통 로직 메서드 — REST 핸들러와 MCP tool 모두에서 호출
 impl SeCallMcpServer {
     pub fn new(db: Arc<Mutex<Database>>, search: Arc<SearchEngine>, vault_path: PathBuf) -> Self {
+        Self::new_with_options(db, search, vault_path, false)
+    }
+
+    pub fn new_with_options(
+        db: Arc<Mutex<Database>>,
+        search: Arc<SearchEngine>,
+        vault_path: PathBuf,
+        allow_config_edit: bool,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             db,
             search,
             vault_path,
+            allow_config_edit,
         }
     }
 
@@ -284,6 +296,78 @@ impl SeCallMcpServer {
             "vectors": stats.vector_count,
             "recent_ingests": stats.recent_ingests.len(),
         }))
+    }
+
+    pub fn do_config_get(&self) -> anyhow::Result<serde_json::Value> {
+        let config = Config::load_or_default();
+        let mut json = serde_json::to_value(config)?;
+        if let Some(graph) = json.get_mut("graph").and_then(|v| v.as_object_mut()) {
+            if graph.get("gemini_api_key").is_some() {
+                graph.insert(
+                    "gemini_api_key".to_string(),
+                    serde_json::Value::String("<masked>".to_string()),
+                );
+            }
+        }
+        if let Some(root) = json.as_object_mut() {
+            root.insert(
+                "env_indicators".to_string(),
+                serde_json::json!({
+                    "ANTHROPIC_API_KEY": std::env::var("ANTHROPIC_API_KEY").is_ok(),
+                    "SECALL_GEMINI_API_KEY": std::env::var("SECALL_GEMINI_API_KEY").is_ok(),
+                    "OPENAI_API_KEY": std::env::var("OPENAI_API_KEY").is_ok(),
+                }),
+            );
+        }
+        Ok(json)
+    }
+
+    pub fn do_config_patch(
+        &self,
+        section: &str,
+        body: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        if !self.allow_config_edit {
+            anyhow::bail!("config edit disabled");
+        }
+
+        let patch = body
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("config patch body must be a JSON object"))?;
+        let mut config = Config::load_or_default();
+
+        match section {
+            "wiki" => {
+                let mut current = serde_json::to_value(&config.wiki)?;
+                merge_json_object(&mut current, &serde_json::Value::Object(patch.clone()));
+                config.wiki = serde_json::from_value(current)?;
+            }
+            "graph" => {
+                let mut sanitized_patch = serde_json::Map::new();
+                for (key, value) in patch {
+                    if key != "gemini_api_key" {
+                        sanitized_patch.insert(key.clone(), value.clone());
+                    }
+                }
+                let mut current = serde_json::to_value(&config.graph)?;
+                merge_json_object(&mut current, &serde_json::Value::Object(sanitized_patch));
+                config.graph = serde_json::from_value(current)?;
+            }
+            "log" => {
+                let mut current = serde_json::to_value(&config.log)?;
+                merge_json_object(&mut current, &serde_json::Value::Object(patch.clone()));
+                config.log = serde_json::from_value(current)?;
+            }
+            "embedding" => {
+                let mut current = serde_json::to_value(&config.embedding)?;
+                merge_json_object(&mut current, &serde_json::Value::Object(patch.clone()));
+                config.embedding = serde_json::from_value(current)?;
+            }
+            _ => anyhow::bail!("unknown config section: {section}"),
+        }
+
+        config.save()?;
+        self.do_config_get()
     }
 
     /// 단일 위키 페이지 본문 반환 (`vault/wiki/projects/{safe_name}.md`).
@@ -940,6 +1024,26 @@ impl SeCallMcpServer {
             db.list_recent_jobs(limit)?
         };
         Ok(serde_json::json!({ "jobs": rows }))
+    }
+}
+
+fn merge_json_object(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    let Some(target_obj) = target.as_object_mut() else {
+        *target = patch.clone();
+        return;
+    };
+    let Some(patch_obj) = patch.as_object() else {
+        *target = patch.clone();
+        return;
+    };
+
+    for (key, value) in patch_obj {
+        match (target_obj.get_mut(key), value) {
+            (Some(existing), serde_json::Value::Object(_)) => merge_json_object(existing, value),
+            _ => {
+                target_obj.insert(key.clone(), value.clone());
+            }
+        }
     }
 }
 

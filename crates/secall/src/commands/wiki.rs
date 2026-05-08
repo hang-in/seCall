@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use secall_core::{
     jobs::ProgressSink,
+    llm::defaults::{warn_using_default, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT, WIKI_REVIEW_DEFAULT},
     search::OllamaEmbedder,
     store::{get_default_db_path, Database},
     vault::Config,
@@ -559,8 +560,14 @@ fn resolve_backend_model(config: &Config, backend_name: &str, cli_model: Option<
     }
 
     match backend_name {
-        "claude" => "sonnet".to_string(),
-        "codex" => "gpt-5.4".to_string(),
+        "claude" => {
+            warn_using_default("wiki.backends.claude.model", WIKI_CLAUDE_DEFAULT);
+            WIKI_CLAUDE_DEFAULT.to_string()
+        }
+        "codex" => {
+            warn_using_default("wiki.backends.codex.model", WIKI_CODEX_DEFAULT);
+            WIKI_CODEX_DEFAULT.to_string()
+        }
         _ => String::new(),
     }
 }
@@ -911,7 +918,10 @@ fn safe_project_name(name: &str) -> String {
 fn resolve_review_model(cli: Option<&str>, config: &Config) -> String {
     cli.map(|s| s.to_string())
         .or_else(|| config.wiki.review_model.clone())
-        .unwrap_or_else(|| "sonnet".to_string())
+        .unwrap_or_else(|| {
+            warn_using_default("wiki.review_model", WIKI_REVIEW_DEFAULT);
+            WIKI_REVIEW_DEFAULT.to_string()
+        })
 }
 
 /// 단일 프로젝트용 Haiku 프롬프트 (배치 모드에서 프로젝트별 호출용)

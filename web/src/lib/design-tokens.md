@@ -102,3 +102,11 @@ prototype 은 4-variant 토글 (teal/sage/amber/indigo) 였으나 production 은
 - `pnpm typecheck` — 컴포넌트 토큰 변경으로 깨지면 fix
 - 라이트/다크 모두 한 번씩 시각 점검 (Stage 2 부터 컴포넌트별 적용)
 - shadcn 컴포넌트 (Dialog/Popover/Toast 등) 가 새 indigo accent 로 자연스럽게 흐르는지 확인
+
+## Settings Form 토큰
+
+- input: `border-input bg-transparent text-text placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring`
+- select: `border-input bg-background text-text` + chevron icon `text-text-3`
+- section card: `border-hairline bg-[var(--surface)]`
+- readonly badge: `border-hairline bg-surface-2 text-text-3`
+- disabled state: `disabled:opacity-50 disabled:cursor-not-allowed`

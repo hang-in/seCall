@@ -140,6 +140,8 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/graph", post(api_graph))
         .route("/api/graph/snapshot", get(api_graph_snapshot))
         .route("/api/daily", post(api_daily))
+        .route("/api/config", get(api_config_get))
+        .route("/api/config/{section}", patch(api_config_patch))
         .route("/api/sessions", get(api_list_sessions))
         .route("/api/projects", get(api_list_projects))
         .route("/api/agents", get(api_list_agents))
@@ -177,9 +179,10 @@ pub async fn start_rest_server(
     vault_path: std::path::PathBuf,
     port: u16,
     executor: Arc<JobExecutor>,
+    allow_config_edit: bool,
 ) -> anyhow::Result<()> {
     let search_arc = Arc::new(search);
-    let server = SeCallMcpServer::new(db_arc, search_arc, vault_path);
+    let server = SeCallMcpServer::new_with_options(db_arc, search_arc, vault_path, allow_config_edit);
     let router = rest_router(server, executor);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -302,6 +305,47 @@ async fn api_daily(
     match s.do_daily(&date) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
+    }
+}
+
+async fn api_config_get(State(s): State<Arc<SeCallMcpServer>>) -> impl IntoResponse {
+    match s.do_config_get() {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn api_config_patch(
+    State(s): State<Arc<SeCallMcpServer>>,
+    AxumPath(section): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    match s.do_config_patch(&section, body) {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("config edit disabled") {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({"error": msg})),
+                )
+                    .into_response()
+            } else if msg.contains("unknown config section") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": msg})),
+                )
+                    .into_response()
+            } else if msg.contains("config patch body must be a JSON object") {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": msg})),
+                )
+                    .into_response()
+            } else {
+                error_response(e)
+            }
+        }
     }
 }
 

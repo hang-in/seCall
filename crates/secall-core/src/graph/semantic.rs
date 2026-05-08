@@ -2,6 +2,10 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::ingest::markdown::SessionFrontmatter;
+use crate::llm::defaults::{
+    warn_using_default, GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_LMSTUDIO_DEFAULT,
+    GRAPH_OLLAMA_DEFAULT,
+};
 use crate::store::Database;
 use crate::vault::config::GraphConfig;
 
@@ -281,7 +285,10 @@ async fn extract_with_gemini(
             )
         })?;
 
-    let model = cfg.gemini_model.as_deref().unwrap_or("gemini-2.5-flash");
+    let model = cfg.gemini_model.as_deref().unwrap_or_else(|| {
+        warn_using_default("graph.gemini_model", GRAPH_GEMINI_DEFAULT);
+        GRAPH_GEMINI_DEFAULT
+    });
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
         model, api_key
@@ -416,14 +423,20 @@ async fn extract_with_llm(
                 .ollama_url
                 .as_deref()
                 .unwrap_or("http://localhost:11434");
-            let model = config.ollama_model.as_deref().unwrap_or("gemma4:e4b");
+            let model = config.ollama_model.as_deref().unwrap_or_else(|| {
+                warn_using_default("graph.ollama_model", GRAPH_OLLAMA_DEFAULT);
+                GRAPH_OLLAMA_DEFAULT
+            });
             extract_with_ollama(fm, body, base_url, model).await
         }
         "anthropic" => {
             let model = config
                 .anthropic_model
                 .as_deref()
-                .unwrap_or("claude-haiku-4-5-20251001");
+                .unwrap_or_else(|| {
+                    warn_using_default("graph.anthropic_model", GRAPH_ANTHROPIC_DEFAULT);
+                    GRAPH_ANTHROPIC_DEFAULT
+                });
             extract_with_anthropic(fm, body, model).await
         }
         "gemini" => extract_with_gemini(fm, body, config).await,
@@ -432,7 +445,10 @@ async fn extract_with_llm(
                 .ollama_url
                 .as_deref()
                 .unwrap_or("http://localhost:1234");
-            let model = config.ollama_model.as_deref().unwrap_or("gemma-4-e4b-it");
+            let model = config.ollama_model.as_deref().unwrap_or_else(|| {
+                warn_using_default("graph.ollama_model", GRAPH_LMSTUDIO_DEFAULT);
+                GRAPH_LMSTUDIO_DEFAULT
+            });
             extract_with_openai_compat(fm, body, base_url, model).await
         }
         _ => anyhow::bail!("unknown semantic_backend: {}", config.semantic_backend),

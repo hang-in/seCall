@@ -179,6 +179,10 @@ enum Commands {
         /// Port number (default: 8080)
         #[arg(long, short, default_value = "8080")]
         port: u16,
+
+        /// Allow PATCH /api/config/* writes (local-only, dangerous if externally exposed)
+        #[arg(long)]
+        allow_config_edit: bool,
     },
 
     /// Manage ONNX embedding models
@@ -243,6 +247,14 @@ enum Commands {
     Log {
         /// 날짜 (YYYY-MM-DD). 생략 시 오늘
         date: Option<String>,
+
+        /// Backend: claude | codex | haiku | ollama | lmstudio
+        #[arg(long)]
+        backend: Option<String>,
+
+        /// Model name (backend-dependent)
+        #[arg(long)]
+        model: Option<String>,
     },
 
     /// View or modify configuration
@@ -264,7 +276,29 @@ enum ConfigAction {
         value: String,
     },
     /// Show config file path
-    Path,
+    Path {
+        /// Copy the config path to the clipboard when supported
+        #[arg(long)]
+        copy: bool,
+    },
+    /// LLM-focused config helpers
+    Llm {
+        #[command(subcommand)]
+        action: LlmAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LlmAction {
+    /// Show only LLM-related configuration
+    Show,
+    /// Set one LLM-related config value
+    Set {
+        key: String,
+        value: String,
+    },
+    /// Show config file location and LLM entry points
+    Where,
 }
 
 #[derive(Subcommand)]
@@ -506,8 +540,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mcp { http } => {
             commands::mcp::run(http).await?;
         }
-        Commands::Serve { port } => {
-            commands::serve::run(port).await?;
+        Commands::Serve {
+            port,
+            allow_config_edit,
+        } => {
+            commands::serve::run(port, allow_config_edit).await?;
         }
         Commands::Model { action } => match action {
             ModelAction::Download { force } => {
@@ -581,8 +618,12 @@ async fn main() -> anyhow::Result<()> {
                 commands::migrate::run_summary(dry_run)?;
             }
         },
-        Commands::Log { date } => {
-            commands::log::run(date).await?;
+        Commands::Log {
+            date,
+            backend,
+            model,
+        } => {
+            commands::log::run(date, backend, model).await?;
         }
         Commands::Graph { action } => match action {
             GraphAction::Semantic {
@@ -627,8 +668,19 @@ async fn main() -> anyhow::Result<()> {
             ConfigAction::Set { key, value } => {
                 commands::config::run_set(&key, &value)?;
             }
-            ConfigAction::Path => {
-                commands::config::run_path()?;
+            ConfigAction::Path { copy } => {
+                commands::config::run_path(copy)?;
+            }
+            ConfigAction::Llm { action } => match action {
+                LlmAction::Show => {
+                    commands::config::run_llm_show()?;
+                }
+                LlmAction::Set { key, value } => {
+                    commands::config::run_set(&key, &value)?;
+                }
+                LlmAction::Where => {
+                    commands::config::run_llm_where()?;
+                }
             }
         },
     }

@@ -578,19 +578,24 @@ secall graph export
 
 ## 설정
 
-`secall config` 명령으로 설정을 관리합니다. config.toml을 직접 편집할 필요가 없습니다.
+`secall config` 명령으로 설정을 관리합니다. 필요하면 Web UI `/settings` 와 REST `/api/config` 로도 같은 설정을 볼 수 있습니다.
 
 ```bash
 # 현재 설정 확인
 secall config show
+secall config llm show
 
 # 설정 변경
 secall config set output.timezone Asia/Seoul
 secall config set search.tokenizer kiwi
 secall config set embedding.backend ollama
+secall config llm set log.backend haiku
 
 # 설정 파일 경로 확인
 secall config path
+
+# Web UI에서 설정 편집 (기본은 read-only)
+secall serve --port 8080 --allow-config-edit
 ```
 
 ### 설정 키 목록
@@ -609,10 +614,15 @@ secall config path
 | `ingest.classification.skip_embed_types` | 임베딩을 스킵할 session_type 목록 | `[]` |
 | `graph.semantic_backend` | 시맨틱 엣지 추출 백엔드 (`gemini` / `ollama` / `lmstudio` / `none`) | `none` |
 | `graph.gemini_model` | Gemini 모델 이름 | `gemini-2.5-flash` |
+| `graph.ollama_model` | Ollama/LM Studio 시맨틱 모델 | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.backends.<name>.api_url` | 백엔드 API 엔드포인트 | (기본값 사용) |
 | `wiki.backends.<name>.model` | 백엔드 모델 이름 | (기본값 사용) |
 | `wiki.backends.<name>.max_tokens` | 최대 생성 토큰 수 | `4096` |
+| `log.backend` | Daily diary 백엔드 (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `graph.semantic_backend` 폴백 |
+| `log.model` | Daily diary 모델 override | backend 기본값 |
+| `log.api_url` | Daily diary API URL override | backend 기본값 |
+| `log.max_tokens` | Daily diary 최대 생성 토큰 수 | backend 기본값 |
 
 설정 파일 경로:
 - **macOS**: `~/Library/Application Support/secall/config.toml`
@@ -635,12 +645,13 @@ secall config path
 | `secall lint` | 인덱스/볼트 정합성 검증 |
 | `secall mcp [--http <addr>]` | MCP 서버 시작 |
 | `secall config show\|set\|path` | 설정 확인/변경 |
+| `secall config llm show\|set\|where` | LLM 관련 설정만 조회/변경 |
 | `secall graph build\|stats\|export` | Knowledge Graph 관리 |
 | `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | 시맨틱 그래프 재구축 (P37) — 우선순위: `--session` > `--all` > `--retry-failed` > `--since` |
 | `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | 위키 생성 (백엔드 선택 가능) |
 | `secall wiki status` | 위키 상태 확인 |
-| `secall log [YYYY-MM-DD]` | 날짜별 작업 일기 생성 |
-| `secall serve [--port <port>]` | REST API 서버 시작 (기본: 8080) |
+| `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]` | 날짜별 작업 일기 생성 |
+| `secall serve [--port <port>] [--allow-config-edit]` | REST API + Web UI 서버 시작 (`/settings` 저장은 flag 필요) |
 | `secall model download\|info\|check` | ONNX 모델 관리 |
 | `secall reindex --from-vault` | 볼트에서 DB 재구축 |
 | `secall migrate summary` | summary frontmatter 일괄 추가 |
@@ -752,6 +763,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-09 | v0.9.1 | P41 LLM 설정 통합: `secall log --backend/--model`, 신규 `[log]` 섹션, hard-coded default model 상수화 + warning, `GET /api/config` / `PATCH /api/config/{section}`, Web `/settings`, `secall config llm show\|set\|where` |
 | 2026-05-05 | v0.8.2 | P39 wiki 파이프라인 baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` 가 `git add -A` 로 SCHEMA.md / graph/ / log/ 등 모두 stage (`crates/secall-core/src/vault/git.rs:146`, 8 회귀 tests `tests/vault_auto_commit.rs`), `secall` 바이너리 부팅 시 `dotenvy::dotenv()` autoload (`crates/secall/src/main.rs:382` — Gemini/OpenAI 키 환경변수 자동 주입), 683 세션 sync baseline 측정 (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` 28 sessions / 840 edges 백필 |
 | 2026-05-03 | v0.8.1 | P38 테스트 갭 메우기: `tests/rest_routes.rs` (REST 22 엔드포인트 라우트 레벨 회귀, 45 tests) + `tests/session_repo_helpers.rs` (P32~P37 누적 helper 회귀, 29 tests) — 총 74 P38 신규 tests 추가, Insight TES-session_repo finding 해소 |
 | 2026-05-03 | v0.8.0 | Graph Sync 자동화 (P37): DB 스키마 v8 (`sessions.semantic_extracted_at` 컬럼으로 시맨틱 추출 상태 추적), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (`extract_one_session_semantic` helper 분리, 우선순위: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, P33 단일 큐 + P36 cancel 통합), web UI Commands 페이지 4번째 카드 "Graph Rebuild" + 옵션 다이얼로그 |

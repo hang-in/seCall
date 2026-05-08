@@ -4,6 +4,9 @@ pub mod graph;
 pub mod hooks;
 pub mod ingest;
 pub mod jobs;
+pub mod llm {
+    pub mod defaults;
+}
 pub mod mcp;
 pub mod search;
 pub mod store;
