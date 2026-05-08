@@ -10,6 +10,7 @@ const SessionDetailRoute = lazy(() => import("./SessionDetailRoute"));
 const DailyRoute = lazy(() => import("./DailyRoute"));
 const WikiRoute = lazy(() => import("./WikiRoute"));
 const CommandsRoute = lazy(() => import("./CommandsRoute"));
+const GraphRoute = lazy(() => import("./GraphRoute"));
 
 const lazyEl = (Comp: React.LazyExoticComponent<React.ComponentType>) => (
   <Suspense fallback={<RouteFallback />}>
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: "daily/:date", element: lazyEl(DailyRoute) },
       { path: "wiki", element: lazyEl(WikiRoute) },
       { path: "wiki/:project", element: lazyEl(WikiRoute) },
+      { path: "graph", element: lazyEl(GraphRoute) },
       { path: "commands", element: lazyEl(CommandsRoute) },
     ],
   },
