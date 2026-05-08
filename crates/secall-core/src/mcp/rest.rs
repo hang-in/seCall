@@ -138,6 +138,7 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/wiki", post(api_wiki).get(api_wiki_list))
         .route("/api/wiki/{project}", get(api_wiki_get))
         .route("/api/graph", post(api_graph))
+        .route("/api/graph/snapshot", get(api_graph_snapshot))
         .route("/api/daily", post(api_daily))
         .route("/api/sessions", get(api_list_sessions))
         .route("/api/projects", get(api_list_projects))
@@ -260,6 +261,24 @@ async fn api_wiki_get(
                 error_response(e)
             }
         }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct GraphSnapshotQuery {
+    session_limit: Option<usize>,
+}
+
+async fn api_graph_snapshot(
+    State(s): State<Arc<SeCallMcpServer>>,
+    axum::extract::Query(q): axum::extract::Query<GraphSnapshotQuery>,
+) -> impl IntoResponse {
+    let session_limit = q.session_limit.unwrap_or(80).clamp(10, 500);
+    // 동기 fs / SQLite I/O 라 spawn_blocking 으로 wrap.
+    match tokio::task::spawn_blocking(move || s.do_graph_snapshot(session_limit)).await {
+        Ok(Ok(json)) => (StatusCode::OK, Json(json)).into_response(),
+        Ok(Err(e)) => error_response(e),
+        Err(e) => error_response(anyhow::anyhow!("graph_snapshot task join: {e}")),
     }
 }
 

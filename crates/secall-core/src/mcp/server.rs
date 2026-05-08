@@ -328,6 +328,75 @@ impl SeCallMcpServer {
     /// 응답 형태: `{ "projects": [{"project": "<safe_name>", "updated": "<rfc3339>"}, ...], "count": N }`
     /// — secall-web 의 좌측 wiki 리스트가 sessions DB 의 distinct project 가 아닌
     ///   실제 wiki 페이지 기준으로 표시되도록 분리된 endpoint.
+    /// 의미 있는 그래프 subset 한 번에 반환 (Stage 9).
+    /// - project / topic / agent / tool 노드는 전부
+    /// - session 노드는 degree 상위 `session_limit` 개만 (default 80)
+    /// - 위 노드 ID 집합 안의 엣지만 포함
+    ///
+    /// 응답: `{"nodes": [{"id","type","label"}], "edges": [{"source","target","relation"}], "node_count", "edge_count"}`
+    pub fn do_graph_snapshot(&self, session_limit: usize) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
+
+        let mut all_nodes: Vec<(String, String, String)> = Vec::new();
+        for t in &["project", "topic", "agent", "tool"] {
+            all_nodes.extend(db.list_graph_nodes(Some(t))?);
+        }
+
+        // session 노드: degree (in + out) 상위 N
+        let mut stmt = db.conn().prepare(
+            "SELECT n.id, n.type, n.label,
+                    (SELECT COUNT(*) FROM graph_edges WHERE source = n.id OR target = n.id) AS deg
+             FROM graph_nodes n WHERE n.type = 'session'
+             ORDER BY deg DESC LIMIT ?1",
+        )?;
+        let session_rows: Vec<(String, String, String)> = stmt
+            .query_map([session_limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        all_nodes.extend(session_rows);
+
+        let id_set: std::collections::HashSet<String> =
+            all_nodes.iter().map(|n| n.0.clone()).collect();
+
+        let mut stmt = db
+            .conn()
+            .prepare("SELECT source, target, relation FROM graph_edges")?;
+        let edges: Vec<(String, String, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .filter(|(s, t, _)| id_set.contains(s) && id_set.contains(t))
+            .collect();
+
+        Ok(serde_json::json!({
+            "nodes": all_nodes
+                .iter()
+                .map(|(id, ty, lbl)| serde_json::json!({"id": id, "type": ty, "label": lbl}))
+                .collect::<Vec<_>>(),
+            "edges": edges
+                .iter()
+                .map(|(s, t, r)| serde_json::json!({"source": s, "target": t, "relation": r}))
+                .collect::<Vec<_>>(),
+            "node_count": all_nodes.len(),
+            "edge_count": edges.len(),
+            "session_limit": session_limit,
+        }))
+    }
+
     pub fn do_wiki_list(&self) -> anyhow::Result<serde_json::Value> {
         let projects_dir = self.vault_path.join("wiki").join("projects");
         if !projects_dir.exists() {

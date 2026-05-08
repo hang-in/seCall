@@ -112,6 +112,12 @@ export const api = {
   wikiSearch: (q: { query: string; limit?: number; mode?: "keyword" | "semantic" | "hybrid" }) =>
     jfetch<unknown>("/api/wiki", { method: "POST", body: JSON.stringify(q) }),
 
+  /** 의미 있는 그래프 subset (project + topic + agent + tool + degree top sessions). */
+  graphSnapshot: (sessionLimit = 80) =>
+    jfetch<unknown>(`/api/graph/snapshot?session_limit=${sessionLimit}`, {
+      method: "GET",
+    }),
+
   /** vault/wiki/projects/*.md 실존 페이지 목록. (sessions DB 의 distinct project 와 별개) */
   wikiList: () => jfetch<unknown>("/api/wiki", { method: "GET" }),
 
