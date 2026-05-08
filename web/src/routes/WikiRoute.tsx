@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Loader2 } from "lucide-react";
 import {
@@ -8,22 +8,25 @@ import {
   type WikiSearchMode,
 } from "@/hooks/useWiki";
 import { MarkdownView } from "@/components/MarkdownView";
+import { useUi } from "@/lib/store";
 
 /**
  * 위키 라우트.
  *
  * - 좌측: vault/wiki/projects/*.md 실존 페이지 리스트 (`useWikiList`).
- * - 좌측 상단: 검색 입력 + mode 토글(keyword/semantic/hybrid). 검색어가 있으면
- *   `useWikiSearch` 결과로 좌측을 대체. semantic/hybrid 는 P40 wiki_vectors + bge-m3
- *   기반 (Ollama 실행 필요, 미실행 시 backend 가 keyword 로 자동 fallback).
+ * - 검색은 TopNav 의 HeaderSearch 가 store 에 lift (mode: keyword/semantic/hybrid).
+ *   검색어가 있으면 좌측을 useWikiSearch 결과로 대체. semantic/hybrid 는 P40 기반 +
+ *   Ollama 미실행 시 backend 가 keyword 로 자동 fallback.
  * - 우측: `GET /api/wiki/{project}` 본문 (`useWikiPage`).
  */
 export default function WikiRoute() {
   const { project } = useParams<{ project?: string }>();
   const navigate = useNavigate();
 
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<WikiSearchMode>("keyword");
+  const query = useUi((s) => s.query);
+  const globalMode = useUi((s) => s.searchMode);
+  // store 의 mode 가 wiki 가 지원하는 3 mode 중 하나로 매핑.
+  const mode: WikiSearchMode = globalMode as WikiSearchMode;
   const trimmedQuery = query.trim();
 
   const projectsQuery = useWikiList();
@@ -55,44 +58,10 @@ export default function WikiRoute() {
   const isSearching = trimmedQuery.length > 0;
 
   return (
-    <div className="grid grid-cols-[300px_1fr] h-full">
-      <aside className="border-r border-border overflow-auto flex flex-col">
-        {/* 검색 바 + 모드 토글 */}
-        <div className="p-3 border-b border-border space-y-2">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="위키 검색…"
-            className="w-full px-2 py-1.5 text-sm bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-ring"
-          />
-          <div className="flex gap-1 text-[11px]">
-            {(["keyword", "semantic", "hybrid"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={`flex-1 px-2 py-1 rounded transition-colors ${
-                  mode === m
-                    ? "bg-secondary text-secondary-foreground font-medium"
-                    : "text-text-3 hover:bg-accent"
-                }`}
-                title={
-                  m === "keyword"
-                    ? "파일명/본문 substring (default)"
-                    : m === "semantic"
-                      ? "bge-m3 임베딩 코사인 유사도"
-                      : "keyword + semantic RRF 결합"
-                }
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 헤더 */}
-        <div className="p-3 text-xs text-text-3 uppercase tracking-wide border-b border-border">
+    <div className="grid grid-cols-[var(--list-w)_1fr] h-full">
+      <aside className="border-r border-hairline bg-[var(--surface)] overflow-auto flex flex-col">
+        {/* 헤더 (검색은 TopNav 의 HeaderSearch 가 처리) */}
+        <div className="px-ds-3 py-ds-2 eyebrow border-b border-hairline">
           {isSearching
             ? `검색 결과 (${searchQuery.data?.count ?? 0})`
             : "Projects"}

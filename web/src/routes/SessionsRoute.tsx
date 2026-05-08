@@ -1,39 +1,37 @@
 import { useState } from "react";
 import { Outlet } from "react-router";
-import { SearchBar } from "@/components/SearchBar";
+import { CollapsibleFilter } from "@/components/CollapsibleFilter";
 import { SessionFilters } from "@/components/SessionFilters";
 import { SessionList } from "@/components/SessionList";
+import { useUi, type GlobalSearchMode } from "@/lib/store";
 import type { SearchMode, SessionFilterState } from "@/lib/types";
 
 /**
  * 2-pane 세션 화면.
- * 좌측: 검색 + 필터 + 리스트 (스크롤)
- * 우측: 선택된 세션 상세 (Outlet — index 또는 :id)
+ * - 검색은 TopNav 의 HeaderSearch 가 store 에 lift (sessions 라우트는 keyword/semantic 두 모드).
+ * - 좌측: SessionList (가득) + 하단 접히는 CollapsibleFilter
+ * - 우측: 자식 라우트 (Outlet — index 또는 :id)
  */
 export default function SessionsRoute() {
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<SearchMode>("keyword");
+  const query = useUi((s) => s.query);
+  const globalMode = useUi((s) => s.searchMode);
   const [filters, setFilters] = useState<SessionFilterState>({});
 
-  // P34 Task 02 — 자식 라우트(SessionDetailRoute)가 검색어/모드를 받아
-  // MarkdownView 하이라이트에 사용한다.
+  // wiki 모드(`hybrid`)가 store 에 남아 있으면 sessions 에선 keyword 로 폴백.
+  const mode: SearchMode =
+    globalMode === "hybrid" ? "keyword" : (globalMode as SearchMode);
+
   const outletContext: SessionsOutletContext = { query, mode };
 
   return (
     <div className="grid grid-cols-[var(--list-w)_1fr] h-full">
       <div className="border-r border-hairline bg-[var(--surface)] flex flex-col overflow-hidden min-h-0">
-        <div className="p-ds-3 border-b border-hairline space-y-ds-2 shrink-0">
-          <SearchBar
-            value={query}
-            onChange={setQuery}
-            mode={mode}
-            onModeChange={setMode}
-          />
-          <SessionFilters value={filters} onChange={setFilters} />
-        </div>
         <div className="flex-1 overflow-auto">
           <SessionList query={query} mode={mode} filters={filters} />
         </div>
+        <CollapsibleFilter filters={filters} resultCount={null}>
+          <SessionFilters value={filters} onChange={setFilters} />
+        </CollapsibleFilter>
       </div>
 
       <div className="overflow-auto min-w-0 bg-[var(--bg)]">
@@ -43,11 +41,10 @@ export default function SessionsRoute() {
   );
 }
 
-/**
- * SessionsRoute가 Outlet으로 자식에게 전달하는 컨텍스트.
- * 자식 라우트는 `useOutletContext<SessionsOutletContext>()` 로 읽는다.
- */
 export interface SessionsOutletContext {
   query: string;
   mode: SearchMode;
 }
+
+// Re-export for store consumers
+export type { GlobalSearchMode };

@@ -1,7 +1,8 @@
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { Keyboard, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/lib/useTheme";
 import { useUi } from "@/lib/store";
+import { HeaderSearch } from "@/components/HeaderSearch";
 
 /**
  * 상단 네비게이션 — Calm/Editorial top nav (height = --nav-h, 48px).
@@ -24,6 +25,16 @@ const APP_VERSION = "v0.4.2";
 export function TopNav() {
   const { dark, toggle } = useTheme();
   const setHelpOpen = useUi((s) => s.setHelpDialogOpen);
+  const location = useLocation();
+
+  // sessions / wiki 라우트에서만 헤더 검색 노출. mode 후보는 라우트별로 다름.
+  const path = location.pathname;
+  const onSessions = path === "/" || path === "/sessions" || path.startsWith("/sessions/");
+  const onWiki = path === "/wiki" || path.startsWith("/wiki/");
+  const showSearch = onSessions || onWiki;
+  const modes = onWiki
+    ? (["keyword", "semantic", "hybrid"] as const)
+    : (["keyword", "semantic"] as const);
 
   return (
     <header className="h-nav-h shrink-0 border-b border-hairline bg-[var(--surface)] sticky top-0 z-30">
@@ -60,7 +71,10 @@ export function TopNav() {
           ))}
         </nav>
 
-        <div className="flex-1" />
+        {/* Center search slot — sessions/wiki 라우트에서만 노출 */}
+        <div className="flex-1 flex items-center justify-center min-w-0">
+          {showSearch && <HeaderSearch modes={modes} />}
+        </div>
 
         {/* Right icons */}
         <div className="flex items-center gap-ds-1 shrink-0">
