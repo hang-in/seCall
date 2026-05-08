@@ -1,24 +1,21 @@
 import { Loader2 } from "lucide-react";
 import { useOutletContext, useParams } from "react-router";
 import { MarkdownView } from "@/components/MarkdownView";
-import { RelatedSessions } from "@/components/RelatedSessions";
-import { SessionHeader } from "@/components/SessionHeader";
+import { SessionAside } from "@/components/SessionAside";
+import { SessionDetailHead } from "@/components/SessionDetailHead";
 import { useSession } from "@/hooks/useSessions";
 import type { SessionsOutletContext } from "./SessionsRoute";
 
 /**
- * 세션 상세 화면.
+ * 세션 상세 — prototype route-sessions.jsx 의 SessionDetailPane 2-column 패턴 (Stage 7).
  *
- * P32 Task 06 rework: tags / is_favorite / turn_count / start_time을 sessions 리스트 캐시
- * 대신 `/api/get` 응답 (`SessionDetail`) 에서 직접 사용. `/daily`, `/wiki`, 그래프 오버레이
- * 처럼 sessions 리스트를 거치지 않고 직접 진입한 경우에도 정확한 메타가 표시되며,
- * TagEditor / FavoriteButton 편집 시 기존 데이터 덮어쓰기 위험이 사라진다.
+ * - main: SessionDetailHead + MarkdownView
+ * - aside: SessionAside (메타 KV / 미니차트 / Related / Notes 4 카드)
+ *
+ * 작은 화면(<1024px) 에서는 column 이 1열로 stack.
  */
 export default function SessionDetailRoute() {
   const { id } = useParams<{ id: string }>();
-  // P34 Task 02 — SessionsRoute에서 검색어를 받아 MarkdownView 하이라이트에 사용.
-  // /sessions 가 아닌 다른 경로(예: /daily)에서 직접 진입하면 outlet context가 없으므로
-  // optional 처리 (`useOutletContext` 가 undefined를 반환하도록).
   const outletCtx = useOutletContext<SessionsOutletContext | undefined>();
   const query = outletCtx?.query ?? "";
   const { data, isLoading, error } = useSession(id, true);
@@ -42,16 +39,18 @@ export default function SessionDetailRoute() {
   const body = data.content ?? "";
 
   return (
-    <div className="p-ds-6 max-w-[var(--read-w)] mx-auto">
-      <SessionHeader id={id} detail={data} />
-      {body ? (
-        <MarkdownView content={body} query={query} />
-      ) : (
-        <div className="text-t-small text-text-3 italic">
-          본문이 비어 있습니다. (vault 파일 없음 · turns 없음)
-        </div>
-      )}
-      <RelatedSessions sessionId={id} />
+    <div className="p-ds-6 grid grid-cols-1 lg:grid-cols-[minmax(0,var(--read-w))_minmax(0,300px)] gap-ds-6 max-w-[1100px]">
+      <div className="min-w-0">
+        <SessionDetailHead id={id} detail={data} />
+        {body ? (
+          <MarkdownView content={body} query={query} />
+        ) : (
+          <div className="text-t-small text-text-3 italic">
+            본문이 비어 있습니다. (vault 파일 없음 · turns 없음)
+          </div>
+        )}
+      </div>
+      <SessionAside sessionId={id} detail={data} />
     </div>
   );
 }
