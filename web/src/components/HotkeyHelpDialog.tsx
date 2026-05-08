@@ -7,6 +7,11 @@ import {
 } from "@/components/ui/dialog";
 import { useUi } from "@/lib/store";
 
+/**
+ * 단축키 도움말 — Calm/Editorial 톤 (Stage 2b).
+ * 그룹별 카드 형태 + design-tokens 의 `.kbd` utility 활용.
+ */
+
 interface HotkeyEntry {
   keys: string;
   desc: string;
@@ -21,7 +26,7 @@ const HOTKEYS: HotkeyEntry[] = [
   { group: "이동", keys: "g d", desc: "Daily" },
   { group: "이동", keys: "g w", desc: "Wiki" },
   { group: "이동", keys: "g c", desc: "Commands" },
-  { group: "이동", keys: "g g", desc: "그래프 오버레이 토글" },
+  { group: "이동", keys: "g g", desc: "Graph" },
   { group: "리스트", keys: "j / k", desc: "다음 / 이전 항목" },
   { group: "리스트", keys: "Enter", desc: "선택 확정" },
   { group: "세션", keys: "[ / ]", desc: "이전 / 다음 세션" },
@@ -32,21 +37,17 @@ const HOTKEYS: HotkeyEntry[] = [
 const GROUP_ORDER = ["도움말", "전역", "이동", "리스트", "세션"];
 
 function Kbd({ keys }: { keys: string }) {
-  // "g s" 또는 "j / k" 같이 공백/슬래시로 분리해서 각 키를 <kbd>로 감싼다.
-  // 슬래시는 구분자로 노출.
+  // "g s" 또는 "j / k" 같이 공백/슬래시로 분리해서 각 키를 .kbd 로 감싼다.
   const tokens = keys.split(/(\s+|\/)/).filter((t) => t.trim() !== "");
   return (
     <span className="inline-flex items-center gap-1">
       {tokens.map((tok, i) =>
         tok === "/" ? (
-          <span key={i} className="text-muted-foreground text-xs">
+          <span key={i} className="text-text-4 text-t-caption">
             /
           </span>
         ) : (
-          <kbd
-            key={i}
-            className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded border border-border bg-muted px-1.5 text-[11px] font-mono text-foreground"
-          >
+          <kbd key={i} className="kbd">
             {tok}
           </kbd>
         ),
@@ -66,34 +67,33 @@ export function HotkeyHelpDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>키보드 단축키</DialogTitle>
-          <DialogDescription>
-            <kbd className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded border border-border bg-muted px-1.5 text-[11px] font-mono">
-              ?
-            </kbd>
-            를 다시 눌러 닫을 수 있습니다.
+      <DialogContent className="max-w-2xl">
+        <DialogHeader className="space-y-ds-1">
+          <DialogTitle className="text-t-h1">단축키</DialogTitle>
+          <DialogDescription className="text-t-small text-text-3 flex items-center gap-1.5">
+            <kbd className="kbd">?</kbd>
+            <span>를 다시 눌러 닫을 수 있습니다.</span>
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-ds-3 max-h-[60vh] overflow-y-auto pt-ds-2">
           {grouped.map(({ group, items }) => (
-            <section key={group} className="space-y-1.5">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                {group}
-              </h3>
-              <table className="w-full text-sm">
-                <tbody>
-                  {items.map((h) => (
-                    <tr key={`${group}-${h.keys}`} className="border-t border-border/50">
-                      <td className="py-1.5 pr-4 w-32">
-                        <Kbd keys={h.keys} />
-                      </td>
-                      <td className="py-1.5 text-foreground">{h.desc}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <section
+              key={group}
+              className="rounded-lg border border-hairline bg-surface-2 p-ds-3"
+            >
+              <div className="eyebrow mb-ds-2">{group}</div>
+              <ul className="space-y-ds-1">
+                {items.map((h) => (
+                  <li
+                    key={`${group}-${h.keys}`}
+                    className="flex items-center justify-between gap-ds-3 py-ds-1 text-t-small"
+                  >
+                    <span className="text-text-2">{h.desc}</span>
+                    <Kbd keys={h.keys} />
+                  </li>
+                ))}
+              </ul>
             </section>
           ))}
         </div>
