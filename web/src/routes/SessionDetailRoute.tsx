@@ -25,14 +25,14 @@ export default function SessionDetailRoute() {
 
   if (isLoading) {
     return (
-      <div className="p-8 flex items-center text-muted-foreground text-sm">
-        <Loader2 className="size-4 animate-spin mr-2" /> 세션 불러오는 중…
+      <div className="p-ds-7 flex items-center text-t-small text-text-3">
+        <Loader2 className="size-4 animate-spin mr-ds-2" /> 세션 불러오는 중…
       </div>
     );
   }
   if (error) {
     return (
-      <div className="p-8 text-rose-400 text-sm whitespace-pre-wrap">
+      <div className="p-ds-7 text-t-small text-status-danger whitespace-pre-wrap">
         {error instanceof Error ? error.message : String(error)}
       </div>
     );
@@ -42,12 +42,12 @@ export default function SessionDetailRoute() {
   const body = data.content ?? "";
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-ds-6 max-w-[var(--read-w)] mx-auto">
       <SessionHeader id={id} detail={data} />
       {body ? (
         <MarkdownView content={body} query={query} />
       ) : (
-        <div className="text-sm text-muted-foreground italic">
+        <div className="text-t-small text-text-3 italic">
           본문이 비어 있습니다. (vault 파일 없음 · turns 없음)
         </div>
       )}

@@ -36,7 +36,25 @@ export function MarkdownView({ content, query, className }: Props) {
 
   return (
     <div
-      className={`prose prose-invert prose-sm max-w-none prose-pre:bg-muted prose-pre:text-foreground prose-code:before:content-none prose-code:after:content-none ${className ?? ""}`}
+      className={[
+        // Tailwind typography prose + design-tokens 매핑.
+        // dark 모드는 prose-invert 가 처리. surface/text 색은 토큰 그대로 흐름.
+        "prose prose-sm dark:prose-invert max-w-none",
+        // code/pre 토큰 정렬 (mono + surface-2 + radius)
+        "prose-code:before:content-none prose-code:after:content-none",
+        "prose-code:font-mono prose-code:text-t-mono prose-code:text-text",
+        "prose-pre:bg-surface-2 prose-pre:border prose-pre:border-hairline prose-pre:rounded-lg prose-pre:text-text",
+        // headings: 본문이 prose 본문 톤보다 약간 묵직하게
+        "prose-headings:text-text prose-headings:font-medium prose-headings:tracking-tight",
+        // body
+        "prose-p:text-text-2",
+        // links: brand
+        "prose-a:text-brand prose-a:no-underline hover:prose-a:underline",
+        // hr / blockquote
+        "prose-hr:border-hairline",
+        "prose-blockquote:border-l-2 prose-blockquote:border-l-border-soft prose-blockquote:text-text-2 prose-blockquote:not-italic",
+        className ?? "",
+      ].join(" ")}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {content}

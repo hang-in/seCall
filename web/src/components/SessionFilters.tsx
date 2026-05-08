@@ -271,7 +271,7 @@ export function SessionFilters({ value, onChange }: Props) {
           className="h-7 px-2 text-xs gap-1"
           onClick={() => set("favorite", value.favorite ? undefined : true)}
         >
-          <Star className={`size-3.5 ${value.favorite ? "fill-amber-400 text-amber-400" : ""}`} />
+          <Star className={`size-3.5 ${value.favorite ? "fill-status-warn text-status-warn" : ""}`} />
           즐겨찾기만
         </Button>
         {hasAny && (
@@ -279,7 +279,7 @@ export function SessionFilters({ value, onChange }: Props) {
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+            className="h-7 px-2 text-xs gap-1 text-text-3"
             onClick={reset}
           >
             <X className="size-3.5" />

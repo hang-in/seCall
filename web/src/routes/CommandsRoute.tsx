@@ -15,13 +15,14 @@ export default function CommandsRoute() {
   );
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6 overflow-auto h-full">
-      <header>
-        <h1 className="text-2xl font-semibold flex items-center gap-2">
-          <Play className="size-5" /> Commands
+    <div className="p-ds-6 max-w-4xl mx-auto space-y-ds-6 overflow-auto h-full">
+      <header className="space-y-ds-1">
+        <h1 className="text-t-display-s font-medium tracking-tight flex items-center gap-ds-2">
+          <Play className="size-5 text-text-3" /> Commands
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          명령을 실행하여 sync / ingest / wiki update를 수행합니다. 한 번에 하나의 mutating 작업만 실행 가능합니다.
+        <p className="text-t-small text-text-3">
+          명령을 실행하여 sync / ingest / wiki update / graph rebuild 를 수행합니다.
+          한 번에 하나의 mutating 작업만 실행 가능합니다.
         </p>
       </header>
 
@@ -63,7 +64,7 @@ export default function CommandsRoute() {
             ))}
           </div>
         ) : (
-          <div className="text-sm text-muted-foreground">활성 작업 없음</div>
+          <div className="text-sm text-text-3">활성 작업 없음</div>
         )}
       </Card>
 
@@ -79,7 +80,7 @@ export default function CommandsRoute() {
             ))}
           </div>
         ) : (
-          <div className="text-sm text-muted-foreground">최근 작업 없음</div>
+          <div className="text-sm text-text-3">최근 작업 없음</div>
         )}
       </Card>
     </div>
