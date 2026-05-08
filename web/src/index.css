@@ -1,33 +1,233 @@
+/* ------------------------------------------------------------------
+   secall design tokens
+   Calm / Editorial · Linear-tone · indigo accent (fixed)
+
+   기준: docs/prompts/2026-05-06/web-redesign.md (Claude Design export)
+   - 라이트/다크 둘 다, 토글 노출 (TopNav 우상단)
+   - Accent indigo 단일 — 4-variant 토글은 production 에서 제거
+   - shadcn/ui 호환 토큰(hsl)도 같이 매핑해 radix 컴포넌트 회귀 방지
+   ------------------------------------------------------------------ */
+
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* 다크 모드 기본 — Linear/Vercel 톤 */
-    --background: 0 0% 7%;
-    --foreground: 0 0% 96%;
-    --card: 0 0% 10%;
-    --card-foreground: 0 0% 96%;
-    --popover: 0 0% 10%;
-    --popover-foreground: 0 0% 96%;
-    --primary: 263 70% 65%; /* violet 액센트 */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 14%;
-    --secondary-foreground: 0 0% 96%;
-    --muted: 0 0% 14%;
-    --muted-foreground: 0 0% 64%;
-    --accent: 0 0% 18%;
-    --accent-foreground: 0 0% 96%;
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 96%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 263 70% 65%;
+    /* ---- color · light ---- */
+    --bg:            #FAFAFA;
+    --surface:       #FFFFFF;
+    --surface-2:     #F4F5F7;
+    --surface-3:     #ECEEF1;
+    --hairline:      #ECEDEF;
+    --border-soft:   #DCDEE2;
+    --border-strong: #C4C6CC;
+    --text:          #0F1115;
+    --text-2:        #3D4148;
+    --text-3:        #6B7079;
+    --text-4:        #9095A0;
+    --text-on-accent:#FFFFFF;
+
+    --accent:        #4258C3;     /* indigo — AA on light bg */
+    --accent-hover:  #384BA9;
+    --accent-soft:   rgba(66,88,195,.09);
+    --accent-border: rgba(66,88,195,.30);
+
+    --danger:        #C8403F;
+    --warn:          #B58415;
+    --success:       #2F7D55;
+    --info:          #2C6FB7;
+
+    /* agent palette — used for tiny role dots, never as fills */
+    --agent-claude-code: #C46A28;
+    --agent-codex:       #6B5BD6;
+    --agent-gemini:      #2C6FB7;
+    --agent-claude-ai:   #B0566B;
+    --agent-chatgpt:     #2F7D55;
+
+    /* ---- shadcn/ui 호환 hsl 토큰 (radix 컴포넌트가 직접 참조) ---- */
+    --background:                  0 0% 98%;        /* #FAFAFA */
+    --foreground:                  220 14% 7%;       /* #0F1115 */
+    --card:                        0 0% 100%;        /* #FFFFFF */
+    --card-foreground:             220 14% 7%;
+    --popover:                     0 0% 100%;
+    --popover-foreground:          220 14% 7%;
+    --primary:                     230 51% 51%;      /* indigo #4258C3 */
+    --primary-foreground:          0 0% 100%;
+    --secondary:                   220 8% 95%;       /* surface-2 */
+    --secondary-foreground:        220 14% 7%;
+    --muted:                       220 8% 93%;       /* surface-3 */
+    --muted-foreground:            220 5% 45%;       /* text-3 */
+    --accent-bg:                   220 8% 93%;       /* shadcn accent (호버 배경) */
+    --accent-foreground:           220 14% 7%;
+    --destructive:                 1 53% 51%;        /* #C8403F */
+    --destructive-foreground:      0 0% 100%;
+    --border:                      220 7% 87%;       /* border-soft */
+    --input:                       220 7% 87%;
+    --ring:                        230 51% 51%;
+
+    /* ---- type ---- */
+    --font-sans: 'Pretendard Variable', 'Geist', -apple-system, BlinkMacSystemFont,
+                  'Segoe UI', sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+    /* type scale — KR/EN balanced */
+    --t-display-s:  22px;   --t-display-s-lh: 30px;  --t-display-s-tr: -0.011em;
+    --t-h1:         18px;   --t-h1-lh:        26px;  --t-h1-tr:        -0.006em;
+    --t-h2:         15px;   --t-h2-lh:        22px;  --t-h2-tr:         0;
+    --t-h3:         14px;   --t-h3-lh:        20px;  --t-h3-tr:         0;
+    --t-body:       14px;   --t-body-lh:      22px;
+    --t-prose:      15px;   --t-prose-lh:     26px;
+    --t-small:      13px;   --t-small-lh:     19px;
+    --t-meta:       12px;   --t-meta-lh:      16px;  --t-meta-tr:       0.005em;
+    --t-caption:    11px;   --t-caption-lh:   14px;  --t-caption-tr:    0.06em;
+    --t-mono:       12.5px; --t-mono-lh:      19px;
+
+    /* ---- space (8-grid w/ 4 half-step) ---- */
+    --s-1: 4px;  --s-2: 8px;  --s-3: 12px;  --s-4: 16px;
+    --s-5: 20px; --s-6: 24px; --s-7: 32px;  --s-8: 40px;
+    --s-9: 56px; --s-10: 72px;
+
+    /* ---- radius ---- */
+    --r-1: 4px;  --r-2: 6px;  --r-3: 8px;  --r-4: 10px; --r-5: 14px;
+
+    /* ---- elevation ---- */
+    --shadow-1: 0 1px 0 rgba(15,17,21,.04);
+    --shadow-2: 0 1px 2px rgba(15,17,21,.06), 0 1px 0 rgba(15,17,21,.03);
+    --shadow-pop: 0 12px 32px -10px rgba(15,17,21,.18), 0 2px 6px rgba(15,17,21,.06);
+
+    /* ---- motion ---- */
+    --ease: cubic-bezier(.2,0,0,1);
+    --t-fast: 120ms;
+    --t-base: 160ms;
+    --t-slow: 240ms;
+
+    /* ---- layout ---- */
+    --nav-h:   48px;
+    --list-w:  376px;
+    --read-w:  720px;
   }
 
+  /* ---------- dark ---------- */
+  .dark {
+    --bg:            #0B0C0D;
+    --surface:       #131518;
+    --surface-2:     #181B1F;
+    --surface-3:     #1F2227;
+    --hairline:      #1E2125;
+    --border-soft:   #272A2F;
+    --border-strong: #34373D;
+    --text:          #E6E7EA;
+    --text-2:        #B7BCC4;
+    --text-3:        #8A8F98;
+    --text-4:        #5F6470;
+    --text-on-accent:#0C0F1E;
+
+    --accent:        #6E84E2;     /* indigo — vibrant on dark */
+    --accent-hover:  #8B9CEB;
+    --accent-soft:   rgba(110,132,226,.10);
+    --accent-border: rgba(110,132,226,.30);
+
+    --danger:        #E5736F;
+    --warn:          #D9A24A;
+    --success:       #5BB47A;
+    --info:          #5B95E6;
+
+    --agent-claude-code: #E5995C;
+    --agent-codex:       #9D8DEB;
+    --agent-gemini:      #6FA1E5;
+    --agent-claude-ai:   #D58597;
+    --agent-chatgpt:     #79C193;
+
+    --shadow-1: 0 1px 0 rgba(0,0,0,.4);
+    --shadow-2: 0 1px 0 rgba(0,0,0,.4);
+    --shadow-pop: 0 16px 40px -10px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+
+    /* shadcn 호환 hsl 토큰 — dark */
+    --background:                  220 7% 5%;        /* #0B0C0D */
+    --foreground:                  220 5% 91%;       /* #E6E7EA */
+    --card:                        220 8% 9%;        /* #131518 */
+    --card-foreground:             220 5% 91%;
+    --popover:                     220 8% 9%;
+    --popover-foreground:          220 5% 91%;
+    --primary:                     226 67% 66%;      /* indigo #6E84E2 */
+    --primary-foreground:          228 44% 9%;
+    --secondary:                   220 8% 11%;       /* surface-2 */
+    --secondary-foreground:        220 5% 91%;
+    --muted:                       220 9% 13%;       /* surface-3 */
+    --muted-foreground:            220 5% 57%;       /* text-3 */
+    --accent-bg:                   220 9% 13%;
+    --accent-foreground:           220 5% 91%;
+    --destructive:                 3 67% 66%;        /* #E5736F */
+    --destructive-foreground:      0 0% 100%;
+    --border:                      220 6% 17%;       /* border-soft */
+    --input:                       220 6% 17%;
+    --ring:                        226 67% 66%;
+  }
+
+  /* ---------- base ---------- */
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; }
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "ss01", "cv01";
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--t-body);
+    line-height: var(--t-body-lh);
+    font-feature-settings: "ss01", "ss02", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  button, input, textarea, select {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* selection */
+  ::selection { background: var(--accent-soft); color: var(--text); }
+
+  /* scrollbar */
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border: 3px solid var(--bg);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+  /* focus ring — accent, hairline outside */
+  :focus { outline: none; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-1);
+  }
+}
+
+/* ---------- utility (Tailwind 외 prototype 호환) ---------- */
+@layer utilities {
+  .mono { font-family: var(--font-mono); font-size: var(--t-mono); line-height: var(--t-mono-lh); }
+  .eyebrow {
+    font-size: var(--t-caption);
+    line-height: var(--t-caption-lh);
+    letter-spacing: var(--t-caption-tr);
+    text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 500;
+  }
+  .hairline { background: var(--hairline); height: 1px; width: 100%; }
+  .kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: var(--r-1); color: var(--text-2);
+    box-shadow: 0 1px 0 var(--border-soft);
   }
 }
