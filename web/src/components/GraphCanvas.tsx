@@ -84,7 +84,7 @@ export function GraphCanvas({ onNodeClick }: Props) {
 
   if (!startNodeId) {
     return (
-      <div className="h-full flex items-center justify-center text-muted-foreground">
+      <div className="h-full flex items-center justify-center text-text-3">
         시작 노드 없음
       </div>
     );

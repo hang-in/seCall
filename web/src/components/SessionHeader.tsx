@@ -34,13 +34,13 @@ export function SessionHeader({ id, detail }: Props) {
   const startTime = detail.start_time;
 
   return (
-    <header className="border-b border-border pb-4 mb-6 space-y-3">
-      <div className="flex items-start justify-between gap-3">
+    <header className="border-b border-hairline pb-ds-4 mb-ds-6 space-y-ds-3">
+      <div className="flex items-start justify-between gap-ds-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold truncate">
+          <h1 className="text-t-display-s font-medium tracking-tight truncate text-text">
             {detail.project ?? detail.agent}
           </h1>
-          <div className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <div className="text-t-meta text-text-3 mt-ds-1 flex flex-wrap items-center gap-x-ds-3 gap-y-0.5">
             <span className="tabular-nums">{detail.date}</span>
             {startTime && <span className="tabular-nums">{startTime}</span>}
             {typeof turnCount === "number" && <span>{turnCount} turns</span>}
@@ -59,7 +59,7 @@ export function SessionHeader({ id, detail }: Props) {
       )}
       {detail.tool_use_counts && detail.tool_use_counts.length > 0 && (
         <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          <summary className="cursor-pointer text-text-3 hover:text-foreground">
             Tool 사용 ({detail.tool_use_counts.length})
           </summary>
           <div className="mt-1.5">

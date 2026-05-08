@@ -75,7 +75,7 @@ export default function WikiRoute() {
                 className={`flex-1 px-2 py-1 rounded transition-colors ${
                   mode === m
                     ? "bg-secondary text-secondary-foreground font-medium"
-                    : "text-muted-foreground hover:bg-accent"
+                    : "text-text-3 hover:bg-accent"
                 }`}
                 title={
                   m === "keyword"
@@ -92,7 +92,7 @@ export default function WikiRoute() {
         </div>
 
         {/* 헤더 */}
-        <div className="p-3 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
+        <div className="p-3 text-xs text-text-3 uppercase tracking-wide border-b border-border">
           {isSearching
             ? `검색 결과 (${searchQuery.data?.count ?? 0})`
             : "Projects"}
@@ -102,12 +102,12 @@ export default function WikiRoute() {
         {isSearching ? (
           <div className="flex-1 overflow-auto">
             {searchQuery.isLoading && (
-              <div className="p-3 text-xs text-muted-foreground flex items-center">
+              <div className="p-3 text-xs text-text-3 flex items-center">
                 <Loader2 className="size-3 animate-spin mr-2" /> 검색 중…
               </div>
             )}
             {searchQuery.error && (
-              <div className="p-3 text-xs text-rose-400">
+              <div className="p-3 text-xs text-status-danger">
                 {searchQuery.error instanceof Error
                   ? searchQuery.error.message
                   : String(searchQuery.error)}
@@ -132,11 +132,11 @@ export default function WikiRoute() {
                   }`}
                 >
                   <div>{item.title}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+                  <div className="text-[10px] text-text-3 mt-0.5 font-mono">
                     {item.path}
                   </div>
                   {item.preview && (
-                    <div className="text-[11px] text-muted-foreground mt-1 line-clamp-2">
+                    <div className="text-[11px] text-text-3 mt-1 line-clamp-2">
                       {item.preview}
                     </div>
                   )}
@@ -144,7 +144,7 @@ export default function WikiRoute() {
               ))}
             </div>
             {searchQuery.data && searchQuery.data.results.length === 0 && (
-              <div className="p-3 text-xs text-muted-foreground italic">
+              <div className="p-3 text-xs text-text-3 italic">
                 결과가 없습니다
               </div>
             )}
@@ -152,12 +152,12 @@ export default function WikiRoute() {
         ) : (
           <div className="flex-1 overflow-auto">
             {projectsQuery.isLoading && (
-              <div className="p-3 text-xs text-muted-foreground flex items-center">
+              <div className="p-3 text-xs text-text-3 flex items-center">
                 <Loader2 className="size-3 animate-spin mr-2" /> 불러오는 중…
               </div>
             )}
             {projectsQuery.error && (
-              <div className="p-3 text-xs text-rose-400">
+              <div className="p-3 text-xs text-status-danger">
                 {projectsQuery.error instanceof Error
                   ? projectsQuery.error.message
                   : String(projectsQuery.error)}
@@ -177,7 +177,7 @@ export default function WikiRoute() {
                 >
                   <div>{item.project}</div>
                   {item.updated && (
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                    <div className="text-[10px] text-text-3 mt-0.5">
                       {item.updated.slice(0, 10)}
                     </div>
                   )}
@@ -185,7 +185,7 @@ export default function WikiRoute() {
               ))}
             </div>
             {projectsQuery.data && projectsQuery.data.projects.length === 0 && (
-              <div className="p-3 text-xs text-muted-foreground italic">
+              <div className="p-3 text-xs text-text-3 italic">
                 위키 페이지가 없습니다 (vault/wiki/projects/*.md)
               </div>
             )}
@@ -195,24 +195,24 @@ export default function WikiRoute() {
 
       <div className="overflow-auto p-6 max-w-4xl">
         {!project && (
-          <div className="text-muted-foreground text-sm">
+          <div className="text-text-3 text-sm">
             좌측에서 프로젝트를 선택하세요
           </div>
         )}
         {project && wikiQuery.isLoading && (
-          <div className="flex items-center text-muted-foreground text-sm">
+          <div className="flex items-center text-text-3 text-sm">
             <Loader2 className="size-4 animate-spin mr-2" /> 불러오는 중…
           </div>
         )}
         {project && wikiQuery.error && (
-          <div className="text-rose-400 text-sm">
+          <div className="text-status-danger text-sm">
             위키 페이지를 찾을 수 없습니다:{" "}
             <span className="font-mono">
               {wikiQuery.error instanceof Error
                 ? wikiQuery.error.message
                 : String(wikiQuery.error)}
             </span>
-            <div className="mt-2 text-xs text-muted-foreground italic">
+            <div className="mt-2 text-xs text-text-3 italic">
               <code className="font-mono">vault/wiki/projects/</code> 아래 해당 프로젝트의 페이지가 없을 수 있습니다.
             </div>
           </div>
@@ -221,7 +221,7 @@ export default function WikiRoute() {
           <article>
             <header className="mb-6 pb-3 border-b border-border">
               <h1 className="text-2xl font-semibold">{wikiQuery.data.project}</h1>
-              <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-x-3">
+              <div className="text-[11px] text-text-3 mt-1 flex flex-wrap gap-x-3">
                 <span className="font-mono opacity-70">{wikiQuery.data.path}</span>
                 {wikiQuery.data.updated && (
                   <span>last modified: {wikiQuery.data.updated}</span>

@@ -78,8 +78,8 @@ export function GraphOverlay() {
                   <span style={{ color: style.color }}>
                     <Icon className="size-3" />
                   </span>
-                  <span className="text-muted-foreground">{style.label}</span>
-                  <span className="text-muted-foreground/60 text-[10px]">({key})</span>
+                  <span className="text-text-3">{style.label}</span>
+                  <span className="text-text-3/60 text-[10px]">({key})</span>
                 </li>
               );
             })}

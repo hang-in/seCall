@@ -26,21 +26,21 @@ export default function DailyRoute() {
 
   return (
     <div className="grid grid-cols-[320px_1fr] h-full">
-      <aside className="border-r border-border p-4 space-y-4 overflow-auto">
+      <aside className="border-r border-hairline bg-[var(--surface)] p-ds-4 space-y-ds-4 overflow-auto">
         <DateNavigator value={current} onChange={go} />
-        <div className="text-xs text-muted-foreground space-y-1">
+        <div className="text-t-meta text-text-3 space-y-ds-1">
           {data && (
             <>
               <div>
-                전체 세션: <span className="text-foreground">{data.total_sessions}</span>
+                전체 세션: <span className="text-text">{data.total_sessions}</span>
               </div>
               <div>
                 의미있는 세션:{" "}
-                <span className="text-foreground">{data.filtered_sessions}</span>
+                <span className="text-text">{data.filtered_sessions}</span>
               </div>
               <div>
                 프로젝트:{" "}
-                <span className="text-foreground">
+                <span className="text-text">
                   {Object.keys(data.projects).length}
                 </span>
               </div>
@@ -49,22 +49,24 @@ export default function DailyRoute() {
         </div>
       </aside>
 
-      <div className="overflow-auto p-6 max-w-5xl">
+      <div className="overflow-auto p-ds-6 max-w-5xl bg-[var(--bg)]">
         {isLoading && (
-          <div className="flex items-center text-muted-foreground text-sm">
-            <Loader2 className="size-4 animate-spin mr-2" /> 불러오는 중…
+          <div className="flex items-center text-text-3 text-t-small">
+            <Loader2 className="size-4 animate-spin mr-ds-2" /> 불러오는 중…
           </div>
         )}
         {error && (
-          <div className="text-rose-400 text-sm">
+          <div className="text-status-danger text-t-small">
             {error instanceof Error ? error.message : String(error)}
           </div>
         )}
         {data && !isLoading && (
-          <div className="space-y-6">
-            <header>
-              <h1 className="text-2xl font-semibold tabular-nums">{data.date}</h1>
-              <div className="text-sm text-muted-foreground mt-1">
+          <div className="space-y-ds-6">
+            <header className="space-y-ds-1">
+              <h1 className="text-t-display-s font-medium tracking-tight tabular-nums">
+                {data.date}
+              </h1>
+              <div className="text-t-small text-text-3">
                 {data.filtered_sessions === 0
                   ? "이 날의 의미있는 세션이 없습니다"
                   : `${data.filtered_sessions}개 세션 / ${Object.keys(data.projects).length}개 프로젝트`}
@@ -73,14 +75,12 @@ export default function DailyRoute() {
 
             {data.topics.length > 0 && (
               <section>
-                <h2 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-                  Topics
-                </h2>
-                <div className="flex flex-wrap gap-1.5">
+                <h2 className="eyebrow mb-ds-2">Topics</h2>
+                <div className="flex flex-wrap gap-ds-1">
                   {data.topics.map((t) => (
                     <span
                       key={t}
-                      className={`text-xs px-2 py-0.5 rounded ring-1 ${tagColor(t)}`}
+                      className={`text-t-meta px-ds-2 py-0.5 rounded-sm ring-1 ${tagColor(t)}`}
                     >
                       {t}
                     </span>
@@ -89,35 +89,35 @@ export default function DailyRoute() {
               </section>
             )}
 
-            <section className="space-y-4">
+            <section className="space-y-ds-4">
               {Object.entries(data.projects).map(([project, sessions]) => (
                 <article
                   key={project}
-                  className="border border-border rounded-md p-4 bg-card/50"
+                  className="border border-hairline rounded-lg p-ds-4 bg-[var(--surface)]"
                 >
-                  <h3 className="font-semibold mb-3 flex items-baseline gap-2">
+                  <h3 className="text-t-h2 font-medium mb-ds-3 flex items-baseline gap-ds-2">
                     <span>{project}</span>
-                    <span className="text-xs text-muted-foreground font-normal">
+                    <span className="text-t-meta text-text-3 font-normal">
                       ({sessions.length})
                     </span>
                   </h3>
-                  <ul className="space-y-2">
+                  <ul className="space-y-ds-1">
                     {sessions.map((s) => (
                       <li key={s.session_id}>
                         <Link
                           to={`/sessions/${s.session_id}`}
-                          className="block hover:bg-accent rounded px-2 py-1.5 -mx-2 transition-colors"
+                          className="block hover:bg-surface-2 rounded-md px-ds-2 py-ds-1 -mx-ds-2 transition-colors duration-fast ease-ds"
                         >
-                          <div className="text-sm">
+                          <div className="text-t-small text-text-2">
                             {s.summary || (
-                              <span className="italic text-muted-foreground">
+                              <span className="italic text-text-4">
                                 (요약 없음)
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
+                          <div className="text-t-meta text-text-3 mt-0.5 flex items-center gap-ds-2">
                             <span>{s.turn_count} turns</span>
-                            <span className="font-mono opacity-60">
+                            <span className="font-mono opacity-70 tabular-nums">
                               {s.session_id.slice(0, 8)}
                             </span>
                           </div>

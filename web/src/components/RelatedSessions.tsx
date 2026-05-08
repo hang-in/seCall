@@ -15,7 +15,7 @@ export function RelatedSessions({ sessionId }: { sessionId: string }) {
 
   if (isLoading) {
     return (
-      <div className="mt-8 text-xs text-muted-foreground">
+      <div className="mt-8 text-xs text-text-3">
         관련 세션 로딩...
       </div>
     );
@@ -23,11 +23,11 @@ export function RelatedSessions({ sessionId }: { sessionId: string }) {
   if (!items.length) return null;
 
   return (
-    <section className="mt-8 border-t border-border pt-4">
-      <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-        <Network className="size-4" /> 관련 세션 ({items.length})
+    <section className="mt-ds-8 border-t border-hairline pt-ds-4">
+      <h3 className="eyebrow mb-ds-3 flex items-center gap-ds-2">
+        <Network className="size-3.5" /> 관련 세션 ({items.length})
       </h3>
-      <ul className="space-y-1.5">
+      <ul className="space-y-ds-1">
         {items.map((it) => (
           <li key={it.id}>
             <button
@@ -35,10 +35,10 @@ export function RelatedSessions({ sessionId }: { sessionId: string }) {
               onClick={() =>
                 navigate(`/sessions/${encodeURIComponent(it.id)}`)
               }
-              className="w-full text-left p-2 rounded hover:bg-accent text-sm flex items-center justify-between gap-2"
+              className="w-full text-left p-ds-2 rounded-md hover:bg-surface-2 text-t-small flex items-center justify-between gap-ds-2 transition-colors duration-fast ease-ds"
             >
-              <span className="truncate">{it.title ?? it.id.slice(0, 8)}</span>
-              <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+              <span className="truncate text-text-2">{it.title ?? it.id.slice(0, 8)}</span>
+              <span className="text-t-meta text-text-3 tabular-nums shrink-0">
                 {it.reason}
                 {it.date ? ` · ${it.date}` : ""}
               </span>

@@ -33,17 +33,17 @@ export function CommandButton({ kind, label, description }: Props) {
         type="button"
         onClick={() => setOpen(true)}
         disabled={mutation.isPending}
-        className="text-left p-3 border border-border rounded hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="text-left p-ds-4 border border-hairline rounded-lg bg-[var(--surface)] hover:bg-surface-2 hover:border-border-soft transition-colors duration-fast ease-ds disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <div className="font-medium flex items-center gap-2">
+        <div className="text-t-body font-medium flex items-center gap-ds-2">
           {mutation.isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 className="size-4 animate-spin text-brand" />
           ) : (
-            <Play className="size-4" />
+            <Play className="size-4 text-text-3" />
           )}
           {label}
         </div>
-        <div className="text-xs text-muted-foreground mt-1">{description}</div>
+        <div className="text-t-meta text-text-3 mt-ds-1">{description}</div>
       </button>
       <JobOptionsDialog
         kind={kind}

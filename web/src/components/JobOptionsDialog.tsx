@@ -226,14 +226,14 @@ function IngestForm({
       <div className="space-y-1">
         <label className="text-sm font-medium">cwd</label>
         <Input placeholder="(빈 값이면 현재 cwd)" {...register("cwd")} />
-        <p className="text-xs text-muted-foreground">파싱 대상 작업 디렉토리</p>
+        <p className="text-xs text-text-3">파싱 대상 작업 디렉토리</p>
       </div>
       <CheckboxRow label="auto" register={register("auto")} hint="설치된 에이전트 자동 감지" />
       <CheckboxRow label="force" register={register("force")} hint="기존 인덱스 무시하고 재처리" />
       <div className="space-y-1">
         <label className="text-sm font-medium">min_turns</label>
         <Input type="number" min={0} placeholder="(기본값 사용)" {...register("min_turns")} />
-        <p className="text-xs text-muted-foreground">최소 턴 수 미만 세션은 스킵</p>
+        <p className="text-xs text-text-3">최소 턴 수 미만 세션은 스킵</p>
       </div>
       <CheckboxRow label="no_semantic" register={register("no_semantic")} hint="시맨틱 임베딩 생략" />
       <CheckboxRow label="auto_graph" register={register("auto_graph")} hint="ingest 직후 그래프 추출" />
@@ -296,7 +296,7 @@ function WikiForm({
       <div className="space-y-1">
         <label className="text-sm font-medium">since</label>
         <Input type="date" {...register("since")} />
-        <p className="text-xs text-muted-foreground">이 날짜 이후 세션만 위키화</p>
+        <p className="text-xs text-text-3">이 날짜 이후 세션만 위키화</p>
       </div>
       <div className="space-y-1">
         <label className="text-sm font-medium">session</label>
@@ -340,7 +340,7 @@ function GraphRebuildForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-      <p className="text-xs text-muted-foreground border border-border rounded px-2 py-1.5">
+      <p className="text-xs text-text-3 border border-border rounded px-2 py-1.5">
         우선순위: <span className="font-mono">session</span> &gt;{" "}
         <span className="font-mono">all</span> &gt;{" "}
         <span className="font-mono">retry_failed</span> &gt;{" "}
@@ -349,7 +349,7 @@ function GraphRebuildForm({
       <div className="space-y-1">
         <label className="text-sm font-medium">since</label>
         <Input type="date" {...register("since")} />
-        <p className="text-xs text-muted-foreground">이 날짜 이후 세션만 대상</p>
+        <p className="text-xs text-text-3">이 날짜 이후 세션만 대상</p>
       </div>
       <div className="space-y-1">
         <label className="text-sm font-medium">session</label>
@@ -357,7 +357,7 @@ function GraphRebuildForm({
           placeholder="full session_id (UUID)"
           {...register("session")}
         />
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-text-3">
           전체 session_id 정확히 입력 (backend 는 exact match — prefix 미지원)
         </p>
       </div>
@@ -397,7 +397,7 @@ function CheckboxRow({
       />
       <div>
         <div className="font-mono text-xs">{label}</div>
-        {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+        {hint && <div className="text-xs text-text-3">{hint}</div>}
       </div>
     </label>
   );

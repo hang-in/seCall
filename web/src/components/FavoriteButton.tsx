@@ -34,11 +34,11 @@ export function FavoriteButton({ sessionId, initial }: Props) {
       aria-label={on ? "즐겨찾기 해제" : "즐겨찾기"}
       aria-pressed={on}
       data-hotkey="favorite"
-      className="p-2 rounded hover:bg-accent transition-colors"
+      className="p-ds-2 rounded-md hover:bg-surface-2 transition-colors duration-fast ease-ds"
     >
       <Star
         className={`size-5 ${
-          on ? "fill-amber-400 text-amber-400" : "text-muted-foreground"
+          on ? "fill-status-warn text-status-warn" : "text-text-3"
         }`}
       />
     </button>

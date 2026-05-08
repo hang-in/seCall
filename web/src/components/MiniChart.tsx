@@ -39,7 +39,7 @@ export function RoleStackedBar({ user, assistant, system }: RoleProps) {
           title={`system ${system}`}
         />
       </div>
-      <span className="tabular-nums text-muted-foreground shrink-0">
+      <span className="tabular-nums text-text-3 shrink-0">
         {user}u · {assistant}a{system > 0 ? ` · ${system}s` : ""}
       </span>
     </div>

@@ -55,10 +55,10 @@ export function NoteEditor({ sessionId, initial }: Props) {
 
   return (
     <details
-      className="border-t border-border pt-3 mt-3"
+      className="border-t border-hairline pt-ds-3 mt-ds-3"
       data-hotkey-anchor="notes"
     >
-      <summary className="cursor-pointer text-sm font-medium flex items-center gap-2">
+      <summary className="cursor-pointer text-t-small font-medium flex items-center gap-ds-2 text-text">
         노트
         <SaveIndicator state={state} />
       </summary>
@@ -68,7 +68,7 @@ export function NoteEditor({ sessionId, initial }: Props) {
         placeholder="이 세션에 대한 메모..."
         rows={4}
         data-hotkey="notes"
-        className="mt-2 w-full bg-background border border-border rounded p-2 text-sm font-mono resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+        className="mt-ds-2 w-full bg-[var(--surface)] border border-border-soft rounded-md p-ds-2 text-t-small font-mono text-text-2 resize-y focus:outline-none focus:ring-2 focus:ring-brand-soft focus:border-brand"
       />
     </details>
   );
@@ -77,26 +77,26 @@ export function NoteEditor({ sessionId, initial }: Props) {
 function SaveIndicator({ state }: { state: SaveState }) {
   if (state === "saving")
     return (
-      <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+      <span className="text-t-meta text-text-3 inline-flex items-center gap-1">
         <Loader2 className="size-3 animate-spin" />
         저장 중
       </span>
     );
   if (state === "saved")
     return (
-      <span className="text-xs text-emerald-400 inline-flex items-center gap-1">
+      <span className="text-t-meta text-status-success inline-flex items-center gap-1">
         <Check className="size-3" />
         저장됨
       </span>
     );
   if (state === "dirty")
     return (
-      <span className="text-xs text-amber-400 inline-flex items-center gap-1">
+      <span className="text-t-meta text-status-warn inline-flex items-center gap-1">
         <CircleDashed className="size-3" />
         변경됨
       </span>
     );
   if (state === "error")
-    return <span className="text-xs text-rose-400">저장 실패</span>;
+    return <span className="text-t-meta text-status-danger">저장 실패</span>;
   return null;
 }

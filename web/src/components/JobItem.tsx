@@ -56,7 +56,7 @@ export function JobItem({ job: initial }: { job: JobState }) {
         </div>
       </div>
       {job.current_phase && (
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-text-3">
           phase:{" "}
           <span className="font-medium text-foreground">
             {job.current_phase}
@@ -80,16 +80,16 @@ export function JobItem({ job: initial }: { job: JobState }) {
         </div>
       )}
       {job.error && (
-        <div className="text-xs text-rose-400 whitespace-pre-wrap">
+        <div className="text-xs text-status-danger whitespace-pre-wrap">
           {job.error}
         </div>
       )}
       {outcome && (
-        <div className="text-xs text-muted-foreground border-t border-border pt-2">
+        <div className="text-xs text-text-3 border-t border-border pt-2">
           {outcome}
         </div>
       )}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-xs text-text-3">
         <span className="tabular-nums">{formatTime(job.started_at)}</span>
         {job.completed_at && (
           <>
