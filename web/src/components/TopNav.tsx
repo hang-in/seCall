@@ -12,11 +12,11 @@ import { useUi } from "@/lib/store";
  */
 
 const NAV_ITEMS = [
-  { to: "/sessions", label: "Sessions" },
-  { to: "/wiki", label: "Wiki" },
-  { to: "/daily", label: "Daily" },
-  { to: "/graph", label: "Graph" },
-  { to: "/commands", label: "Commands" },
+  { to: "/sessions", label: "Sessions", hint: "g s" },
+  { to: "/wiki", label: "Wiki", hint: "g w" },
+  { to: "/daily", label: "Daily", hint: "g d" },
+  { to: "/graph", label: "Graph", hint: "g g" },
+  { to: "/commands", label: "Commands", hint: "g c" },
 ] as const;
 
 const APP_VERSION = "v0.4.2";
@@ -41,10 +41,11 @@ export function TopNav() {
 
         {/* Primary nav */}
         <nav className="flex items-center gap-ds-1" aria-label="Primary">
-          {NAV_ITEMS.map(({ to, label }) => (
+          {NAV_ITEMS.map(({ to, label, hint }) => (
             <NavLink
               key={to}
               to={to}
+              title={`${label} (${hint})`}
               className={({ isActive }) =>
                 [
                   "px-ds-3 py-ds-1 rounded-md text-t-body transition-colors duration-fast ease-ds",
