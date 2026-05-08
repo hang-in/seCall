@@ -20,9 +20,9 @@ export default function SessionsRoute() {
   const outletContext: SessionsOutletContext = { query, mode };
 
   return (
-    <div className="grid grid-cols-[400px_1fr] h-full">
-      <div className="border-r border-border flex flex-col overflow-hidden min-h-0">
-        <div className="p-3 border-b border-border space-y-2 shrink-0">
+    <div className="grid grid-cols-[var(--list-w)_1fr] h-full">
+      <div className="border-r border-hairline bg-[var(--surface)] flex flex-col overflow-hidden min-h-0">
+        <div className="p-ds-3 border-b border-hairline space-y-ds-2 shrink-0">
           <SearchBar
             value={query}
             onChange={setQuery}
@@ -36,7 +36,7 @@ export default function SessionsRoute() {
         </div>
       </div>
 
-      <div className="overflow-auto min-w-0">
+      <div className="overflow-auto min-w-0 bg-[var(--bg)]">
         <Outlet context={outletContext} />
       </div>
     </div>

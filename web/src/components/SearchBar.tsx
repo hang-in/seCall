@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import type { SearchMode } from "@/lib/types";
 
+/**
+ * 검색 입력 + keyword/semantic 모드 토글 — Calm/Editorial 톤 (Stage 2c).
+ *
+ * - 디바운스 300ms (외부 onChange 발화는 입력 멈춘 뒤).
+ * - clear (X) 버튼 / 우측에 `/` 단축키 hint kbd.
+ * - segmented 모드 토글 (양쪽 둥근 inline border).
+ * - 모든 시각은 design tokens (web/src/lib/design-tokens.md) 사용.
+ */
 interface Props {
-  /** 디바운스 적용된 최종 값 (부모가 보유). */
   value: string;
-  /** 디바운스 후 호출됨. */
   onChange: (next: string) => void;
   mode?: SearchMode;
   onModeChange?: (next: SearchMode) => void;
@@ -15,24 +19,18 @@ interface Props {
   debounceMs?: number;
 }
 
-/**
- * 검색 입력 + 모드 토글 (keyword/semantic).
- * - 디바운스 300ms (lodash 없이 setTimeout)
- * - X 버튼으로 즉시 클리어
- * - 시맨틱 호출은 향후 별도 훅에서 처리. 본 컴포넌트는 mode 상태만 관리.
- */
 export function SearchBar({
   value,
   onChange,
   mode = "keyword",
   onModeChange,
-  placeholder = "세션 검색...",
+  placeholder,
   debounceMs = 300,
 }: Props) {
   const [local, setLocal] = useState(value);
+  const [focus, setFocus] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  // 외부에서 value가 바뀌면 (예: 초기화) local도 동기화
   useEffect(() => {
     setLocal(value);
   }, [value]);
@@ -40,13 +38,10 @@ export function SearchBar({
   useEffect(() => {
     if (local === value) return;
     if (timerRef.current) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
-      onChange(local);
-    }, debounceMs);
+    timerRef.current = window.setTimeout(() => onChange(local), debounceMs);
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-    // local만 트리거. onChange/value는 의도적으로 제외 (refs/외부 업데이트 루프 방지)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [local, debounceMs]);
 
@@ -55,48 +50,64 @@ export function SearchBar({
     onChange("");
   };
 
+  const ph =
+    placeholder ?? (mode === "semantic" ? "의미로 검색…" : "세션 검색…");
+
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative flex-1">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
-        <Input
+    <div className="flex items-center gap-ds-2">
+      <div
+        className={[
+          "flex-1 flex items-center h-8 rounded-md border bg-[var(--surface)] transition-colors duration-fast ease-ds",
+          focus
+            ? "border-brand ring-2 ring-brand-soft"
+            : "border-border-soft hover:border-border-strong",
+        ].join(" ")}
+      >
+        <Search className="size-3.5 ml-ds-2 text-text-3 pointer-events-none" />
+        <input
+          type="text"
           value={local}
+          placeholder={ph}
           onChange={(e) => setLocal(e.target.value)}
-          placeholder={placeholder}
-          className="pl-8 pr-8 h-9"
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
           data-hotkey="search"
+          className="flex-1 px-ds-2 bg-transparent text-t-body text-text placeholder:text-text-4 outline-none"
         />
-        {local && (
-          <button
-            type="button"
-            onClick={clear}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label="검색어 지우기"
-          >
-            <X className="size-4" />
-          </button>
-        )}
+        <span className="pr-ds-2 text-text-3">
+          {local ? (
+            <button
+              type="button"
+              onClick={clear}
+              aria-label="검색어 지우기"
+              className="inline-flex items-center justify-center size-4 rounded-sm hover:text-text"
+            >
+              <X className="size-3" />
+            </button>
+          ) : (
+            <kbd className="kbd">/</kbd>
+          )}
+        </span>
       </div>
+
       {onModeChange && (
-        <div className="flex rounded-md border border-border overflow-hidden">
-          <Button
-            type="button"
-            variant={mode === "keyword" ? "secondary" : "ghost"}
-            size="sm"
-            className="h-9 rounded-none px-2 text-xs"
-            onClick={() => onModeChange("keyword")}
-          >
-            키워드
-          </Button>
-          <Button
-            type="button"
-            variant={mode === "semantic" ? "secondary" : "ghost"}
-            size="sm"
-            className="h-9 rounded-none px-2 text-xs"
-            onClick={() => onModeChange("semantic")}
-          >
-            시맨틱
-          </Button>
+        <div className="flex rounded-md border border-border-soft overflow-hidden bg-[var(--surface)]">
+          {(["keyword", "semantic"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => onModeChange(m)}
+              title={m === "keyword" ? "키워드 (BM25)" : "시맨틱 (벡터)"}
+              className={[
+                "px-ds-3 h-8 text-t-meta transition-colors duration-fast ease-ds",
+                mode === m
+                  ? "bg-surface-2 text-text font-medium"
+                  : "text-text-3 hover:text-text hover:bg-surface-2",
+              ].join(" ")}
+            >
+              {m === "keyword" ? "키워드" : "시맨틱"}
+            </button>
+          ))}
         </div>
       )}
     </div>

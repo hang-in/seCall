@@ -102,8 +102,8 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   if (useSemantic) {
     if (semanticList.isLoading) {
       return (
-        <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
-          <Loader2 className="size-4 animate-spin mr-2" /> 시맨틱 검색 중…
+        <div className="flex items-center justify-center p-ds-7 text-t-small text-text-3">
+          <Loader2 className="size-4 animate-spin mr-ds-2" /> 시맨틱 검색 중…
         </div>
       );
     }
@@ -113,7 +113,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
           ? semanticList.error.message
           : String(semanticList.error);
       return (
-        <div className="p-6 text-rose-400 text-sm whitespace-pre-wrap">
+        <div className="p-ds-5 text-t-small text-status-danger whitespace-pre-wrap">
           시맨틱 검색 실패: {msg}
         </div>
       );
@@ -121,11 +121,10 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     const data = semanticList.data;
     if (!data || data.count === 0) {
       // 백엔드는 Ollama 미설치/embedding 비활성 시 빈 결과만 반환 (에러 throw 안 함).
-      // → count === 0 + query 있음 = 비활성 가능성 안내.
       return (
-        <div className="p-8 text-muted-foreground text-sm text-center space-y-2">
+        <div className="p-ds-7 text-t-small text-text-3 text-center space-y-ds-2">
           <div>매칭되는 결과가 없습니다.</div>
-          <div className="text-xs">
+          <div className="text-t-meta text-text-4">
             시맨틱 검색이 비활성 상태일 수 있습니다 (Ollama 필요)
           </div>
         </div>
@@ -135,11 +134,11 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     return (
       <div>
         {semanticList.isFetching && (
-          <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border">
+          <div className="px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline">
             업데이트 중…
           </div>
         )}
-        <div className="divide-y divide-border">
+        <div className="divide-y divide-hairline">
           {sessions.map((s, idx) => {
             const score = data.results[idx]?.score;
             return (
@@ -153,7 +152,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
                   }
                 />
                 {typeof score === "number" && (
-                  <span className="absolute right-3 bottom-2 text-[10px] text-muted-foreground tabular-nums pointer-events-none">
+                  <span className="absolute right-ds-3 bottom-ds-2 font-mono text-t-caption text-text-4 tabular-nums pointer-events-none">
                     score {score.toFixed(2)}
                   </span>
                 )}
@@ -168,8 +167,8 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   // ── keyword 모드 (P35 Task 02 — 무한 스크롤) ───────────────
   if (keywordList.isLoading) {
     return (
-      <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
-        <Loader2 className="size-4 animate-spin mr-2" /> 불러오는 중…
+      <div className="flex items-center justify-center p-ds-7 text-t-small text-text-3">
+        <Loader2 className="size-4 animate-spin mr-ds-2" /> 불러오는 중…
       </div>
     );
   }
@@ -177,7 +176,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   if (keywordList.isError) {
     const err = keywordList.error;
     return (
-      <div className="p-6 text-rose-400 text-sm whitespace-pre-wrap">
+      <div className="p-ds-5 text-t-small text-status-danger whitespace-pre-wrap">
         세션 로드 실패: {err instanceof Error ? err.message : String(err)}
       </div>
     );
@@ -185,7 +184,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
 
   if (allItems.length === 0) {
     return (
-      <div className="p-8 text-muted-foreground text-sm text-center">
+      <div className="p-ds-7 text-t-small text-text-3 text-center">
         조건에 맞는 세션이 없습니다.
       </div>
     );
@@ -194,11 +193,11 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   return (
     <div>
       {keywordList.isFetching && !keywordList.isFetchingNextPage && (
-        <div className="px-3 py-1 text-[10px] text-muted-foreground border-b border-border">
+        <div className="px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline">
           업데이트 중…
         </div>
       )}
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-hairline">
         {allItems.map((s) => (
           <SessionListItem
             key={s.id}
@@ -210,11 +209,10 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
         ))}
       </div>
 
-      {/* sentinel — IntersectionObserver 타겟. hasNextPage=false면 hook이 attach 안 함. */}
       <div ref={sentinelRef} className="h-10" aria-hidden />
 
       {keywordList.isFetchingNextPage && (
-        <div className="p-3 text-[11px] text-muted-foreground text-center border-t border-border flex items-center justify-center gap-2">
+        <div className="p-ds-3 text-t-meta text-text-3 text-center border-t border-hairline flex items-center justify-center gap-ds-2">
           <Loader2 className="size-3 animate-spin" /> 추가 로드 중…
         </div>
       )}
@@ -222,7 +220,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
       {!keywordList.hasNextPage &&
         allItems.length > 0 &&
         allItems.length === total && (
-          <div className="p-3 text-[10px] text-muted-foreground text-center border-t border-border">
+          <div className="p-ds-3 text-t-caption text-text-4 text-center border-t border-hairline">
             끝 — 총 {total} 세션
           </div>
         )}
