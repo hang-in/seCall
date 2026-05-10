@@ -15,21 +15,31 @@
 
 ## 출력 형식
 
-반드시 아래 JSON 형식으로만 응답하세요:
+응답은 valid JSON object 단일 본문만 포함해야 합니다.
+markdown 코드 펜스, 설명 텍스트, 주석은 금지합니다.
+
+JSON schema:
 
 ```json
 {
   "issues": [
     {
-      "severity": "warning",
-      "description": "문제에 대한 설명",
-      "suggestion": "수정 제안 (없으면 null)"
+      "severity": "error|warning|info",
+      "description": "문제 설명",
+      "suggestion": "수정 제안 또는 null"
     }
   ],
   "approved": true
 }
 ```
 
+승인된 경우에도 `issues` 배열은 반드시 포함해야 합니다.
 - issues가 없으면 빈 배열 + approved: true
 - error가 하나라도 있으면 approved: false
 - warning만 있으면 approved: true (경고만)
+
+## Backend notes
+
+- `anthropic` / `haiku`: JSON 형식 안정성이 가장 높습니다.
+- `claude` / `codex`: 설명 문장을 섞지 말고 바로 JSON 을 출력하세요.
+- `ollama` / `lmstudio`: markdown fence 없이 단일 JSON object 만 출력하세요.

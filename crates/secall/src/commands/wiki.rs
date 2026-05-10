@@ -6,7 +6,7 @@ use secall_core::{
     llm::defaults::{warn_using_default, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT, WIKI_REVIEW_DEFAULT},
     search::OllamaEmbedder,
     store::{get_default_db_path, Database},
-    vault::Config,
+    vault::{git::VaultGit, Config},
     wiki::WikiIndexer,
 };
 
@@ -23,7 +23,10 @@ pub struct WikiUpdateArgs {
     pub dry_run: bool,
     #[serde(default)]
     pub review: bool,
+    pub review_backend: Option<String>,
     pub review_model: Option<String>,
+    #[serde(default)]
+    pub no_pull: bool,
 }
 
 /// `wiki update` 결과 요약 — REST 응답 / SSE Done payload용.
@@ -85,7 +88,9 @@ pub async fn run_with_progress(
         args.session.as_deref(),
         args.dry_run,
         args.review,
+        args.review_backend.as_deref(),
         args.review_model.as_deref(),
+        args.no_pull,
         Some(sink),
     )
     .await;
@@ -120,6 +125,7 @@ pub async fn run_with_progress(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_update(
     model: Option<&str>,
     backend: Option<&str>,
@@ -127,7 +133,9 @@ pub async fn run_update(
     session: Option<&str>,
     dry_run: bool,
     review: bool,
+    review_backend: Option<&str>,
     review_model: Option<&str>,
+    no_pull: bool,
 ) -> Result<()> {
     // P36 rework — run_update_with_sink 가 page count 반환하지만 CLI 경로에서는 무시.
     run_update_with_sink(
@@ -137,7 +145,9 @@ pub async fn run_update(
         session,
         dry_run,
         review,
+        review_backend,
         review_model,
+        no_pull,
         None,
     )
     .await
@@ -159,7 +169,9 @@ async fn run_update_with_sink(
     session: Option<&str>,
     dry_run: bool,
     review: bool,
+    review_backend: Option<&str>,
     review_model: Option<&str>,
+    no_pull: bool,
     sink: Option<&dyn ProgressSink>,
 ) -> Result<usize> {
     // P36 rework — 작성된 페이지 누적. 정상 완료/취소 모두 같은 변수 사용.
@@ -170,6 +182,50 @@ async fn run_update_with_sink(
     let wiki_dir = config.vault.path.join("wiki");
     if !wiki_dir.exists() {
         anyhow::bail!("wiki/ directory not found. Run `secall init` first.");
+    }
+
+    let vault_git = VaultGit::new(&config.vault.path, &config.vault.branch);
+    if vault_git.is_git_repo() {
+        if let Some(msg) = vault_git.check_conflicted_state() {
+            anyhow::bail!("wiki update aborted - vault git conflict detected.\n\n{msg}");
+        }
+
+        if !dry_run && !no_pull {
+            match vault_git.auto_commit() {
+                Ok(true) => eprintln!("Auto-committed unstaged vault changes before pull."),
+                Ok(false) => {}
+                Err(e) => eprintln!("Warning: auto-commit failed: {e}"),
+            }
+            match vault_git.pull() {
+                Ok(result) if result.already_up_to_date => {}
+                Ok(result) => eprintln!("Pulled vault: {} new session file(s).", result.new_files),
+                Err(e) => eprintln!("Warning: vault pull failed: {e}"),
+            }
+
+            let unmerged = vault_git.unmerged_files().unwrap_or_default();
+            if !unmerged.is_empty() {
+                let (wiki_conflicts, non_wiki_conflicts): (Vec<_>, Vec<_>) = unmerged
+                    .into_iter()
+                    .partition(|path| path.starts_with("wiki/") && path.ends_with(".md"));
+
+                if !non_wiki_conflicts.is_empty() {
+                    anyhow::bail!(
+                        "wiki update aborted - non-wiki conflicts pending:\n{}\nResolve manually then re-run.",
+                        non_wiki_conflicts.join("\n")
+                    );
+                }
+
+                if !wiki_conflicts.is_empty() {
+                    eprintln!(
+                        "Auto-resolving {} wiki conflict(s) via sources union regeneration...",
+                        wiki_conflicts.len()
+                    );
+                    let resolved =
+                        auto_resolve_wiki_conflicts(&config, &vault_git, &wiki_conflicts).await?;
+                    eprintln!("Resolved {resolved} wiki conflict(s).");
+                }
+            }
+        }
     }
 
     // 4. 백엔드 선택: --backend 플래그 → config wiki.default_backend → "claude"
@@ -201,51 +257,7 @@ async fn run_update_with_sink(
     eprintln!("Wiki update: {} (backend: {})", target, backend_name);
 
     // 5. WikiBackend 인스턴스 생성
-    let backend_box: Box<dyn secall_core::wiki::WikiBackend> = match backend_name.as_str() {
-        "haiku" => {
-            let cfg = config.wiki_backend_config("haiku");
-            let system_prompt = load_haiku_system_prompt();
-            Box::new(secall_core::wiki::HaikuBackend::from_env(
-                cfg.model,
-                cfg.max_tokens,
-                system_prompt,
-            )?)
-        }
-        "ollama" => {
-            let cfg = config.wiki_backend_config("ollama");
-            Box::new(secall_core::wiki::OllamaBackend {
-                api_url: cfg
-                    .api_url
-                    .unwrap_or_else(|| "http://localhost:11434".to_string()),
-                model: cfg.model.unwrap_or_else(|| "llama3".to_string()),
-                max_tokens: cfg.max_tokens,
-            })
-        }
-        "lmstudio" => {
-            let cfg = config.wiki_backend_config("lmstudio");
-            Box::new(secall_core::wiki::LmStudioBackend {
-                api_url: cfg
-                    .api_url
-                    .unwrap_or_else(|| "http://localhost:1234".to_string()),
-                model: cfg.model.unwrap_or_else(|| "local-model".to_string()),
-                max_tokens: cfg.max_tokens,
-            })
-        }
-        "codex" => Box::new(secall_core::wiki::CodexBackend {
-            model: resolved_model.clone(),
-            vault_path: config.vault.path.clone(),
-        }),
-        "claude" => Box::new(secall_core::wiki::ClaudeBackend {
-            model: resolved_model.clone(),
-            vault_path: config.vault.path.clone(),
-        }),
-        _ => {
-            anyhow::bail!(
-                "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, lmstudio",
-                backend_name
-            );
-        }
-    };
+    let backend_box = build_wiki_backend(&config, &backend_name, &resolved_model)?;
 
     // 6. 생성 + 후처리
     if backend_name == "haiku" && session.is_none() {
@@ -267,7 +279,10 @@ async fn run_update_with_sink(
             by_project.entry(proj).or_default().push(s);
         }
 
-        let resolved_model = resolve_review_model(review_model, &config);
+        let resolved_review_backend = resolve_review_backend(review_backend, &config);
+        let resolved_model =
+            resolve_review_model(review_model, &config, &resolved_review_backend);
+        let reviewer = build_reviewer(&config, &resolved_review_backend, &resolved_model)?;
 
         let total_proj = by_project.len();
         for (proj_idx, (proj_name, proj_sessions)) in by_project.iter().enumerate() {
@@ -347,7 +362,7 @@ async fn run_update_with_sink(
                     std::fs::read_to_string(&full_path).unwrap_or_else(|_| linked.clone());
                 let source_summary = build_review_source(&db, &session_ids);
                 let needs_regen =
-                    run_review(&resolved_model, &final_content, &source_summary).await;
+                    run_review(reviewer.as_ref(), &final_content, &source_summary).await;
 
                 // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
                 if needs_regen {
@@ -387,7 +402,7 @@ async fn run_update_with_sink(
                                 eprintln!("    Write failed, skipping re-review: {e}");
                             } else {
                                 // 재검수 (반환값 무시 — 재시도는 1회만)
-                                run_review(&resolved_model, &linked2, &source_summary).await;
+                                run_review(reviewer.as_ref(), &linked2, &source_summary).await;
                             }
                         }
                         _ => eprintln!("    Regeneration skipped (empty output)"),
@@ -477,8 +492,11 @@ async fn run_update_with_sink(
             let final_content =
                 std::fs::read_to_string(&full_path).unwrap_or_else(|_| linked.clone());
             let source_summary = build_review_source(&db, &session_ids);
-            let resolved_model = resolve_review_model(review_model, &config);
-            let needs_regen = run_review(&resolved_model, &final_content, &source_summary).await;
+            let resolved_review_backend = resolve_review_backend(review_backend, &config);
+            let resolved_model =
+                resolve_review_model(review_model, &config, &resolved_review_backend);
+            let reviewer = build_reviewer(&config, &resolved_review_backend, &resolved_model)?;
+            let needs_regen = run_review(reviewer.as_ref(), &final_content, &source_summary).await;
 
             // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
             if needs_regen {
@@ -515,7 +533,7 @@ async fn run_update_with_sink(
                             eprintln!("    Write failed, skipping re-review: {e}");
                         } else {
                             // 재검수 (반환값 무시 — 재시도는 1회만)
-                            run_review(&resolved_model, &linked2, &source_summary).await;
+                            run_review(reviewer.as_ref(), &linked2, &source_summary).await;
                         }
                     }
                     _ => eprintln!("    Regeneration skipped (empty output)"),
@@ -548,6 +566,165 @@ async fn run_update_with_sink(
     }
 
     Ok(pages_written)
+}
+
+async fn auto_resolve_wiki_conflicts(
+    config: &Config,
+    vault_git: &VaultGit<'_>,
+    paths: &[String],
+) -> Result<usize> {
+    let db = Database::open(&get_default_db_path())?;
+    let backend_name = config.wiki.default_backend.clone();
+    let resolved_model = resolve_backend_model(config, &backend_name, None);
+    let backend = build_wiki_backend(config, &backend_name, &resolved_model)?;
+    let wiki_dir = config.vault.path.join("wiki");
+
+    let mut resolved = 0usize;
+    for path in paths {
+        let sources = vault_git.extract_sources_from_conflicted(path)?;
+        if sources.is_empty() {
+            anyhow::bail!("auto-resolve failed for {path}: no frontmatter sources found");
+        }
+
+        let prompt = build_conflict_resolution_prompt(&db, &wiki_dir, path, &sources)?;
+        let output = backend.generate(&prompt).await?;
+        if output.trim().is_empty() {
+            anyhow::bail!("auto-resolve failed for {path}: backend returned empty output");
+        }
+
+        let validated = secall_core::wiki::lint::validate_frontmatter(&output, &sources);
+        let wiki_pages = collect_wiki_pages(&wiki_dir);
+        let vault_paths = collect_vault_paths(&db, &sources);
+        let linked = secall_core::wiki::lint::insert_obsidian_links(
+            &validated,
+            &sources,
+            &vault_paths,
+            &wiki_pages,
+        );
+
+        let full_path = config.vault.path.join(path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&full_path, linked)?;
+        vault_git.stage_resolved(path)?;
+        resolved += 1;
+    }
+
+    vault_git.finish_conflict_resolution("auto-resolve wiki conflicts")?;
+    Ok(resolved)
+}
+
+fn build_wiki_backend(
+    config: &Config,
+    backend_name: &str,
+    resolved_model: &str,
+) -> Result<Box<dyn secall_core::wiki::WikiBackend>> {
+    match backend_name {
+        "haiku" => {
+            let cfg = config.wiki_backend_config("haiku");
+            let system_prompt = load_haiku_system_prompt();
+            Ok(Box::new(secall_core::wiki::HaikuBackend::from_env(
+                cfg.model,
+                cfg.max_tokens,
+                system_prompt,
+            )?))
+        }
+        "ollama" => {
+            let cfg = config.wiki_backend_config("ollama");
+            Ok(Box::new(secall_core::wiki::OllamaBackend {
+                api_url: cfg
+                    .api_url
+                    .unwrap_or_else(|| "http://localhost:11434".to_string()),
+                model: cfg.model.unwrap_or_else(|| "llama3".to_string()),
+                max_tokens: cfg.max_tokens,
+            }))
+        }
+        "lmstudio" => {
+            let cfg = config.wiki_backend_config("lmstudio");
+            Ok(Box::new(secall_core::wiki::LmStudioBackend {
+                api_url: cfg
+                    .api_url
+                    .unwrap_or_else(|| "http://localhost:1234".to_string()),
+                model: cfg.model.unwrap_or_else(|| "local-model".to_string()),
+                max_tokens: cfg.max_tokens,
+            }))
+        }
+        "codex" => Ok(Box::new(secall_core::wiki::CodexBackend {
+            model: resolved_model.to_string(),
+            vault_path: config.vault.path.clone(),
+        })),
+        "claude" => Ok(Box::new(secall_core::wiki::ClaudeBackend {
+            model: resolved_model.to_string(),
+            vault_path: config.vault.path.clone(),
+        })),
+        _ => anyhow::bail!(
+            "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, lmstudio",
+            backend_name
+        ),
+    }
+}
+
+fn build_conflict_resolution_prompt(
+    db: &Database,
+    wiki_dir: &std::path::Path,
+    path: &str,
+    session_ids: &[String],
+) -> Result<String> {
+    let page_hint = path.strip_prefix("wiki/").unwrap_or(path);
+    let mut prompt = format!(
+        "Regenerate the canonical wiki page for this conflicted path.\n\
+         Target page: {page_hint}\n\
+         Output only the final markdown page with YAML frontmatter.\n\
+         The `sources` field must include every provided session ID exactly once.\n\
+         Replace any prior body entirely and do not mention merge conflicts.\n\n"
+    );
+
+    let existing_pages: Vec<String> = walkdir::WalkDir::new(wiki_dir)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().map(|ext| ext == "md").unwrap_or(false))
+        .filter_map(|entry| {
+            entry
+                .path()
+                .strip_prefix(wiki_dir)
+                .ok()
+                .map(|rel| rel.to_string_lossy().to_string())
+        })
+        .collect();
+    if !existing_pages.is_empty() {
+        prompt.push_str("Existing wiki pages:\n");
+        for page in existing_pages.iter().take(50) {
+            prompt.push_str(&format!("- {page}\n"));
+        }
+        prompt.push('\n');
+    }
+
+    for session_id in session_ids {
+        let (meta, turns) = db.get_session_with_turns(session_id)?;
+        prompt.push_str(&format!(
+            "## Session {}\n- Agent: {}\n- Project: {}\n- Date: {}\n- Summary: {}\n\n",
+            meta.id,
+            meta.agent,
+            meta.project.as_deref().unwrap_or("(none)"),
+            &meta.start_time[..10.min(meta.start_time.len())],
+            meta.summary.as_deref().unwrap_or("(none)"),
+        ));
+        for turn in turns.iter().take(8) {
+            let snippet = if turn.content.len() > 800 {
+                format!("{}...", &turn.content[..800])
+            } else {
+                turn.content.clone()
+            };
+            prompt.push_str(&format!(
+                "### Turn {} ({})\n{}\n\n",
+                turn.turn_index, turn.role, snippet
+            ));
+        }
+    }
+
+    prompt.push_str("Write the resolved wiki page now.");
+    Ok(prompt)
 }
 
 fn resolve_backend_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> String {
@@ -914,14 +1091,121 @@ fn safe_project_name(name: &str) -> String {
         .to_string()
 }
 
-/// review_model 우선순위: CLI > config.wiki.review_model > "sonnet"
-fn resolve_review_model(cli: Option<&str>, config: &Config) -> String {
-    cli.map(|s| s.to_string())
-        .or_else(|| config.wiki.review_model.clone())
-        .unwrap_or_else(|| {
+/// review_model 우선순위: CLI > config.wiki.review_model > backend별 기본값
+pub fn resolve_review_model(cli: Option<&str>, config: &Config, backend_name: &str) -> String {
+    if let Some(model) = cli {
+        return model.to_string();
+    }
+    if let Some(model) = config.wiki.review_model.clone() {
+        return model;
+    }
+    if let Some(model) = config.wiki_backend_config(backend_name).model {
+        return model;
+    }
+
+    match backend_name {
+        "claude" | "anthropic" | "sonnet" | "opus" => {
             warn_using_default("wiki.review_model", WIKI_REVIEW_DEFAULT);
             WIKI_REVIEW_DEFAULT.to_string()
-        })
+        }
+        "codex" => {
+            warn_using_default("wiki.backends.codex.model", WIKI_CODEX_DEFAULT);
+            WIKI_CODEX_DEFAULT.to_string()
+        }
+        "haiku" => {
+            const HAIKU_REVIEW_DEFAULT: &str = "claude-haiku-4-5-20251001";
+            warn_using_default("wiki.review_model", HAIKU_REVIEW_DEFAULT);
+            HAIKU_REVIEW_DEFAULT.to_string()
+        }
+        "ollama" | "lmstudio" => config
+            .graph
+            .ollama_model
+            .clone()
+            .unwrap_or_else(|| "gemma4:e4b".to_string()),
+        _ => {
+            warn_using_default("wiki.review_model", WIKI_REVIEW_DEFAULT);
+            WIKI_REVIEW_DEFAULT.to_string()
+        }
+    }
+}
+
+/// review_backend 우선순위: CLI > config.wiki.review_backend > default_backend > "haiku"
+pub fn resolve_review_backend(cli: Option<&str>, config: &Config) -> String {
+    if let Some(cli) = cli {
+        return cli.to_string();
+    }
+    if let Some(configured) = config.wiki.review_backend.clone() {
+        return configured;
+    }
+    if matches!(
+        config.wiki.default_backend.as_str(),
+        "claude" | "codex" | "haiku" | "ollama" | "lmstudio"
+    ) {
+        return config.wiki.default_backend.clone();
+    }
+    "haiku".to_string()
+}
+
+fn build_reviewer(
+    config: &Config,
+    backend_name: &str,
+    model: &str,
+) -> Result<Box<dyn secall_core::wiki::WikiReviewer>> {
+    match backend_name {
+        "anthropic" | "sonnet" | "opus" => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+            Ok(Box::new(secall_core::wiki::AnthropicReviewer {
+                api_key,
+                model: model.to_string(),
+            }))
+        }
+        "claude" => Ok(Box::new(secall_core::wiki::ClaudeReviewer {
+            model: model.to_string(),
+            vault_path: config.vault.path.clone(),
+        })),
+        "codex" => Ok(Box::new(secall_core::wiki::CodexReviewer {
+            model: model.to_string(),
+            vault_path: config.vault.path.clone(),
+        })),
+        "haiku" => {
+            if matches!(model, "sonnet" | "opus") {
+                anyhow::bail!(
+                    "review backend 'haiku' requires an Anthropic model id; leave review_model unset or set a value like claude-haiku-4-5-20251001"
+                );
+            }
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
+            Ok(Box::new(secall_core::wiki::HaikuReviewer {
+                api_key,
+                model: model.to_string(),
+                max_tokens: 2048,
+            }))
+        }
+        "ollama" => Ok(Box::new(secall_core::wiki::OllamaReviewer {
+            api_url: config
+                .wiki
+                .backends
+                .get("ollama")
+                .and_then(|cfg| cfg.api_url.clone())
+                .or_else(|| config.graph.ollama_url.clone())
+                .unwrap_or_else(|| "http://localhost:11434".to_string()),
+            model: model.to_string(),
+        })),
+        "lmstudio" => Ok(Box::new(secall_core::wiki::LmStudioReviewer {
+            api_url: config
+                .wiki
+                .backends
+                .get("lmstudio")
+                .and_then(|cfg| cfg.api_url.clone())
+                // Until a dedicated review URL is added, reuse the shared
+                // local OpenAI-compatible URL fallback used by graph/log.
+                .or_else(|| config.graph.ollama_url.clone())
+                .unwrap_or_else(|| "http://localhost:1234".to_string()),
+            model: model.to_string(),
+        })),
+        other => anyhow::bail!("unknown review backend: {other}"),
+    }
 }
 
 /// 단일 프로젝트용 Haiku 프롬프트 (배치 모드에서 프로젝트별 호출용)
@@ -1025,19 +1309,13 @@ fn build_review_source(db: &Database, session_ids: &[String]) -> String {
 }
 
 /// --review 검수 실행. error급 이슈가 있으면 true(재생성 필요), 없거나 API 실패 시 false 반환
-async fn run_review(model: &str, page_content: &str, source_summary: &str) -> bool {
-    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => {
-            eprintln!("  ⚠ Review skipped: ANTHROPIC_API_KEY not set");
-            return false;
-        }
-    };
-
-    eprintln!("  Reviewing with {}...", model);
-    match secall_core::wiki::review::review_page(&api_key, model, page_content, source_summary)
-        .await
-    {
+async fn run_review(
+    reviewer: &dyn secall_core::wiki::WikiReviewer,
+    page_content: &str,
+    source_summary: &str,
+) -> bool {
+    eprintln!("  Reviewing generated wiki page...");
+    match reviewer.review(page_content, source_summary).await {
         Ok(result) => {
             if result.approved {
                 eprintln!("  ✓ Review: approved");

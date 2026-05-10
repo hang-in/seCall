@@ -134,6 +134,9 @@ pub struct WikiConfig {
     /// 백엔드별 설정 맵
     #[serde(default)]
     pub backends: std::collections::HashMap<String, WikiBackendConfig>,
+    /// Review backend name. None이면 default_backend, 그마저도 불명확하면 "haiku".
+    #[serde(default)]
+    pub review_backend: Option<String>,
     /// --review 시 사용할 모델: "sonnet" | "opus" (기본: sonnet)
     #[serde(default)]
     pub review_model: Option<String>,
@@ -148,6 +151,7 @@ impl Default for WikiConfig {
         WikiConfig {
             default_backend: default_wiki_backend(),
             backends: std::collections::HashMap::new(),
+            review_backend: None,
             review_model: None,
         }
     }
@@ -379,11 +383,20 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<()> {
+        use anyhow::Context as _;
+
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self)?;
+        let mut doc = if path.exists() {
+            let raw = std::fs::read_to_string(&path)?;
+            raw.parse::<toml_edit::DocumentMut>()
+                .context("existing config.toml is invalid")?
+        } else {
+            toml_edit::DocumentMut::new()
+        };
+        merge_into_doc(&mut doc, self)?;
         let tmp_path = path.with_extension(format!(
             "toml.tmp-{}-{}",
             std::process::id(),
@@ -391,9 +404,120 @@ impl Config {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()
         ));
-        std::fs::write(&tmp_path, content)?;
+        std::fs::write(&tmp_path, doc.to_string())?;
         std::fs::rename(&tmp_path, &path)?;
         Ok(())
+    }
+}
+
+fn merge_into_doc(doc: &mut toml_edit::DocumentMut, config: &Config) -> Result<()> {
+    sync_section(doc, "vault", &config.vault)?;
+    sync_section(doc, "ingest", &config.ingest)?;
+    sync_section(doc, "search", &config.search)?;
+    sync_section(doc, "hooks", &config.hooks)?;
+    sync_section(doc, "embedding", &config.embedding)?;
+    sync_section(doc, "openvino", &config.openvino)?;
+    sync_section(doc, "output", &config.output)?;
+    sync_section(doc, "wiki", &config.wiki)?;
+    sync_section(doc, "graph", &config.graph)?;
+    sync_section(doc, "log", &config.log)?;
+    Ok(())
+}
+
+fn sync_section<T: serde::Serialize>(
+    doc: &mut toml_edit::DocumentMut,
+    section_name: &str,
+    section: &T,
+) -> Result<()> {
+    use anyhow::Context as _;
+
+    let table = doc[section_name]
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .with_context(|| format!("[{section_name}] is not a table"))?;
+    let serialized = toml::Value::try_from(section)?;
+    let map = serialized
+        .as_table()
+        .with_context(|| format!("[{section_name}] failed to serialize as table"))?;
+    sync_table(table, map)
+}
+
+fn sync_table(
+    table: &mut toml_edit::Table,
+    map: &toml::map::Map<String, toml::Value>,
+) -> Result<()> {
+    let to_remove: Vec<String> = table
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| !map.contains_key(key))
+        .collect();
+    for key in to_remove {
+        table.remove(&key);
+    }
+
+    for (key, value) in map {
+        match value {
+            toml::Value::Table(inner) => sync_nested_table(table, key, inner)?,
+            _ => sync_value_item(table, key, value)?,
+        }
+    }
+
+    Ok(())
+}
+
+fn sync_nested_table(
+    table: &mut toml_edit::Table,
+    key: &str,
+    map: &toml::map::Map<String, toml::Value>,
+) -> Result<()> {
+    let implicit = map.values().all(|value| matches!(value, toml::Value::Table(_)));
+
+    if let Some(existing) = table.get_mut(key) {
+        if let Some(existing_table) = existing.as_table_mut() {
+            existing_table.set_implicit(implicit);
+            return sync_table(existing_table, map);
+        }
+    }
+
+    let mut new_table = toml_edit::Table::new();
+    new_table.set_implicit(implicit);
+    sync_table(&mut new_table, map)?;
+    table.insert(key, toml_edit::Item::Table(new_table));
+    Ok(())
+}
+
+fn sync_value_item(table: &mut toml_edit::Table, key: &str, value: &toml::Value) -> Result<()> {
+    let new_value = toml_value_to_value(value)?;
+
+    if let Some(existing) = table.get_mut(key) {
+        if let Some(existing_value) = existing.as_value_mut() {
+            let decor = existing_value.decor().clone();
+            let mut replacement = new_value;
+            replacement
+                .decor_mut()
+                .set_prefix(decor.prefix().cloned().unwrap_or_default());
+            replacement
+                .decor_mut()
+                .set_suffix(decor.suffix().cloned().unwrap_or_default());
+            *existing_value = replacement;
+            return Ok(());
+        }
+    }
+
+    table.insert(key, toml_edit::Item::Value(new_value));
+    Ok(())
+}
+
+fn toml_value_to_value(value: &toml::Value) -> Result<toml_edit::Value> {
+    use anyhow::Context as _;
+
+    match value {
+        toml::Value::Table(_) => anyhow::bail!("nested table cannot be converted into a scalar value"),
+        _ => {
+            let raw = value.to_string();
+            raw.parse::<toml_edit::Value>()
+                .with_context(|| format!("failed to convert TOML value: {raw}"))
+        }
     }
 }
 
@@ -492,5 +616,172 @@ path = "/tmp/test-vault"
             config.graph.gemini_api_key,
             Some("test-key-123".to_string())
         );
+    }
+
+    #[test]
+    fn save_preserves_top_level_comments() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"# Top-level note: this is the user's comment.
+# Multiple lines.
+
+[vault]
+path = "/tmp/test"
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.vault.path = "/tmp/changed".into();
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("# Top-level note: this is the user's comment."));
+        assert!(saved.contains("# Multiple lines."));
+        assert!(saved.contains(r#"path = "/tmp/changed""#));
+    }
+
+    #[test]
+    fn save_preserves_inline_comments() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[vault]
+path = "/tmp/test" # keep me
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.vault.path = "/tmp/changed".into();
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("# keep me"));
+        assert!(saved.contains(r#"path = "/tmp/changed""#));
+    }
+
+    #[test]
+    fn save_writes_new_keys_in_existing_section() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[vault]
+path = "/tmp/test"
+
+[wiki]
+default_backend = "claude"
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.wiki.review_backend = Some("ollama".into());
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("[wiki]"));
+        assert!(saved.contains(r#"review_backend = "ollama""#));
+    }
+
+    #[test]
+    fn save_removes_optional_keys_when_cleared() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[vault]
+path = "/tmp/test"
+
+[wiki]
+default_backend = "claude"
+review_backend = "ollama"
+review_model = "sonnet"
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.wiki.review_backend = None;
+        config.wiki.review_model = None;
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("review_backend"));
+        assert!(!saved.contains("review_model"));
+        assert!(saved.contains(r#"default_backend = "claude""#));
+    }
+
+    #[test]
+    fn save_preserves_nested_tables_for_wiki_backends() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[vault]
+path = "/tmp/test"
+
+[wiki]
+default_backend = "ollama"
+
+[wiki.backends.ollama]
+api_url = "http://localhost:11434"
+model = "llama3.1"
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.wiki.review_backend = Some("ollama".into());
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("[wiki.backends.ollama]"));
+        assert!(!saved.contains("backends = {"));
+        assert!(saved.contains(r#"review_backend = "ollama""#));
+    }
+
+    #[test]
+    fn save_creates_new_section_when_absent() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"[vault]
+path = "/tmp/test"
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+
+        let mut config = Config::load_or_default();
+        config.log.backend = Some("ollama".into());
+        config.save().unwrap();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("[log]"));
+        assert!(saved.contains(r#"backend = "ollama""#));
+        assert!(saved.contains(r#"path = "/tmp/test""#));
     }
 }

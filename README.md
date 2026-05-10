@@ -524,9 +524,23 @@ secall wiki update --backend haiku
 # 특정 세션만 증분 업데이트
 secall wiki update --backend lmstudio --session <id>
 
+# 오프라인 / 수동 sync 모드
+secall wiki update --no-pull
+
 # 위키 상태 확인
 secall wiki status
 ```
+
+### Cross-host 동기화 (다중 머신 vault)
+
+`secall wiki update` 는 시작 시 vault git repo 를 감지하면 자동으로 `auto_commit + pull --rebase` 를 시도합니다.
+
+| 시나리오 | 동작 |
+|---|---|
+| 같은 토픽 wiki 가 양쪽 머신에서 갱신됨 | `wiki/*.md` 충돌 감지 후 양쪽 `sources` 합집합으로 해당 페이지 자동 재생성 |
+| wiki 외 파일 (`raw/`, `log/`, `graph/` 등) 충돌 | 자동 중단 후 수동 해결 안내 |
+| 오프라인 또는 수동 sync | `secall wiki update --no-pull` 로 git 작업 skip |
+| 같은 토픽 재호출 | 기존 본문 누적 없이 새 본문으로 교체, `sources` 만 합집합 유지 |
 
 백엔드는 config로도 설정할 수 있습니다:
 
@@ -546,6 +560,32 @@ model = "gemma3:27b"
 [wiki.backends.claude]
 model = "sonnet"   # "opus" 도 가능
 ```
+
+### Wiki review (다중 backend)
+
+`secall wiki update --review` 는 review backend 를 별도로 선택할 수 있습니다.
+
+| Backend | 인증 | JSON 신뢰성 | 비용 |
+|---|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | 높음 | API 과금 |
+| `haiku` | `ANTHROPIC_API_KEY` | 높음 | API 과금 |
+| `claude` | claude CLI | 중간 | subscription |
+| `codex` | codex CLI | 중간 | subscription |
+| `ollama` | 없음 | 모델별 차이 | 로컬 |
+| `lmstudio` | 없음 | 모델별 차이 | 로컬 |
+
+우선순위:
+1. CLI `--review-backend`
+2. `[wiki].review_backend`
+3. `[wiki].default_backend`
+4. fallback `"haiku"`
+
+```bash
+secall wiki update --review --review-backend ollama
+secall config set wiki.review_backend ollama
+```
+
+로컬 backend (`ollama`, `lmstudio`) 는 `docs/prompts/wiki-review-strict-json.md` 의 strict JSON suffix 를 자동으로 붙여 재시도합니다.
 
 ### 작업 일기
 
@@ -616,6 +656,8 @@ secall serve --port 8080 --allow-config-edit
 | `graph.gemini_model` | Gemini 모델 이름 | `gemini-2.5-flash` |
 | `graph.ollama_model` | Ollama/LM Studio 시맨틱 모델 | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
+| `wiki.review_backend` | 위키 review 백엔드 (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `wiki.default_backend` 폴백 |
+| `wiki.review_model` | 위키 review 모델 override | `sonnet` |
 | `wiki.backends.<name>.api_url` | 백엔드 API 엔드포인트 | (기본값 사용) |
 | `wiki.backends.<name>.model` | 백엔드 모델 이름 | (기본값 사용) |
 | `wiki.backends.<name>.max_tokens` | 최대 생성 토큰 수 | `4096` |
@@ -648,7 +690,7 @@ secall serve --port 8080 --allow-config-edit
 | `secall config llm show\|set\|where` | LLM 관련 설정만 조회/변경 |
 | `secall graph build\|stats\|export` | Knowledge Graph 관리 |
 | `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | 시맨틱 그래프 재구축 (P37) — 우선순위: `--session` > `--all` > `--retry-failed` > `--since` |
-| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | 위키 생성 (백엔드 선택 가능) |
+| `secall wiki update [--backend claude\|codex\|haiku\|ollama\|lmstudio] [--review] [--review-backend <name>]` | 위키 생성 + optional review |
 | `secall wiki status` | 위키 상태 확인 |
 | `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]` | 날짜별 작업 일기 생성 |
 | `secall serve [--port <port>] [--allow-config-edit]` | REST API + Web UI 서버 시작 (`/settings` 저장은 flag 필요) |
@@ -763,6 +805,8 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 | 날짜 | 버전 | 변경사항 |
 |------|------|---------|
+| 2026-05-10 | v0.10.1 | P44 Wiki cross-host merge: `wiki update` 시작 시 자동 `auto_commit + pull`, `wiki/*.md` 충돌 시 양쪽 `sources` 합집합 기반 자동 재생성, `--no-pull` 추가, `merge_with_existing()` 본문 누적 제거 |
+| 2026-05-09 | v0.10.0 | P43 Wiki review backend 확장: `wiki update --review` 가 `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic` backend 를 지원, `[wiki].review_backend` + `--review-backend` 추가, `toml_edit` 기반 config 저장으로 사용자 주석 보존, `docs/reference/llm-config.md` 추가 |
 | 2026-05-09 | v0.9.1 | P41 LLM 설정 통합: `secall log --backend/--model`, 신규 `[log]` 섹션, hard-coded default model 상수화 + warning, `GET /api/config` / `PATCH /api/config/{section}`, Web `/settings`, `secall config llm show\|set\|where` |
 | 2026-05-05 | v0.8.2 | P39 wiki 파이프라인 baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` 가 `git add -A` 로 SCHEMA.md / graph/ / log/ 등 모두 stage (`crates/secall-core/src/vault/git.rs:146`, 8 회귀 tests `tests/vault_auto_commit.rs`), `secall` 바이너리 부팅 시 `dotenvy::dotenv()` autoload (`crates/secall/src/main.rs:382` — Gemini/OpenAI 키 환경변수 자동 주입), 683 세션 sync baseline 측정 (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` 28 sessions / 840 edges 백필 |
 | 2026-05-03 | v0.8.1 | P38 테스트 갭 메우기: `tests/rest_routes.rs` (REST 22 엔드포인트 라우트 레벨 회귀, 45 tests) + `tests/session_repo_helpers.rs` (P32~P37 누적 helper 회귀, 29 tests) — 총 74 P38 신규 tests 추가, Insight TES-session_repo finding 해소 |

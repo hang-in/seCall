@@ -297,6 +297,14 @@ enum LlmAction {
         key: String,
         value: String,
     },
+    /// Test LLM backend connectivity and credentials
+    Test {
+        /// Backend: claude | codex | haiku | ollama | lmstudio | gemini
+        backend: Option<String>,
+        /// Skip outbound network calls and only verify local prerequisites
+        #[arg(long)]
+        no_network: bool,
+    },
     /// Show config file location and LLM entry points
     Where,
 }
@@ -344,9 +352,17 @@ enum WikiAction {
         #[arg(long)]
         review: bool,
 
+        /// Review backend: claude | codex | haiku | ollama | lmstudio
+        #[arg(long)]
+        review_backend: Option<String>,
+
         /// Review model: sonnet or opus (default: config or sonnet)
         #[arg(long)]
         review_model: Option<String>,
+
+        /// Skip git pull/auto-commit at start (offline / manual sync mode)
+        #[arg(long)]
+        no_pull: bool,
     },
 
     /// Show wiki status (page count, last update)
@@ -589,7 +605,9 @@ async fn main() -> anyhow::Result<()> {
                 session,
                 dry_run,
                 review,
+                review_backend,
                 review_model,
+                no_pull,
             } => {
                 commands::wiki::run_update(
                     model.as_deref(),
@@ -598,7 +616,9 @@ async fn main() -> anyhow::Result<()> {
                     session.as_deref(),
                     dry_run,
                     review,
+                    review_backend.as_deref(),
                     review_model.as_deref(),
+                    no_pull,
                 )
                 .await?;
             }
@@ -677,6 +697,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 LlmAction::Set { key, value } => {
                     commands::config::run_set(&key, &value)?;
+                }
+                LlmAction::Test {
+                    backend,
+                    no_network,
+                } => {
+                    commands::config::run_llm_test(backend, no_network).await?;
                 }
                 LlmAction::Where => {
                     commands::config::run_llm_where()?;

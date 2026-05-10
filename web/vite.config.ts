@@ -1,6 +1,6 @@
 import path from "node:path";
-import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
@@ -34,5 +34,9 @@ export default defineConfig({
     },
     // 분리 후 각 chunk가 500 kB 이하 — warning limit 유지 (분할이 무너지면 경고)
     chunkSizeWarningLimit: 500,
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
   },
 });

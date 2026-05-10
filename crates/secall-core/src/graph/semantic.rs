@@ -270,7 +270,8 @@ async fn extract_with_openai_compat(
 
 // ─── Gemini API 호출 ──────────────────────────────────────────────────────
 
-async fn extract_with_gemini(
+/// Internal helper exposed for crate-local tests.
+pub(crate) async fn extract_with_gemini(
     fm: &SessionFrontmatter,
     body: &str,
     cfg: &GraphConfig,
@@ -412,7 +413,8 @@ fn parse_llm_edges(json_text: &str, session_id: &str) -> Result<Vec<GraphEdge>> 
 // ─── provider 디스패치 ─────────────────────────────────────────────────────
 
 /// 설정에 따라 적절한 LLM backend로 시맨틱 엣지 추출
-async fn extract_with_llm(
+/// Internal helper exposed for crate-local tests.
+pub(crate) async fn extract_with_llm(
     config: &GraphConfig,
     fm: &SessionFrontmatter,
     body: &str,
@@ -540,6 +542,7 @@ pub async fn extract_and_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::{Matcher, Server};
 
     fn make_fm(id: &str, tools: Option<Vec<&str>>, summary: Option<&str>) -> SessionFrontmatter {
         SessionFrontmatter {
@@ -572,6 +575,26 @@ mod tests {
             gemini_api_key: None,
             gemini_model: None,
         }
+    }
+
+    fn ollama_response() -> String {
+        serde_json::json!({
+            "message": {
+                "content": r#"{"edges":[]}"#
+            }
+        })
+        .to_string()
+    }
+
+    fn openai_compat_response() -> String {
+        serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": r#"{"edges":[]}"#
+                }
+            }]
+        })
+        .to_string()
     }
 
     #[tokio::test]
@@ -695,6 +718,115 @@ mod tests {
             second, 0,
             "second call should return 0 (all edges already exist)"
         );
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_llm_ollama_uses_config_model() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/chat")
+            .match_header("content-type", "application/json")
+            .match_body(Matcher::Regex(r#""model":"custom-model""#.to_string()))
+            .with_status(200)
+            .with_body(ollama_response())
+            .create_async()
+            .await;
+
+        let config = GraphConfig {
+            semantic_backend: "ollama".to_string(),
+            ollama_url: Some(server.url()),
+            ollama_model: Some("custom-model".to_string()),
+            ..GraphConfig::default()
+        };
+
+        let edges = extract_with_llm(&config, &make_fm("sess-semantic", None, None), "body")
+            .await
+            .expect("ollama extract");
+        assert!(edges.is_empty());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_llm_ollama_falls_back_to_default_model() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/chat")
+            .match_body(Matcher::Regex(format!(
+                r#""model":"{}""#,
+                GRAPH_OLLAMA_DEFAULT
+            )))
+            .with_status(200)
+            .with_body(ollama_response())
+            .create_async()
+            .await;
+
+        let config = GraphConfig {
+            semantic_backend: "ollama".to_string(),
+            ollama_url: Some(server.url()),
+            ollama_model: None,
+            ..GraphConfig::default()
+        };
+
+        let edges = extract_with_llm(&config, &make_fm("sess-semantic", None, None), "body")
+            .await
+            .expect("ollama default extract");
+        assert!(edges.is_empty());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_llm_lmstudio_uses_lmstudio_default() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Regex(format!(
+                r#""model":"{}""#,
+                GRAPH_LMSTUDIO_DEFAULT
+            )))
+            .with_status(200)
+            .with_body(openai_compat_response())
+            .create_async()
+            .await;
+
+        let config = GraphConfig {
+            semantic_backend: "lmstudio".to_string(),
+            ollama_url: Some(server.url()),
+            ollama_model: None,
+            ..GraphConfig::default()
+        };
+
+        let edges = extract_with_llm(&config, &make_fm("sess-semantic", None, None), "body")
+            .await
+            .expect("lmstudio extract");
+        assert!(edges.is_empty());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_llm_unknown_backend_errors() {
+        let config = GraphConfig {
+            semantic_backend: "nonsense".to_string(),
+            ..GraphConfig::default()
+        };
+
+        let err = extract_with_llm(&config, &make_fm("sess-semantic", None, None), "body")
+            .await
+            .expect_err("unknown backend should fail");
+        assert!(err.to_string().contains("unknown semantic_backend"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_gemini_requires_api_key_before_network() {
+        let config = GraphConfig {
+            gemini_api_key: None,
+            gemini_model: None,
+            ..GraphConfig::default()
+        };
+
+        let err = extract_with_gemini(&make_fm("sess-semantic", None, None), "body", &config)
+            .await
+            .expect_err("missing api key should fail");
+        assert!(err.to_string().contains("gemini api key not set"));
     }
 
     #[test]

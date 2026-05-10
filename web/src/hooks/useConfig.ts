@@ -13,14 +13,18 @@ export function useConfig() {
 export function useConfigPatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       section,
       body,
     }: {
       section: "wiki" | "graph" | "log" | "embedding";
       body: unknown;
-    }) => api.configPatch(section, body),
-    onSuccess: () => {
+    }) => ({
+      section,
+      data: await api.configPatch(section, body),
+    }),
+    onSuccess: ({ data }) => {
+      qc.setQueryData(["config"], data);
       qc.invalidateQueries({ queryKey: ["config"] });
       toast.success("설정 저장됨");
     },

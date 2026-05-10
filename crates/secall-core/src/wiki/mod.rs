@@ -6,6 +6,7 @@ pub mod lint;
 pub mod lmstudio;
 pub mod ollama;
 pub mod review;
+pub mod reviewers;
 
 pub use claude::ClaudeBackend;
 pub use codex::CodexBackend;
@@ -13,6 +14,13 @@ pub use haiku::HaikuBackend;
 pub use indexer::WikiIndexer;
 pub use lmstudio::LmStudioBackend;
 pub use ollama::OllamaBackend;
+pub use review::{
+    AnthropicReviewer, ReviewIssue, ReviewResult, ReviewerKind, WikiReviewer,
+    load_review_system_prompt,
+};
+pub use reviewers::{
+    ClaudeReviewer, CodexReviewer, HaikuReviewer, LmStudioReviewer, OllamaReviewer,
+};
 
 /// wiki 생성 프롬프트를 LLM에 전달하고 결과를 반환하는 추상 인터페이스
 #[async_trait::async_trait]

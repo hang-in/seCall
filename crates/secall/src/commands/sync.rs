@@ -313,7 +313,19 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
                 return Ok(outcome);
             }
             sink.progress((i as f32) / (total_wiki as f32)).await;
-            match wiki::run_update(None, None, None, Some(sid.as_str()), false, false, None).await {
+            match wiki::run_update(
+                None,
+                None,
+                None,
+                Some(sid.as_str()),
+                false,
+                false,
+                None,
+                None,
+                false,
+            )
+                .await
+            {
                 Ok(()) => {
                     eprintln!("  ✓ wiki updated for {}", &sid[..sid.len().min(8)]);
                     sink.message(&format!("wiki updated for {}", &sid[..sid.len().min(8)]))

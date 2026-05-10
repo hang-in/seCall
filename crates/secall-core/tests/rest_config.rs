@@ -159,3 +159,133 @@ path = "/tmp/test-vault"
     assert_eq!(status, StatusCode::NOT_FOUND, "expected 404, got {status}: {body}");
     assert!(body["error"].as_str().unwrap_or("").contains("unknown config section"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_graph_section_ignores_gemini_api_key() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[graph]
+gemini_api_key = "original-secret"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, _body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/graph",
+        Some(json!({
+            "gemini_api_key": "leaked-attacker-input",
+            "ollama_model": "new-model"
+        })),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK);
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved config");
+    assert!(saved.contains(r#"gemini_api_key = "original-secret""#));
+    assert!(!saved.contains("leaked-attacker-input"));
+    assert!(saved.contains(r#"ollama_model = "new-model""#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_preserves_other_sections_in_toml() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[wiki]
+default_backend = "ollama"
+
+[log]
+backend = "haiku"
+model = "claude-haiku-4-5-20251001"
+
+[embedding]
+backend = "ort"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, _body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/wiki",
+        Some(json!({ "default_backend": "claude" })),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK);
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved config");
+    assert!(saved.contains(r#"default_backend = "claude""#));
+    let parsed: toml::Value = toml::from_str(&saved).expect("saved config should parse");
+    assert_eq!(
+        parsed
+            .get("log")
+            .and_then(|v| v.get("backend"))
+            .and_then(|v| v.as_str()),
+        Some("haiku"),
+        "expected [log].backend preserved, got:\n{saved}"
+    );
+    assert_eq!(
+        parsed
+            .get("log")
+            .and_then(|v| v.get("model"))
+            .and_then(|v| v.as_str()),
+        Some("claude-haiku-4-5-20251001"),
+        "expected [log].model preserved, got:\n{saved}"
+    );
+    assert!(
+        saved.contains("[embedding]\nbackend = \"ort\""),
+        "expected embedding section preserved, got:\n{saved}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_invalid_json_body_returns_400() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/wiki",
+        Some(json!(["array", "not", "object"])),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400, got {status}: {body}");
+    assert!(body["error"].as_str().unwrap_or("").contains("must be a JSON object"));
+}

@@ -1,7 +1,12 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use secall_core::command_exists;
+use secall_core::llm::defaults::{
+    GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_LMSTUDIO_DEFAULT,
+};
 use secall_core::vault::config::WikiBackendConfig;
 use secall_core::vault::Config;
 
@@ -60,9 +65,101 @@ pub fn run_llm_where() -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum TestStatus {
+    Ok,
+    Fail,
+    Skip,
+}
+
+struct TestOutcome {
+    backend: String,
+    status: TestStatus,
+    detail: String,
+}
+
+impl TestStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            TestStatus::Ok => "OK",
+            TestStatus::Fail => "FAIL",
+            TestStatus::Skip => "SKIP",
+        }
+    }
+}
+
+fn ok_outcome(backend: &str, detail: impl Into<String>) -> TestOutcome {
+    TestOutcome {
+        backend: backend.to_string(),
+        status: TestStatus::Ok,
+        detail: detail.into(),
+    }
+}
+
+fn fail_outcome(backend: &str, detail: impl Into<String>) -> TestOutcome {
+    TestOutcome {
+        backend: backend.to_string(),
+        status: TestStatus::Fail,
+        detail: detail.into(),
+    }
+}
+
+fn skip_outcome(backend: &str, detail: impl Into<String>) -> TestOutcome {
+    TestOutcome {
+        backend: backend.to_string(),
+        status: TestStatus::Skip,
+        detail: detail.into(),
+    }
+}
+
+fn short_http_client() -> std::result::Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|err| format!("client build failed: {err}"))
+}
+
+pub async fn run_llm_test(backend: Option<String>, no_network: bool) -> Result<()> {
+    let config = Config::load_or_default();
+    let backends = match backend.as_deref() {
+        None => vec!["claude", "codex", "haiku", "ollama", "lmstudio", "gemini"],
+        Some(name @ ("claude" | "codex" | "haiku" | "ollama" | "lmstudio" | "gemini")) => {
+            vec![name]
+        }
+        Some(other) => {
+            anyhow::bail!(
+                "unknown backend: {}. valid: claude/codex/haiku/ollama/lmstudio/gemini",
+                other
+            )
+        }
+    };
+
+    let mut failed = false;
+    for name in backends {
+        let outcome = test_backend(&config, name, no_network).await;
+        failed |= matches!(outcome.status, TestStatus::Fail);
+        println!(
+            "[{:<8}] {:<4} {}",
+            outcome.backend,
+            outcome.status.as_str(),
+            outcome.detail
+        );
+    }
+
+    if failed {
+        std::process::exit(2);
+    }
+
+    Ok(())
+}
+
 fn print_llm_summary(config: &Config) {
     println!("Wiki");
     println!("  default_backend: {}", config.wiki.default_backend);
+    println!(
+        "  review_backend: {}",
+        config.wiki.review_backend.as_deref().unwrap_or("(inherits default_backend)")
+    );
     println!(
         "  review_model: {}",
         config.wiki.review_model.as_deref().unwrap_or("sonnet")
@@ -194,6 +291,287 @@ fn print_llm_summary(config: &Config) {
     }
 }
 
+async fn test_backend(config: &Config, backend: &str, no_network: bool) -> TestOutcome {
+    match backend {
+        "claude" => test_cli_backend("claude", no_network).await,
+        "codex" => test_cli_backend("codex", no_network).await,
+        "haiku" => test_haiku_backend(config, no_network).await,
+        "ollama" => test_ollama_backend(config, no_network).await,
+        "lmstudio" => test_lmstudio_backend(config, no_network).await,
+        "gemini" => test_gemini_backend(config, no_network).await,
+        _ => fail_outcome(backend, "unsupported backend"),
+    }
+}
+
+async fn test_cli_backend(bin: &'static str, no_network: bool) -> TestOutcome {
+    if !command_exists(bin) {
+        return fail_outcome(bin, "not installed (PATH lookup failed)");
+    }
+
+    let path = resolve_command_path(bin).unwrap_or_else(|| "(in PATH)".to_string());
+    if no_network {
+        return ok_outcome(bin, path);
+    }
+
+    match run_version_command(bin).await {
+        Ok(version) => ok_outcome(bin, format!("{} ({})", path, version)),
+        Err(err) => fail_outcome(bin, err),
+    }
+}
+
+async fn test_haiku_backend(config: &Config, no_network: bool) -> TestOutcome {
+    let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(value) if !value.is_empty() => value,
+        _ => return fail_outcome("haiku", "ANTHROPIC_API_KEY not set"),
+    };
+
+    if no_network {
+        return ok_outcome("haiku", "ANTHROPIC_API_KEY set");
+    }
+
+    let model = config
+        .graph
+        .anthropic_model
+        .as_deref()
+        .unwrap_or(GRAPH_ANTHROPIC_DEFAULT);
+    let client = match short_http_client() {
+        Ok(client) => client,
+        Err(err) => return fail_outcome("haiku", err),
+    };
+
+    let payload = serde_json::json!({
+        "model": model,
+        "max_tokens": 1,
+        "system": "Reply with hi",
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+
+    match client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            ok_outcome("haiku", format!("{} 1-token call {}", model, resp.status()))
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            fail_outcome("haiku", format!("{} {}", status, truncate_for_display(&body)))
+        }
+        Err(err) => fail_outcome("haiku", err.to_string()),
+    }
+}
+
+async fn test_ollama_backend(config: &Config, no_network: bool) -> TestOutcome {
+    let url = config
+        .graph
+        .ollama_url
+        .clone()
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+
+    if no_network {
+        return ok_outcome("ollama", url);
+    }
+
+    let endpoint = format!("{}/api/tags", url.trim_end_matches('/'));
+    let client = match short_http_client() {
+        Ok(client) => client,
+        Err(err) => return fail_outcome("ollama", err),
+    };
+
+    match client.get(&endpoint).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let status = resp.status();
+            let body: serde_json::Value = match resp.json().await {
+                Ok(value) => value,
+                Err(err) => {
+                    return fail_outcome("ollama", format!("invalid JSON response: {err}"));
+                }
+            };
+            let model = config.graph.ollama_model.as_deref().unwrap_or("(default)");
+            let has_models = body.get("models").and_then(|v| v.as_array()).is_some();
+            if has_models {
+                ok_outcome("ollama", format!("{} ({}, model {})", url, status, model))
+            } else {
+                fail_outcome("ollama", format!("{} missing models array", url))
+            }
+        }
+        Ok(resp) => fail_outcome("ollama", format!("{} {}", resp.status(), url)),
+        Err(err) => fail_outcome("ollama", err.to_string()),
+    }
+}
+
+async fn test_lmstudio_backend(config: &Config, no_network: bool) -> TestOutcome {
+    let Some(url) = lmstudio_url(config) else {
+        return skip_outcome("lmstudio", "api_url not configured");
+    };
+
+    if no_network {
+        return ok_outcome("lmstudio", url);
+    }
+
+    let endpoint = format!("{}/v1/models", url.trim_end_matches('/'));
+    let client = match short_http_client() {
+        Ok(client) => client,
+        Err(err) => return fail_outcome("lmstudio", err),
+    };
+
+    match client.get(&endpoint).send().await {
+        Ok(resp) if resp.status().is_success() => ok_outcome(
+            "lmstudio",
+            format!(
+                "{} ({}, model {})",
+                url,
+                resp.status(),
+                config
+                    .graph
+                    .ollama_model
+                    .as_deref()
+                    .unwrap_or(GRAPH_LMSTUDIO_DEFAULT)
+            ),
+        ),
+        Ok(resp) => fail_outcome("lmstudio", format!("{} {}", resp.status(), url)),
+        Err(err) => fail_outcome("lmstudio", err.to_string()),
+    }
+}
+
+async fn test_gemini_backend(config: &Config, no_network: bool) -> TestOutcome {
+    let api_key = match config
+        .graph
+        .gemini_api_key
+        .clone()
+        .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
+    {
+        Some(value) if !value.is_empty() => value,
+        _ => return fail_outcome("gemini", "SECALL_GEMINI_API_KEY not set"),
+    };
+
+    if no_network {
+        let _ = api_key;
+        return ok_outcome("gemini", "SECALL_GEMINI_API_KEY set");
+    }
+
+    let model = config
+        .graph
+        .gemini_model
+        .as_deref()
+        .unwrap_or(GRAPH_GEMINI_DEFAULT);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        model, api_key
+    );
+    let payload = serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": "hi"}]
+        }],
+        "generationConfig": {"maxOutputTokens": 1}
+    });
+    let client = match short_http_client() {
+        Ok(client) => client,
+        Err(err) => return fail_outcome("gemini", err),
+    };
+
+    match client.post(url).json(&payload).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            ok_outcome("gemini", format!("{} 1-token call {}", model, resp.status()))
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            fail_outcome("gemini", format!("{} {}", status, truncate_for_display(&body)))
+        }
+        Err(err) => fail_outcome("gemini", err.to_string()),
+    }
+}
+
+fn lmstudio_url(config: &Config) -> Option<String> {
+    config
+        .graph
+        .ollama_url
+        .clone()
+        .or_else(|| {
+            if config.graph.semantic_backend == "lmstudio" {
+                Some("http://localhost:1234".to_string())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if config.log.backend.as_deref() == Some("lmstudio") {
+                config.log.api_url.clone()
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if config.wiki.default_backend == "lmstudio" {
+                config
+                    .wiki
+                    .backends
+                    .get("lmstudio")
+                    .and_then(|cfg| cfg.api_url.clone())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            config
+                .wiki
+                .backends
+                .get("lmstudio")
+                .and_then(|cfg| cfg.api_url.clone())
+        })
+}
+
+fn resolve_command_path(cmd: &str) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    let output = Command::new("where.exe").arg(cmd).output().ok()?;
+    #[cfg(not(target_os = "windows"))]
+    let output = Command::new("which").arg(cmd).output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout)
+        .ok()
+        .and_then(|stdout| stdout.lines().next().map(|line| line.trim().to_string()))
+}
+
+async fn run_version_command(cmd: &str) -> std::result::Result<String, String> {
+    let mut child = tokio::process::Command::new(cmd);
+    child.arg("--version");
+    child.kill_on_drop(true);
+
+    let output = match tokio::time::timeout(Duration::from_secs(5), child.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(err)) => return Err(err.to_string()),
+        Err(_) => return Err("timed out after 5s".to_string()),
+    };
+
+    if !output.status.success() {
+        return Err(truncate_for_display(&String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(truncate_for_display(stdout.trim()))
+}
+
+fn truncate_for_display(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() <= 200 {
+        trimmed.to_string()
+    } else {
+        format!("{}...", &trimmed[..200])
+    }
+}
+
 fn print_backend_config(name: &str, backend: &WikiBackendConfig) {
     println!(
         "    {}: model={} api_url={} max_tokens={}",
@@ -240,6 +618,9 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
         }
         "wiki.default_backend" => {
             config.wiki.default_backend = value.to_string();
+        }
+        "wiki.review_backend" => {
+            config.wiki.review_backend = Some(value.to_string());
         }
         "wiki.review_model" => {
             config.wiki.review_model = Some(value.to_string());

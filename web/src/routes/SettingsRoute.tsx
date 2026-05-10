@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Lock, Save } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -10,10 +11,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MaskedKeyInfoModal } from "@/components/settings/MaskedKeyInfoModal";
 import { useConfig, useConfigPatch } from "@/hooks/useConfig";
-import type { AppConfig } from "@/lib/api";
+import type { AppConfig, ConfigBackendConfig } from "@/lib/api";
+import { validateHttpUrl, validateModelName } from "@/lib/validators";
 
 type SectionKey = "wiki" | "graph" | "log" | "embedding";
+
+type FormsState = {
+  wiki: AppConfig["wiki"];
+  graph: AppConfig["graph"];
+  log: AppConfig["log"];
+  embedding: AppConfig["embedding"];
+};
+
+type SectionErrors = {
+  wiki: string[];
+  graph: string[];
+  log: string[];
+  embedding: string[];
+};
 
 const SECTION_LIST: { key: SectionKey; label: string; note: string }[] = [
   { key: "wiki", label: "Wiki", note: "기본 backend와 backend별 모델 설정" },
@@ -21,6 +38,23 @@ const SECTION_LIST: { key: SectionKey; label: string; note: string }[] = [
   { key: "log", label: "Log", note: "Daily diary backend와 model/api_url 설정" },
   { key: "embedding", label: "Embedding", note: "임베딩 backend 설정" },
 ];
+
+function cloneForms(data: AppConfig): FormsState {
+  return {
+    wiki: structuredClone(data.wiki),
+    graph: structuredClone(data.graph),
+    log: structuredClone(data.log),
+    embedding: structuredClone(data.embedding),
+  };
+}
+
+function sameValue(a: unknown, b: unknown) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function fieldError(...errors: Array<string | null | undefined>) {
+  return errors.find(Boolean) ?? null;
+}
 
 export default function SettingsRoute() {
   const { data, isLoading, error } = useConfig();
@@ -31,13 +65,17 @@ export default function SettingsRoute() {
   const [graphForm, setGraphForm] = useState<AppConfig["graph"] | null>(null);
   const [logForm, setLogForm] = useState<AppConfig["log"] | null>(null);
   const [embeddingForm, setEmbeddingForm] = useState<AppConfig["embedding"] | null>(null);
+  const [initialForms, setInitialForms] = useState<FormsState | null>(null);
+  const [maskedModalOpen, setMaskedModalOpen] = useState(false);
 
   useEffect(() => {
     if (!data) return;
-    setWikiForm(data.wiki);
-    setGraphForm(data.graph);
-    setLogForm(data.log);
-    setEmbeddingForm(data.embedding);
+    const next = cloneForms(data);
+    setWikiForm(next.wiki);
+    setGraphForm(next.graph);
+    setLogForm(next.log);
+    setEmbeddingForm(next.embedding);
+    setInitialForms(next);
   }, [data]);
 
   useEffect(() => {
@@ -45,6 +83,57 @@ export default function SettingsRoute() {
       setReadOnly(true);
     }
   }, [patch.error]);
+
+  const sectionErrors = useMemo<SectionErrors>(() => {
+    const wiki: string[] = [];
+    const graph: string[] = [];
+    const log: string[] = [];
+    const embedding: string[] = [];
+
+    if (wikiForm) {
+      wiki.push(
+        ...Object.entries(wikiForm.backends).flatMap(([backend, cfg]) =>
+          [
+            validateModelName(cfg.model ?? ""),
+            validateHttpUrl(cfg.api_url ?? ""),
+          ]
+            .filter(Boolean)
+            .map((msg) => `${backend}: ${msg}`),
+        ),
+      );
+      const reviewModelError = validateModelName(wikiForm.review_model ?? "");
+      if (reviewModelError) wiki.push(`review_model: ${reviewModelError}`);
+    }
+
+    if (graphForm) {
+      const urlError = validateHttpUrl(graphForm.ollama_url ?? "");
+      const ollamaModelError = validateModelName(graphForm.ollama_model ?? "");
+      const anthropicModelError = validateModelName(graphForm.anthropic_model ?? "");
+      const geminiModelError = validateModelName(graphForm.gemini_model ?? "");
+      if (urlError) graph.push(`ollama_url: ${urlError}`);
+      if (ollamaModelError) graph.push(`ollama_model: ${ollamaModelError}`);
+      if (anthropicModelError) graph.push(`anthropic_model: ${anthropicModelError}`);
+      if (geminiModelError) graph.push(`gemini_model: ${geminiModelError}`);
+    }
+
+    if (logForm) {
+      const modelError = validateModelName(logForm.model ?? "");
+      const urlError = validateHttpUrl(logForm.api_url ?? "");
+      if (modelError) log.push(`model: ${modelError}`);
+      if (urlError) log.push(`api_url: ${urlError}`);
+    }
+
+    if (embeddingForm) {
+      const ollamaModelError = validateModelName(embeddingForm.ollama_model ?? "");
+      const openAiModelError = validateModelName(embeddingForm.openai_model ?? "");
+      const urlError = validateHttpUrl(embeddingForm.ollama_url ?? "");
+      if (ollamaModelError) embedding.push(`ollama_model: ${ollamaModelError}`);
+      if (openAiModelError) embedding.push(`openai_model: ${openAiModelError}`);
+      if (urlError) embedding.push(`ollama_url: ${urlError}`);
+    }
+
+    return { wiki, graph, log, embedding };
+  }, [embeddingForm, graphForm, logForm, wikiForm]);
 
   if (isLoading) {
     return (
@@ -65,12 +154,40 @@ export default function SettingsRoute() {
     );
   }
 
-  if (!data || !wikiForm || !graphForm || !logForm || !embeddingForm) {
+  if (!data || !wikiForm || !graphForm || !logForm || !embeddingForm || !initialForms) {
     return null;
   }
 
+  const isDirty = (key: SectionKey) => {
+    const current = { wiki: wikiForm, graph: graphForm, log: logForm, embedding: embeddingForm }[key];
+    return !sameValue(current, initialForms[key]);
+  };
+
+  const currentErrors = sectionErrors[section];
+  const saveDisabled =
+    readOnly ||
+    patch.isPending ||
+    currentErrors.length > 0 ||
+    !isDirty(section);
+
+  const handleSave = async (key: SectionKey, body: unknown) => {
+    const result = await patch.mutateAsync({ section: key, body });
+    const next = cloneForms(result.data);
+    setWikiForm(next.wiki);
+    setGraphForm(next.graph);
+    setLogForm(next.log);
+    setEmbeddingForm(next.embedding);
+    setInitialForms(next);
+  };
+
   return (
     <div className="h-full overflow-auto bg-[var(--bg)]">
+      <MaskedKeyInfoModal
+        open={maskedModalOpen}
+        onOpenChange={setMaskedModalOpen}
+        envVar="SECALL_GEMINI_API_KEY"
+      />
+
       <div className="mx-auto max-w-6xl px-ds-6 py-ds-6">
         <header className="mb-ds-6 flex items-start justify-between gap-ds-4">
           <div className="space-y-ds-1">
@@ -101,7 +218,17 @@ export default function SettingsRoute() {
                     : "border-hairline bg-[var(--surface)] text-text-3 hover:bg-surface-2 hover:text-text",
                 ].join(" ")}
               >
-                <div className="text-t-h2 font-medium">{item.label}</div>
+                <div className="flex items-center justify-between gap-ds-2">
+                  <div className="text-t-h2 font-medium">{item.label}</div>
+                  {isDirty(item.key) && (
+                    <Badge
+                      variant="outline"
+                      className="border-status-warn/40 bg-status-warn/10 text-status-warn"
+                    >
+                      변경됨
+                    </Badge>
+                  )}
+                </div>
                 <div className="mt-1 text-t-meta">{item.note}</div>
               </button>
             ))}
@@ -111,7 +238,7 @@ export default function SettingsRoute() {
             {section === "wiki" && (
               <Card className="border-hairline">
                 <CardHeader>
-                  <CardTitle>Wiki Settings</CardTitle>
+                  <SectionTitle title="Wiki Settings" dirty={isDirty("wiki")} />
                 </CardHeader>
                 <CardContent className="space-y-ds-4">
                   <Field label="Default backend">
@@ -130,7 +257,10 @@ export default function SettingsRoute() {
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Review model">
+                  <Field
+                    label="Review model"
+                    error={fieldError(validateModelName(wikiForm.review_model ?? ""))}
+                  >
                     <Input
                       value={wikiForm.review_model ?? ""}
                       onChange={(e) =>
@@ -143,77 +273,30 @@ export default function SettingsRoute() {
                   {["claude", "codex", "haiku", "ollama", "lmstudio"].map((backend) => {
                     const backendCfg = wikiForm.backends[backend] ?? {};
                     return (
-                      <div key={backend} className="rounded-xl border border-hairline bg-surface-2 p-ds-4">
-                        <div className="mb-ds-3 text-t-h2 font-medium">{backend}</div>
-                        <div className="grid grid-cols-1 gap-ds-3 md:grid-cols-3">
-                          <Field label="Model">
-                            <Input
-                              value={backendCfg.model ?? ""}
-                              onChange={(e) =>
-                                setWikiForm((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        backends: {
-                                          ...prev.backends,
-                                          [backend]: { ...backendCfg, model: e.target.value },
-                                        },
-                                      }
-                                    : prev,
-                                )
-                              }
-                              disabled={readOnly}
-                            />
-                          </Field>
-                          <Field label="API URL">
-                            <Input
-                              value={backendCfg.api_url ?? ""}
-                              onChange={(e) =>
-                                setWikiForm((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        backends: {
-                                          ...prev.backends,
-                                          [backend]: { ...backendCfg, api_url: e.target.value },
-                                        },
-                                      }
-                                    : prev,
-                                )
-                              }
-                              disabled={readOnly}
-                            />
-                          </Field>
-                          <Field label="Max tokens">
-                            <Input
-                              type="number"
-                              value={String(backendCfg.max_tokens ?? 4096)}
-                              onChange={(e) =>
-                                setWikiForm((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        backends: {
-                                          ...prev.backends,
-                                          [backend]: {
-                                            ...backendCfg,
-                                            max_tokens: Number(e.target.value || 0),
-                                          },
-                                        },
-                                      }
-                                    : prev,
-                                )
-                              }
-                              disabled={readOnly}
-                            />
-                          </Field>
-                        </div>
-                      </div>
+                      <BackendCard
+                        key={backend}
+                        backend={backend}
+                        config={backendCfg}
+                        readOnly={readOnly}
+                        onChange={(next) =>
+                          setWikiForm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  backends: {
+                                    ...prev.backends,
+                                    [backend]: next,
+                                  },
+                                }
+                              : prev,
+                          )
+                        }
+                      />
                     );
                   })}
                   <SaveRow
-                    disabled={readOnly || patch.isPending}
-                    onSave={() => patch.mutate({ section: "wiki", body: wikiForm })}
+                    disabled={saveDisabled}
+                    onSave={() => handleSave("wiki", wikiForm)}
                   />
                 </CardContent>
               </Card>
@@ -221,7 +304,9 @@ export default function SettingsRoute() {
 
             {section === "graph" && (
               <Card className="border-hairline">
-                <CardHeader><CardTitle>Graph Settings</CardTitle></CardHeader>
+                <CardHeader>
+                  <SectionTitle title="Graph Settings" dirty={isDirty("graph")} />
+                </CardHeader>
                 <CardContent className="space-y-ds-4">
                   <label className="flex items-center gap-ds-2 text-t-small text-text-2">
                     <input
@@ -251,7 +336,10 @@ export default function SettingsRoute() {
                     </Select>
                   </Field>
                   <SettingsGrid>
-                    <Field label="Ollama / LM Studio URL">
+                    <Field
+                      label="Ollama / LM Studio URL"
+                      error={fieldError(validateHttpUrl(graphForm.ollama_url ?? ""))}
+                    >
                       <Input
                         value={graphForm.ollama_url ?? ""}
                         onChange={(e) =>
@@ -260,7 +348,10 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="Ollama model">
+                    <Field
+                      label="Ollama model"
+                      error={fieldError(validateModelName(graphForm.ollama_model ?? ""))}
+                    >
                       <Input
                         value={graphForm.ollama_model ?? ""}
                         onChange={(e) =>
@@ -269,7 +360,10 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="Anthropic model">
+                    <Field
+                      label="Anthropic model"
+                      error={fieldError(validateModelName(graphForm.anthropic_model ?? ""))}
+                    >
                       <Input
                         value={graphForm.anthropic_model ?? ""}
                         onChange={(e) =>
@@ -278,8 +372,12 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="Gemini model">
+                    <Field
+                      label="Gemini model"
+                      error={fieldError(validateModelName(graphForm.gemini_model ?? ""))}
+                    >
                       <Input
+                        aria-label="Gemini model"
                         value={graphForm.gemini_model ?? ""}
                         onChange={(e) =>
                           setGraphForm((prev) => (prev ? { ...prev, gemini_model: e.target.value } : prev))
@@ -288,12 +386,27 @@ export default function SettingsRoute() {
                       />
                     </Field>
                   </SettingsGrid>
-                  <Field label="Gemini API key">
-                    <Input value="<masked>" disabled placeholder="<env>" />
+                  <Field
+                    label="Gemini API key"
+                    hint="환경변수 또는 .env 에서만 관리합니다."
+                  >
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() => setMaskedModalOpen(true)}
+                    >
+                      <Input
+                        aria-label="Gemini API key"
+                        value="<masked>"
+                        readOnly
+                        className="cursor-pointer"
+                        placeholder="<env>"
+                      />
+                    </button>
                   </Field>
                   <SaveRow
-                    disabled={readOnly || patch.isPending}
-                    onSave={() => patch.mutate({ section: "graph", body: graphForm })}
+                    disabled={saveDisabled}
+                    onSave={() => handleSave("graph", graphForm)}
                   />
                 </CardContent>
               </Card>
@@ -301,7 +414,9 @@ export default function SettingsRoute() {
 
             {section === "log" && (
               <Card className="border-hairline">
-                <CardHeader><CardTitle>Log Settings</CardTitle></CardHeader>
+                <CardHeader>
+                  <SectionTitle title="Log Settings" dirty={isDirty("log")} />
+                </CardHeader>
                 <CardContent className="space-y-ds-4">
                   <Field label="Backend">
                     <Select
@@ -320,7 +435,7 @@ export default function SettingsRoute() {
                     </Select>
                   </Field>
                   <SettingsGrid>
-                    <Field label="Model">
+                    <Field label="Model" error={fieldError(validateModelName(logForm.model ?? ""))}>
                       <Input
                         value={logForm.model ?? ""}
                         onChange={(e) =>
@@ -329,7 +444,7 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="API URL">
+                    <Field label="API URL" error={fieldError(validateHttpUrl(logForm.api_url ?? ""))}>
                       <Input
                         value={logForm.api_url ?? ""}
                         onChange={(e) =>
@@ -353,8 +468,8 @@ export default function SettingsRoute() {
                     </Field>
                   </SettingsGrid>
                   <SaveRow
-                    disabled={readOnly || patch.isPending}
-                    onSave={() => patch.mutate({ section: "log", body: logForm })}
+                    disabled={saveDisabled}
+                    onSave={() => handleSave("log", logForm)}
                   />
                 </CardContent>
               </Card>
@@ -362,7 +477,9 @@ export default function SettingsRoute() {
 
             {section === "embedding" && (
               <Card className="border-hairline">
-                <CardHeader><CardTitle>Embedding Settings</CardTitle></CardHeader>
+                <CardHeader>
+                  <SectionTitle title="Embedding Settings" dirty={isDirty("embedding")} />
+                </CardHeader>
                 <CardContent className="space-y-ds-4">
                   <Field label="Backend">
                     <Select
@@ -381,7 +498,10 @@ export default function SettingsRoute() {
                     </Select>
                   </Field>
                   <SettingsGrid>
-                    <Field label="Ollama URL">
+                    <Field
+                      label="Ollama URL"
+                      error={fieldError(validateHttpUrl(embeddingForm.ollama_url ?? ""))}
+                    >
                       <Input
                         value={embeddingForm.ollama_url ?? ""}
                         onChange={(e) =>
@@ -390,7 +510,10 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="Ollama model">
+                    <Field
+                      label="Ollama model"
+                      error={fieldError(validateModelName(embeddingForm.ollama_model ?? ""))}
+                    >
                       <Input
                         value={embeddingForm.ollama_model ?? ""}
                         onChange={(e) =>
@@ -399,7 +522,10 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
-                    <Field label="OpenAI model">
+                    <Field
+                      label="OpenAI model"
+                      error={fieldError(validateModelName(embeddingForm.openai_model ?? ""))}
+                    >
                       <Input
                         value={embeddingForm.openai_model ?? ""}
                         onChange={(e) =>
@@ -421,8 +547,8 @@ export default function SettingsRoute() {
                     </Field>
                   </SettingsGrid>
                   <SaveRow
-                    disabled={readOnly || patch.isPending}
-                    onSave={() => patch.mutate({ section: "embedding", body: embeddingForm })}
+                    disabled={saveDisabled}
+                    onSave={() => handleSave("embedding", embeddingForm)}
                   />
                 </CardContent>
               </Card>
@@ -434,17 +560,86 @@ export default function SettingsRoute() {
   );
 }
 
+function BackendCard({
+  backend,
+  config,
+  readOnly,
+  onChange,
+}: {
+  backend: string;
+  config: ConfigBackendConfig;
+  readOnly: boolean;
+  onChange: (next: ConfigBackendConfig) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-hairline bg-surface-2 p-ds-4">
+      <div className="mb-ds-3 text-t-h2 font-medium">{backend}</div>
+      <div className="grid grid-cols-1 gap-ds-3 md:grid-cols-3">
+        <Field label="Model" error={fieldError(validateModelName(config.model ?? ""))}>
+          <Input
+            value={config.model ?? ""}
+            onChange={(e) => onChange({ ...config, model: e.target.value })}
+            disabled={readOnly}
+          />
+        </Field>
+        <Field label="API URL" error={fieldError(validateHttpUrl(config.api_url ?? ""))}>
+          <Input
+            value={config.api_url ?? ""}
+            onChange={(e) => onChange({ ...config, api_url: e.target.value })}
+            disabled={readOnly}
+          />
+        </Field>
+        <Field label="Max tokens">
+          <Input
+            type="number"
+            value={String(config.max_tokens ?? 4096)}
+            onChange={(e) =>
+              onChange({
+                ...config,
+                max_tokens: Number(e.target.value || 0),
+              })
+            }
+            disabled={readOnly}
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ title, dirty }: { title: string; dirty: boolean }) {
+  return (
+    <div className="flex items-center gap-ds-2">
+      <CardTitle>{title}</CardTitle>
+      {dirty && (
+        <Badge
+          variant="outline"
+          className="border-status-warn/40 bg-status-warn/10 text-status-warn"
+        >
+          변경됨
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 function Field({
   label,
   children,
+  error,
+  hint,
 }: {
   label: string;
   children: React.ReactNode;
+  error?: string | null;
+  hint?: string;
 }) {
   return (
     <label className="block space-y-ds-2">
       <div className="text-t-meta uppercase tracking-[0.12em] text-text-3">{label}</div>
       {children}
+      {error ? <p className="text-t-meta text-status-danger">{error}</p> : null}
+      {!error && hint ? <p className="text-t-meta text-text-3">{hint}</p> : null}
     </label>
   );
 }

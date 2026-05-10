@@ -37,6 +37,7 @@ serde_yaml.workspace = true
 zip.workspace = true
 uuid.workspace = true
 tempfile = "3.27.0"
+toml_edit = "0.25.8"
 rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 openvino = { workspace = true, optional = true }
@@ -54,5 +55,6 @@ openvino = ["dep:openvino", "dep:libloading"]
 web-ui = ["dep:rust-embed", "dep:mime_guess"]
 
 [dev-dependencies]
+mockito = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }

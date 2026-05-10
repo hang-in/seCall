@@ -521,6 +521,9 @@ secall wiki update --backend haiku
 # Incremental update for one session
 secall wiki update --backend lmstudio --session <id>
 
+# Offline / manual sync mode
+secall wiki update --no-pull
+
 # Check wiki status
 secall wiki status
 
@@ -550,6 +553,17 @@ curl -s -X POST http://localhost:3000/api/wiki \
 
 If Ollama is down or the embedding call fails, `semantic` and `hybrid` automatically fall back to `keyword` so the endpoint never breaks.
 
+### Cross-host Sync (multi-machine vault)
+
+When `secall wiki update` detects a git-backed vault, it now attempts `auto_commit + pull --rebase` before generation.
+
+| Scenario | Behavior |
+|---|---|
+| The same wiki topic changed on two machines | Detects `wiki/*.md` conflicts and regenerates the page from the union of both sides' `sources` |
+| A non-wiki file (`raw/`, `log/`, `graph/`, etc.) conflicts | Aborts and asks for manual resolution |
+| Offline or manually managed sync | Use `secall wiki update --no-pull` to skip git operations |
+| Re-running the same topic on one host | Replaces the body with the latest generated content and keeps only the `sources` union |
+
 Configure the default backend in `config.toml`:
 
 ```toml
@@ -565,6 +579,32 @@ max_tokens = 3000
 api_url = "http://localhost:11434"
 model = "gemma3:27b"
 ```
+
+### Wiki Review (Multi-backend)
+
+`secall wiki update --review` can use a dedicated review backend.
+
+| Backend | Auth | JSON reliability | Cost |
+|---|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | High | API |
+| `haiku` | `ANTHROPIC_API_KEY` | High | API |
+| `claude` | claude CLI | Medium | subscription |
+| `codex` | codex CLI | Medium | subscription |
+| `ollama` | none | model-dependent | local |
+| `lmstudio` | none | model-dependent | local |
+
+Priority:
+1. CLI `--review-backend`
+2. `[wiki].review_backend`
+3. `[wiki].default_backend`
+4. fallback `"haiku"`
+
+```bash
+secall wiki update --review --review-backend ollama
+secall config set wiki.review_backend ollama
+```
+
+Local backends (`ollama`, `lmstudio`) automatically append the strict JSON suffix from `docs/prompts/wiki-review-strict-json.md` before retrying.
 
 ### Daily Work Log
 
@@ -635,6 +675,8 @@ secall serve --port 8080 --allow-config-edit
 | `graph.gemini_model` | Gemini model name | `gemini-2.5-flash` |
 | `graph.ollama_model` | Ollama / LM Studio semantic model | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
+| `wiki.review_backend` | Wiki review backend (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | falls back to `wiki.default_backend` |
+| `wiki.review_model` | Wiki review model override | `sonnet` |
 | `wiki.backends.<name>.api_url` | Backend API endpoint | (default) |
 | `wiki.backends.<name>.model` | Model name for the backend | (default) |
 | `wiki.backends.<name>.max_tokens` | Max tokens to generate | `4096` |
@@ -667,7 +709,7 @@ Config file location:
 | `secall config llm show\|set\|where` | View/change only LLM-related settings |
 | `secall graph build\|stats\|export` | Knowledge graph management |
 | `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | Rebuild semantic graph (P37) — priority: `--session` > `--all` > `--retry-failed` > `--since` |
-| `secall wiki update [--backend claude\|codex\|ollama\|lmstudio\|gemini]` | Wiki generation with backend selection |
+| `secall wiki update [--backend claude\|codex\|haiku\|ollama\|lmstudio] [--review] [--review-backend <name>]` | Wiki generation with optional review |
 | `secall wiki status` | Wiki status |
 | `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]` | Generate a daily work log |
 | `secall serve [--port <port>] [--allow-config-edit]` | Start REST API + Web UI (`/settings` save requires the flag) |
@@ -784,6 +826,8 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-05-10 | v0.10.1 | P44 Wiki cross-host merge: `wiki update` now auto-runs `auto_commit + pull` at startup, regenerates conflicted `wiki/*.md` pages from the union of both sides' `sources`, adds `--no-pull`, and removes body concatenation from `merge_with_existing()` |
+| 2026-05-09 | v0.10.0 | P43 Wiki review backend expansion: `wiki update --review` now supports `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic`, adds `[wiki].review_backend` + `--review-backend`, preserves user comments with `toml_edit` config saves, and adds `docs/reference/llm-config.md` |
 | 2026-05-09 | v0.9.1 | P41 LLM config integration: `secall log --backend/--model`, new `[log]` section, centralized default-model constants + warnings, `GET /api/config` / `PATCH /api/config/{section}`, web `/settings`, `secall config llm show\|set\|where` |
 | 2026-05-06 | v0.9.0 | Wiki search hybrid mode (P40): `wiki_vectors` table (DB v9, page-level embeddings via bge-m3 + Ollama), `WikiIndexer` with SHA-256 content-hash for idempotent indexing and orphan cleanup, `do_wiki_search` extended with `mode={keyword\|semantic\|hybrid}` param (default `keyword` — backward compatible) and RRF (k=60) fusion for hybrid, automatic keyword fallback when Ollama is unavailable / embedding fails, new CLI `secall wiki vectorize [--force] [--model bge-m3] [--ollama-url ...]` for one-shot backfill, regression coverage in `tests/{db_migrations,wiki_indexer,wiki_search_modes}.rs` |
 | 2026-05-05 | v0.8.2 | P39 wiki pipeline baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` now uses `git add -A` so SCHEMA.md / graph/ / log/ are all staged (`crates/secall-core/src/vault/git.rs:146`, 8 regression tests in `tests/vault_auto_commit.rs`), `secall` binary autoloads `.env` via `dotenvy::dotenv()` on startup (`crates/secall/src/main.rs:382` — Gemini/OpenAI keys injected automatically), 683-session sync baseline measurement (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` backfilled 28 sessions / 840 edges |

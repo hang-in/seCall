@@ -61,7 +61,7 @@ pub fn merge_with_existing(
     }
 
     let existing = std::fs::read_to_string(&full_path)?;
-    let (existing_fm_raw, existing_body) = split_frontmatter(&existing);
+    let (existing_fm_raw, _existing_body) = split_frontmatter(&existing);
     let (new_fm_raw, new_body) = split_frontmatter(new_content);
 
     // 기존 sources 파싱
@@ -102,9 +102,7 @@ pub fn merge_with_existing(
 
     merged_fm.updated_at = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
-    // 본문 병합: 기존 + 구분선 + 새 내용
-    let merged_body = format!("{}\n\n---\n\n{}", existing_body.trim(), new_body.trim());
-    Ok(format_with_frontmatter(&merged_fm, &merged_body))
+    Ok(format_with_frontmatter(&merged_fm, new_body.trim()))
 }
 
 /// 본문에서 세션 ID 패턴을 Obsidian 링크로 변환
@@ -385,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_with_existing() {
+    fn test_merge_replaces_body_keeps_sources_union() {
         let dir = tempfile::tempdir().unwrap();
         let topics_dir = dir.path().join("topics");
         std::fs::create_dir_all(&topics_dir).unwrap();
@@ -404,7 +402,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.contains("Old content"));
+        assert!(!result.contains("Old content"));
         assert!(result.contains("New content"));
         assert!(result.contains("\"old\""));
         assert!(result.contains("\"new\""));
@@ -428,6 +426,46 @@ mod tests {
 
         // 이미 포함된 세션이므로 기존 내용 그대로
         assert_eq!(result, existing);
+    }
+
+    #[test]
+    fn test_merge_creates_when_existing_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let new_content = "---\ntype: topic\nsources:\n  - sess-A\n---\n\n## Body";
+        let merged = merge_with_existing(
+            dir.path(),
+            "topics/new.md",
+            new_content,
+            &["sess-A".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(merged, new_content);
+    }
+
+    #[test]
+    fn test_merge_preserves_sources_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let topics_dir = dir.path().join("topics");
+        std::fs::create_dir_all(&topics_dir).unwrap();
+        std::fs::write(
+            topics_dir.join("ordered.md"),
+            "---\ntype: topic\nsources:\n  - sess-A\n  - sess-B\n---\n\n## old",
+        )
+        .unwrap();
+
+        let merged = merge_with_existing(
+            dir.path(),
+            "topics/ordered.md",
+            "---\ntype: topic\nsources:\n  - sess-C\n---\n\n## new",
+            &["sess-C".to_string()],
+        )
+        .unwrap();
+
+        let pos_a = merged.find("sess-A").unwrap();
+        let pos_b = merged.find("sess-B").unwrap();
+        let pos_c = merged.find("sess-C").unwrap();
+        assert!(pos_a < pos_b && pos_b < pos_c);
     }
 
     #[test]

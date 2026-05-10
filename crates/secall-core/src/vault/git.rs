@@ -124,6 +124,78 @@ impl<'a> VaultGit<'a> {
         })
     }
 
+    /// 충돌(unmerged) 상태인 파일 경로 목록을 반환.
+    pub fn unmerged_files(&self) -> crate::error::Result<Vec<String>> {
+        if !self.is_git_repo() {
+            return Ok(vec![]);
+        }
+
+        let output = self.run_git(&["diff", "--name-only", "--diff-filter=U"])?;
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    /// 충돌 파일의 stage 2/3에서 frontmatter `sources`를 읽어 합집합 반환.
+    pub fn extract_sources_from_conflicted(
+        &self,
+        path: &str,
+    ) -> crate::error::Result<Vec<String>> {
+        let mut sources = Vec::new();
+
+        for stage in ["2", "3"] {
+            let spec = format!(":{stage}:{path}");
+            let output = match self.run_git(&["show", &spec]) {
+                Ok(output) => output,
+                Err(_) => continue,
+            };
+            let content = String::from_utf8_lossy(&output.stdout);
+            for source in parse_sources_from_frontmatter(&content) {
+                if !sources.contains(&source) {
+                    sources.push(source);
+                }
+            }
+        }
+
+        Ok(sources)
+    }
+
+    /// conflict 해결 후 `git add <path>` 로 stage.
+    pub fn stage_resolved(&self, path: &str) -> crate::error::Result<()> {
+        self.run_git(&["add", path])?;
+        Ok(())
+    }
+
+    /// merge/rebase conflict 해결 절차 마무리.
+    pub fn finish_conflict_resolution(&self, message: &str) -> crate::error::Result<()> {
+        if !self.is_git_repo() {
+            return Ok(());
+        }
+
+        let git_dir = self.vault_path.join(".git");
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            let output = Command::new("git")
+                .args(["rebase", "--continue"])
+                .env("GIT_EDITOR", "true")
+                .current_dir(self.vault_path)
+                .output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(crate::SecallError::Config(format!(
+                    "git rebase --continue failed: {}",
+                    stderr.trim()
+                )));
+            }
+        } else if git_dir.join("MERGE_HEAD").exists() {
+            self.run_git(&["commit", "-m", message])?;
+        }
+
+        Ok(())
+    }
+
     /// unstaged 변경이 있으면 자동 커밋. pull 전에 호출하여 rebase 충돌 방지.
     pub fn auto_commit(&self) -> crate::error::Result<bool> {
         if !self.is_git_repo() {
@@ -209,6 +281,36 @@ pub(crate) fn count_new_session_files(diff_stat_output: &str) -> usize {
         .count()
 }
 
+fn parse_sources_from_frontmatter(content: &str) -> Vec<String> {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return vec![];
+    };
+    let Some(end) = rest.find("\n---") else {
+        return vec![];
+    };
+    let frontmatter = &rest[..end];
+
+    let mut in_sources = false;
+    let mut sources = Vec::new();
+    for line in frontmatter.lines() {
+        if line.starts_with("sources:") {
+            in_sources = true;
+            continue;
+        }
+        if !in_sources {
+            continue;
+        }
+        if let Some(source) = line.strip_prefix("  - ") {
+            sources.push(source.trim().to_string());
+            continue;
+        }
+        if !line.starts_with(' ') && !line.is_empty() {
+            break;
+        }
+    }
+    sources
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +345,29 @@ mod tests {
     fn test_count_summary_not_counted() {
         let output = " raw/sessions/x.md | 1 +\n 1 file changed, 1 insertion(+)";
         assert_eq!(count_new_session_files(output), 1);
+    }
+
+    #[test]
+    fn test_parse_sources_from_frontmatter_basic() {
+        let content = "---\ntype: topic\nsources:\n  - sess-A\n  - sess-B\n---\n\n## body";
+        assert_eq!(
+            parse_sources_from_frontmatter(content),
+            vec!["sess-A".to_string(), "sess-B".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_sources_handles_no_sources_block() {
+        let content = "---\ntype: topic\nstatus: draft\n---\n\n## body";
+        assert!(parse_sources_from_frontmatter(content).is_empty());
+    }
+
+    #[test]
+    fn test_parse_sources_stops_at_next_field() {
+        let content = "---\nsources:\n  - sess-A\nstatus: draft\n  - not-a-source\n---\n";
+        assert_eq!(
+            parse_sources_from_frontmatter(content),
+            vec!["sess-A".to_string()]
+        );
     }
 }

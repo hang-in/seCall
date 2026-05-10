@@ -1,6 +1,9 @@
 use anyhow::Result;
 use secall_core::{
-    llm::defaults::{warn_using_default, LOG_GEMINI_DEFAULT, LOG_OLLAMA_DEFAULT},
+    llm::defaults::{
+        warn_using_default, GRAPH_LMSTUDIO_DEFAULT, LOG_GEMINI_DEFAULT, LOG_OLLAMA_DEFAULT,
+        WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT,
+    },
     store::{get_default_db_path, Database},
     vault::Config,
     wiki::{ClaudeBackend, CodexBackend, HaikuBackend, LmStudioBackend, OllamaBackend, WikiBackend},
@@ -170,7 +173,8 @@ pub fn resolve_backend_name(config: &Config, cli_backend: Option<&str>) -> Strin
         .unwrap_or_else(|| "ollama".to_string())
 }
 
-fn resolve_log_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> Option<String> {
+/// Internal resolution helper exposed for integration tests.
+pub fn resolve_log_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> Option<String> {
     if let Some(model) = cli_model {
         return Some(model.to_string());
     }
@@ -233,7 +237,10 @@ async fn generate_log_body(
 
     match backend_name.as_str() {
         "claude" => {
-            let model = resolved_model.unwrap_or_else(|| "sonnet".to_string());
+            let model = resolved_model.unwrap_or_else(|| {
+                warn_using_default("log.model[claude]", WIKI_CLAUDE_DEFAULT);
+                WIKI_CLAUDE_DEFAULT.to_string()
+            });
             let backend = ClaudeBackend {
                 model,
                 vault_path: config.vault.path.clone(),
@@ -243,7 +250,10 @@ async fn generate_log_body(
                 .await
         }
         "codex" => {
-            let model = resolved_model.unwrap_or_else(|| "gpt-5.4".to_string());
+            let model = resolved_model.unwrap_or_else(|| {
+                warn_using_default("log.model[codex]", WIKI_CODEX_DEFAULT);
+                WIKI_CODEX_DEFAULT.to_string()
+            });
             let backend = CodexBackend {
                 model,
                 vault_path: config.vault.path.clone(),
@@ -277,7 +287,10 @@ async fn generate_log_body(
                 api_url: resolve_log_api_url(config, "lmstudio")
                     .unwrap_or("http://localhost:1234")
                     .to_string(),
-                model: resolved_model.unwrap_or_else(|| "gemma-4-e4b-it".to_string()),
+                model: resolved_model.unwrap_or_else(|| {
+                    warn_using_default("log.model[lmstudio]", GRAPH_LMSTUDIO_DEFAULT);
+                    GRAPH_LMSTUDIO_DEFAULT.to_string()
+                }),
                 max_tokens: resolve_log_max_tokens(config),
             };
             backend
