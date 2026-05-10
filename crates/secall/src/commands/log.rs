@@ -149,10 +149,16 @@ pub async fn run(
     // 결과 출력
     println!("{}", body);
 
-    // vault에 저장
+    // vault에 저장 — host suffix 로 머신간 conflict 회피
     let log_dir = config.vault.path.join("log");
     std::fs::create_dir_all(&log_dir)?;
-    let log_path = log_dir.join(format!("{}.md", target_date));
+    let host = gethostname::gethostname()
+        .to_string_lossy()
+        .split('.')
+        .next()
+        .unwrap_or("unknown")
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+    let log_path = log_dir.join(format!("{}--{}.md", target_date, host));
     std::fs::write(&log_path, &body)?;
     eprintln!("Saved to {}", log_path.display());
 

@@ -11,6 +11,9 @@ web/node_modules/
 .env.*
 !.env.example
 
+# Claude Code runtime (scheduled tasks lock 등)
+.claude/
+
 # tunaFlow local agent runtime
 .omc/
 docs/agents/agents.disabled/
