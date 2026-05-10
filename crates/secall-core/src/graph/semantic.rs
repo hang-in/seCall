@@ -432,13 +432,10 @@ pub(crate) async fn extract_with_llm(
             extract_with_ollama(fm, body, base_url, model).await
         }
         "anthropic" => {
-            let model = config
-                .anthropic_model
-                .as_deref()
-                .unwrap_or_else(|| {
-                    warn_using_default("graph.anthropic_model", GRAPH_ANTHROPIC_DEFAULT);
-                    GRAPH_ANTHROPIC_DEFAULT
-                });
+            let model = config.anthropic_model.as_deref().unwrap_or_else(|| {
+                warn_using_default("graph.anthropic_model", GRAPH_ANTHROPIC_DEFAULT);
+                GRAPH_ANTHROPIC_DEFAULT
+            });
             extract_with_anthropic(fm, body, model).await
         }
         "gemini" => extract_with_gemini(fm, body, config).await,

@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use secall_core::{
     jobs::ProgressSink,
-    llm::defaults::{warn_using_default, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT, WIKI_REVIEW_DEFAULT},
+    llm::defaults::{
+        warn_using_default, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT, WIKI_REVIEW_DEFAULT,
+    },
     search::OllamaEmbedder,
     store::{get_default_db_path, Database},
     vault::{git::VaultGit, Config},
@@ -280,8 +282,7 @@ async fn run_update_with_sink(
         }
 
         let resolved_review_backend = resolve_review_backend(review_backend, &config);
-        let resolved_model =
-            resolve_review_model(review_model, &config, &resolved_review_backend);
+        let resolved_model = resolve_review_model(review_model, &config, &resolved_review_backend);
         let reviewer = build_reviewer(&config, &resolved_review_backend, &resolved_model)?;
 
         let total_proj = by_project.len();
@@ -683,7 +684,13 @@ fn build_conflict_resolution_prompt(
     let existing_pages: Vec<String> = walkdir::WalkDir::new(wiki_dir)
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension().map(|ext| ext == "md").unwrap_or(false))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .map(|ext| ext == "md")
+                .unwrap_or(false)
+        })
         .filter_map(|entry| {
             entry
                 .path()

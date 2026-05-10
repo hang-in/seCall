@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::wiki::{load_review_system_prompt, ReviewerKind, ReviewResult, WikiReviewer};
+use crate::wiki::{load_review_system_prompt, ReviewResult, ReviewerKind, WikiReviewer};
 
 pub struct HaikuReviewer {
     pub api_key: String,

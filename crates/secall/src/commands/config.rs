@@ -158,7 +158,11 @@ fn print_llm_summary(config: &Config) {
     println!("  default_backend: {}", config.wiki.default_backend);
     println!(
         "  review_backend: {}",
-        config.wiki.review_backend.as_deref().unwrap_or("(inherits default_backend)")
+        config
+            .wiki
+            .review_backend
+            .as_deref()
+            .unwrap_or("(inherits default_backend)")
     );
     println!(
         "  review_model: {}",
@@ -280,7 +284,10 @@ fn print_llm_summary(config: &Config) {
 
     println!("Environment indicators");
     for (key, present) in [
-        ("ANTHROPIC_API_KEY", std::env::var("ANTHROPIC_API_KEY").is_ok()),
+        (
+            "ANTHROPIC_API_KEY",
+            std::env::var("ANTHROPIC_API_KEY").is_ok(),
+        ),
         (
             "SECALL_GEMINI_API_KEY",
             std::env::var("SECALL_GEMINI_API_KEY").is_ok(),
@@ -361,7 +368,10 @@ async fn test_haiku_backend(config: &Config, no_network: bool) -> TestOutcome {
         Ok(resp) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            fail_outcome("haiku", format!("{} {}", status, truncate_for_display(&body)))
+            fail_outcome(
+                "haiku",
+                format!("{} {}", status, truncate_for_display(&body)),
+            )
         }
         Err(err) => fail_outcome("haiku", err.to_string()),
     }
@@ -478,13 +488,17 @@ async fn test_gemini_backend(config: &Config, no_network: bool) -> TestOutcome {
     };
 
     match client.post(url).json(&payload).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            ok_outcome("gemini", format!("{} 1-token call {}", model, resp.status()))
-        }
+        Ok(resp) if resp.status().is_success() => ok_outcome(
+            "gemini",
+            format!("{} 1-token call {}", model, resp.status()),
+        ),
         Ok(resp) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            fail_outcome("gemini", format!("{} {}", status, truncate_for_display(&body)))
+            fail_outcome(
+                "gemini",
+                format!("{} {}", status, truncate_for_display(&body)),
+            )
         }
         Err(err) => fail_outcome("gemini", err.to_string()),
     }
@@ -556,7 +570,9 @@ async fn run_version_command(cmd: &str) -> std::result::Result<String, String> {
     };
 
     if !output.status.success() {
-        return Err(truncate_for_display(&String::from_utf8_lossy(&output.stderr)));
+        return Err(truncate_for_display(&String::from_utf8_lossy(
+            &output.stderr,
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -779,5 +795,8 @@ fn copy_to_clipboard(path: &std::path::Path) -> Result<()> {
         }
     }
 
-    anyhow::bail!("clipboard command not available (tried: {})", candidates.join(", "));
+    anyhow::bail!(
+        "clipboard command not available (tried: {})",
+        candidates.join(", ")
+    );
 }

@@ -15,8 +15,8 @@ pub use indexer::WikiIndexer;
 pub use lmstudio::LmStudioBackend;
 pub use ollama::OllamaBackend;
 pub use review::{
-    AnthropicReviewer, ReviewIssue, ReviewResult, ReviewerKind, WikiReviewer,
-    load_review_system_prompt,
+    load_review_system_prompt, AnthropicReviewer, ReviewIssue, ReviewResult, ReviewerKind,
+    WikiReviewer,
 };
 pub use reviewers::{
     ClaudeReviewer, CodexReviewer, HaikuReviewer, LmStudioReviewer, OllamaReviewer,

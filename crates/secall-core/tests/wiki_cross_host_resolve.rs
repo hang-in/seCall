@@ -5,7 +5,11 @@ use secall_core::vault::git::VaultGit;
 use tempfile::tempdir;
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git").args(args).current_dir(dir).output().unwrap();
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "git {} failed: {}",

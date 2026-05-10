@@ -293,10 +293,7 @@ enum LlmAction {
     /// Show only LLM-related configuration
     Show,
     /// Set one LLM-related config value
-    Set {
-        key: String,
-        value: String,
-    },
+    Set { key: String, value: String },
     /// Test LLM backend connectivity and credentials
     Test {
         /// Backend: claude | codex | haiku | ollama | lmstudio | gemini
@@ -707,7 +704,7 @@ async fn main() -> anyhow::Result<()> {
                 LlmAction::Where => {
                     commands::config::run_llm_where()?;
                 }
-            }
+            },
         },
     }
 

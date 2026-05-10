@@ -182,7 +182,8 @@ pub async fn start_rest_server(
     allow_config_edit: bool,
 ) -> anyhow::Result<()> {
     let search_arc = Arc::new(search);
-    let server = SeCallMcpServer::new_with_options(db_arc, search_arc, vault_path, allow_config_edit);
+    let server =
+        SeCallMcpServer::new_with_options(db_arc, search_arc, vault_path, allow_config_edit);
     let router = rest_router(server, executor);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));

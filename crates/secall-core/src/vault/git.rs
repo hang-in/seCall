@@ -140,10 +140,7 @@ impl<'a> VaultGit<'a> {
     }
 
     /// 충돌 파일의 stage 2/3에서 frontmatter `sources`를 읽어 합집합 반환.
-    pub fn extract_sources_from_conflicted(
-        &self,
-        path: &str,
-    ) -> crate::error::Result<Vec<String>> {
+    pub fn extract_sources_from_conflicted(&self, path: &str) -> crate::error::Result<Vec<String>> {
         let mut sources = Vec::new();
 
         for stage in ["2", "3"] {

@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt as _;
 
-use crate::wiki::{load_review_system_prompt, ReviewerKind, ReviewResult, WikiReviewer};
+use crate::wiki::{load_review_system_prompt, ReviewResult, ReviewerKind, WikiReviewer};
 
 pub struct CodexReviewer {
     pub model: String,

@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt as _;
 
-use crate::wiki::{load_review_system_prompt, ReviewerKind, ReviewResult, WikiReviewer};
+use crate::wiki::{load_review_system_prompt, ReviewResult, ReviewerKind, WikiReviewer};
 
 pub struct ClaudeReviewer {
     pub model: String,
@@ -60,9 +60,10 @@ async fn run_review_cli(
             stdin.write_all(prompt.as_bytes()).await?;
         }
 
-        let output = tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output())
-            .await
-            .map_err(|_| anyhow::anyhow!("{bin} review timed out after 60s"))??;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output())
+                .await
+                .map_err(|_| anyhow::anyhow!("{bin} review timed out after 60s"))??;
 
         if !output.status.success() {
             anyhow::bail!("{bin} exited with code {:?}", output.status.code());

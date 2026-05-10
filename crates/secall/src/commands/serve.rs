@@ -119,5 +119,13 @@ pub async fn run(port: u16, allow_config_edit: bool) -> Result<()> {
         eprintln!("WARN: --allow-config-edit 활성화. 외부에 노출 금지.");
     }
 
-    start_rest_server(db_arc, search, vault_path, port, executor, allow_config_edit).await
+    start_rest_server(
+        db_arc,
+        search,
+        vault_path,
+        port,
+        executor,
+        allow_config_edit,
+    )
+    .await
 }

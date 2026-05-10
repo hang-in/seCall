@@ -324,7 +324,7 @@ pub async fn run_with_progress(args: SyncArgs, sink: &dyn ProgressSink) -> Resul
                 None,
                 false,
             )
-                .await
+            .await
             {
                 Ok(()) => {
                     eprintln!("  ✓ wiki updated for {}", &sid[..sid.len().min(8)]);

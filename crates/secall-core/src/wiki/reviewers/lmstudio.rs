@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::wiki::{load_review_system_prompt, ReviewerKind, ReviewResult, WikiReviewer};
+use crate::wiki::{load_review_system_prompt, ReviewResult, ReviewerKind, WikiReviewer};
 
 pub struct LmStudioReviewer {
     pub api_url: String,
@@ -44,7 +44,9 @@ impl WikiReviewer for LmStudioReviewer {
             }
 
             let json: serde_json::Value = resp.json().await?;
-            let text = json["choices"][0]["message"]["content"].as_str().unwrap_or("{}");
+            let text = json["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("{}");
             if let Ok(result) = super::parse_review_response(text) {
                 return Ok(result);
             }

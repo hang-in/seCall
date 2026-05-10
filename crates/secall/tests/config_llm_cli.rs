@@ -25,7 +25,11 @@ backend = "haiku"
         .env("SECALL_CONFIG_PATH", &config_path)
         .output()
         .expect("run secall");
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Wiki"));
@@ -53,7 +57,11 @@ path = "/tmp/test-vault"
         .env("SECALL_CONFIG_PATH", &config_path)
         .output()
         .expect("run secall");
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let saved = std::fs::read_to_string(&config_path).expect("read config");
     assert!(saved.contains("backend = \"haiku\""));

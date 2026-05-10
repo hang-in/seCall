@@ -14,10 +14,7 @@ fn write_config(path: &std::path::Path, body: &str) {
     std::fs::write(path, body).expect("write config");
 }
 
-fn make_router(
-    dir: &tempfile::TempDir,
-    allow_config_edit: bool,
-) -> axum::Router {
+fn make_router(dir: &tempfile::TempDir, allow_config_edit: bool) -> axum::Router {
     let db_path = dir.path().join("test.db");
     let db = secall_core::store::Database::open(&db_path).expect("open db");
     let db_arc = Arc::new(Mutex::new(db));
@@ -127,8 +124,15 @@ path = "/tmp/test-vault"
 
     std::env::remove_var("SECALL_CONFIG_PATH");
 
-    assert_eq!(status, StatusCode::FORBIDDEN, "expected 403, got {status}: {body}");
-    assert!(body["error"].as_str().unwrap_or("").contains("config edit disabled"));
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "expected 403, got {status}: {body}"
+    );
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("config edit disabled"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -156,8 +160,15 @@ path = "/tmp/test-vault"
 
     std::env::remove_var("SECALL_CONFIG_PATH");
 
-    assert_eq!(status, StatusCode::NOT_FOUND, "expected 404, got {status}: {body}");
-    assert!(body["error"].as_str().unwrap_or("").contains("unknown config section"));
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "expected 404, got {status}: {body}"
+    );
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("unknown config section"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -286,6 +297,13 @@ path = "/tmp/test-vault"
 
     std::env::remove_var("SECALL_CONFIG_PATH");
 
-    assert_eq!(status, StatusCode::BAD_REQUEST, "expected 400, got {status}: {body}");
-    assert!(body["error"].as_str().unwrap_or("").contains("must be a JSON object"));
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "expected 400, got {status}: {body}"
+    );
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("must be a JSON object"));
 }

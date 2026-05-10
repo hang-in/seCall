@@ -28,8 +28,5 @@ fn review_model_defaults_follow_backend() {
     assert_eq!(resolve_review_model(None, &config, "codex"), "gpt-5.4");
 
     config.graph.ollama_model = Some("qwen2.5:14b".into());
-    assert_eq!(
-        resolve_review_model(None, &config, "ollama"),
-        "qwen2.5:14b"
-    );
+    assert_eq!(resolve_review_model(None, &config, "ollama"), "qwen2.5:14b");
 }

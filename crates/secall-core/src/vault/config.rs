@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::defaults::{
-    GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_OLLAMA_DEFAULT,
-};
+use crate::llm::defaults::{GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_OLLAMA_DEFAULT};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -470,7 +468,9 @@ fn sync_nested_table(
     key: &str,
     map: &toml::map::Map<String, toml::Value>,
 ) -> Result<()> {
-    let implicit = map.values().all(|value| matches!(value, toml::Value::Table(_)));
+    let implicit = map
+        .values()
+        .all(|value| matches!(value, toml::Value::Table(_)));
 
     if let Some(existing) = table.get_mut(key) {
         if let Some(existing_table) = existing.as_table_mut() {
@@ -512,7 +512,9 @@ fn toml_value_to_value(value: &toml::Value) -> Result<toml_edit::Value> {
     use anyhow::Context as _;
 
     match value {
-        toml::Value::Table(_) => anyhow::bail!("nested table cannot be converted into a scalar value"),
+        toml::Value::Table(_) => {
+            anyhow::bail!("nested table cannot be converted into a scalar value")
+        }
         _ => {
             let raw = value.to_string();
             raw.parse::<toml_edit::Value>()

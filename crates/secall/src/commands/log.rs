@@ -6,7 +6,9 @@ use secall_core::{
     },
     store::{get_default_db_path, Database},
     vault::Config,
-    wiki::{ClaudeBackend, CodexBackend, HaikuBackend, LmStudioBackend, OllamaBackend, WikiBackend},
+    wiki::{
+        ClaudeBackend, CodexBackend, HaikuBackend, LmStudioBackend, OllamaBackend, WikiBackend,
+    },
 };
 
 pub async fn run(
@@ -180,7 +182,11 @@ pub fn resolve_backend_name(config: &Config, cli_backend: Option<&str>) -> Strin
 }
 
 /// Internal resolution helper exposed for integration tests.
-pub fn resolve_log_model(config: &Config, backend_name: &str, cli_model: Option<&str>) -> Option<String> {
+pub fn resolve_log_model(
+    config: &Config,
+    backend_name: &str,
+    cli_model: Option<&str>,
+) -> Option<String> {
     if let Some(model) = cli_model {
         return Some(model.to_string());
     }
@@ -190,18 +196,14 @@ pub fn resolve_log_model(config: &Config, backend_name: &str, cli_model: Option<
     }
 
     match backend_name {
-        "ollama" => Some(
-            config.graph.ollama_model.clone().unwrap_or_else(|| {
-                warn_using_default("log.model", LOG_OLLAMA_DEFAULT);
-                LOG_OLLAMA_DEFAULT.to_string()
-            }),
-        ),
-        "gemini" => Some(
-            config.graph.gemini_model.clone().unwrap_or_else(|| {
-                warn_using_default("graph.gemini_model", LOG_GEMINI_DEFAULT);
-                LOG_GEMINI_DEFAULT.to_string()
-            }),
-        ),
+        "ollama" => Some(config.graph.ollama_model.clone().unwrap_or_else(|| {
+            warn_using_default("log.model", LOG_OLLAMA_DEFAULT);
+            LOG_OLLAMA_DEFAULT.to_string()
+        })),
+        "gemini" => Some(config.graph.gemini_model.clone().unwrap_or_else(|| {
+            warn_using_default("graph.gemini_model", LOG_GEMINI_DEFAULT);
+            LOG_GEMINI_DEFAULT.to_string()
+        })),
         _ => None,
     }
 }
@@ -311,7 +313,12 @@ async fn generate_log_body(
                 .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
                 .ok_or_else(|| anyhow::anyhow!("gemini api key not set"))?;
             let model = resolved_model.unwrap_or_else(|| LOG_GEMINI_DEFAULT.to_string());
-            call_gemini(&build_backend_prompt(system_prompt, user_prompt), &api_key, &model).await
+            call_gemini(
+                &build_backend_prompt(system_prompt, user_prompt),
+                &api_key,
+                &model,
+            )
+            .await
         }
         _ => anyhow::bail!("Unknown log backend: {}", backend_name),
     }
