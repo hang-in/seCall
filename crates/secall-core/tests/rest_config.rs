@@ -4,10 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::{Method, StatusCode};
 use serde_json::json;
+use tokio::sync::Mutex as TokioMutex;
 
 use common::send_request;
 
-static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// tokio::sync::Mutex 사용 (clippy::await_holding_lock 회피).
+static ENV_MUTEX: TokioMutex<()> = TokioMutex::const_new(());
 
 fn write_config(path: &std::path::Path, body: &str) {
     std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
@@ -40,7 +42,7 @@ fn make_router(dir: &tempfile::TempDir, allow_config_edit: bool) -> axum::Router
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_config_masks_secret_and_reports_env_indicators() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -69,7 +71,7 @@ gemini_api_key = "secret-key"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_updates_section_when_enabled() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -101,7 +103,7 @@ path = "/tmp/test-vault"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_returns_403_when_disabled() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -137,7 +139,7 @@ path = "/tmp/test-vault"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_unknown_section_returns_404() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -173,7 +175,7 @@ path = "/tmp/test-vault"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_graph_section_ignores_gemini_api_key() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -212,7 +214,7 @@ gemini_api_key = "original-secret"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_preserves_other_sections_in_toml() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -274,7 +276,7 @@ backend = "ort"
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_invalid_json_body_returns_400() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
