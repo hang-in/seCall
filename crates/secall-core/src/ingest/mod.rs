@@ -52,11 +52,9 @@ pub fn is_noise_session(session: &Session) -> Option<&'static str> {
     }
 
     if let Some(first_user) = session.turns.iter().find(|t| t.role == Role::User) {
-        if first_user
-            .content
-            .trim_start()
-            .starts_with("Analyze the following conversation and produce a JSON array of topic-based summaries")
-        {
+        if first_user.content.trim_start().starts_with(
+            "Analyze the following conversation and produce a JSON array of topic-based summaries",
+        ) {
             return Some("secall summary prompt");
         }
     }
