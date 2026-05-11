@@ -137,7 +137,7 @@ fn check_orphan_vault_files(
     config: &Config,
     findings: &mut Vec<LintFinding>,
 ) -> Result<()> {
-    let sessions_dir = config.vault.path.join("raw").join("sessions");
+    let sessions_dir = config.vault.path.join("raw").join(".sessions");
     if !sessions_dir.exists() {
         return Ok(());
     }
@@ -647,7 +647,7 @@ mod tests {
             .vault
             .path
             .join("raw")
-            .join("sessions")
+            .join(".sessions")
             .join("2026-01-01");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::write(
@@ -678,7 +678,7 @@ mod tests {
             .vault
             .path
             .join("raw")
-            .join("sessions")
+            .join(".sessions")
             .join("2026-01-01");
         std::fs::create_dir_all(&sessions_dir).unwrap();
         std::fs::write(

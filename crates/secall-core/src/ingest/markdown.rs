@@ -268,8 +268,10 @@ pub fn session_vault_path(session: &Session, tz: chrono_tz::Tz) -> PathBuf {
         .format("%Y-%m-%d")
         .to_string();
     let filename = session_filename(session);
+    // P49 follow-up: `.sessions` dot-prefix 면 obsidian 의 core 인덱서 + 대부분 plugin 이
+    // 자동으로 무시한다. 1259+ 세션 md 한 번에 들어올 때의 vault freeze 회피.
     PathBuf::from("raw")
-        .join("sessions")
+        .join(".sessions")
         .join(date)
         .join(filename)
 }
@@ -552,7 +554,7 @@ mod tests {
         let session = make_session(vec![]);
         let path = session_vault_path(&session, chrono_tz::Tz::UTC);
         let path_str = path.to_string_lossy().replace('\\', "/");
-        assert!(path_str.starts_with("raw/sessions/2026-04-05/"));
+        assert!(path_str.starts_with("raw/.sessions/2026-04-05/"));
         assert!(path_str.contains("claude-code_seCall_a1b2c3d"));
         assert!(path_str.ends_with(".md"));
     }

@@ -4,7 +4,8 @@ use anyhow::Result;
 
 pub fn init_vault(vault_path: &Path) -> Result<()> {
     // Create directory structure
-    std::fs::create_dir_all(vault_path.join("raw").join("sessions"))?;
+    // P49 follow-up: `.sessions` dot-prefix 면 obsidian 이 자동으로 무시한다.
+    std::fs::create_dir_all(vault_path.join("raw").join(".sessions"))?;
     std::fs::create_dir_all(vault_path.join("wiki").join("projects"))?;
     std::fs::create_dir_all(vault_path.join("wiki").join("topics"))?;
     std::fs::create_dir_all(vault_path.join("wiki").join("decisions"))?;
@@ -69,7 +70,7 @@ tags: ["tag1", "tag2"]
 
 ## 링크 규칙
 
-- 세션 참조: `[[raw/sessions/YYYY-MM-DD_session-id]]`
+- 세션 참조: `[[raw/.sessions/YYYY-MM-DD_session-id]]`
 - 위키 내부 링크: `[[wiki/topics/topic-name]]`
 - sources 배열에 참조한 세션 ID를 반드시 포함
 
@@ -80,7 +81,7 @@ tags: ["tag1", "tag2"]
 
 ## 수정 금지
 
-- `raw/sessions/` 파일은 절대 수정하지 마세요 (immutable)
+- `raw/.sessions/` 파일은 절대 수정하지 마세요 (immutable)
 "#,
         chrono::Utc::now().format("%Y-%m-%d")
     )

@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn test_build_entry_line_format() {
         let line = build_entry_line(
-            "raw/sessions/2026-04-01/abc",
+            "raw/.sessions/2026-04-01/abc",
             "디버깅 세션",
             5,
             "claude-code",
@@ -96,7 +96,7 @@ mod tests {
         );
         assert_eq!(
             line,
-            "- [[raw/sessions/2026-04-01/abc|디버깅 세션]] — 5턴, claude-code, 14:30\n"
+            "- [[raw/.sessions/2026-04-01/abc|디버깅 세션]] — 5턴, claude-code, 14:30\n"
         );
     }
 

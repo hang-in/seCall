@@ -84,8 +84,8 @@ impl Vault {
 
     /// Check if a session has already been ingested (by ID)
     pub fn session_exists(&self, session_id: &str) -> bool {
-        // Walk raw/sessions/ looking for a file containing the session ID
-        let sessions_dir = self.path.join("raw").join("sessions");
+        // Walk raw/.sessions/ looking for a file containing the session ID
+        let sessions_dir = self.path.join("raw").join(".sessions");
         if !sessions_dir.exists() {
             return false;
         }
@@ -190,7 +190,7 @@ mod tests {
     fn test_init_vault_creates_dirs() {
         let dir = TempDir::new().unwrap();
         init_vault(dir.path()).unwrap();
-        assert!(dir.path().join("raw/sessions").exists());
+        assert!(dir.path().join("raw/.sessions").exists());
         assert!(dir.path().join("wiki/projects").exists());
         assert!(dir.path().join("wiki/topics").exists());
         assert!(dir.path().join("wiki/decisions").exists());
@@ -277,7 +277,7 @@ mod tests {
 
         // 반환값이 상대경로인지 확인
         assert!(rel_path.is_relative());
-        assert!(rel_path.starts_with("raw/sessions/"));
+        assert!(rel_path.starts_with("raw/.sessions/"));
 
         // 절대경로로 합성 시 파일 존재 및 내용 확인
         let abs_path = dir.path().join(&rel_path);
