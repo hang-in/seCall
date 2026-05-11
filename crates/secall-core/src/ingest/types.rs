@@ -61,7 +61,7 @@ pub struct Turn {
     pub is_sidechain: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Role {
     User,
     Assistant,

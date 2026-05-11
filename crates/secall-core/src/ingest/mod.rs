@@ -14,6 +14,11 @@ pub mod types;
 
 pub use types::{Action, AgentKind, Role, Session, TokenUsage, Turn};
 
+/// P49: secall 이 Claude Code 를 invoke 해 세션 요약을 생성할 때 던지는 프롬프트
+/// prefix. 변경 시 wiki 등 생성 코드와 함께 갱신할 것.
+const SECALL_SUMMARY_PROMPT_PREFIX: &str =
+    "Analyze the following conversation and produce a JSON array of topic-based summaries";
+
 pub trait SessionParser: Send + Sync {
     /// Check if this parser can handle the given path
     fn can_parse(&self, path: &Path) -> bool;
@@ -42,19 +47,20 @@ pub trait SessionParser: Send + Sync {
 /// 매치 시 사유 문자열을 반환, 정상 세션은 `None`.
 pub fn is_noise_session(session: &Session) -> Option<&'static str> {
     if let Some(cwd) = session.cwd.as_ref() {
-        let cwd_str = cwd.to_string_lossy();
-        if cwd_str.starts_with("/private/var/folders/")
-            || cwd_str.starts_with("/var/folders/")
-            || cwd_str.starts_with("/tmp/")
+        if cwd.starts_with("/private/var/folders/")
+            || cwd.starts_with("/var/folders/")
+            || cwd.starts_with("/tmp/")
         {
             return Some("tmpdir cwd");
         }
     }
 
     if let Some(first_user) = session.turns.iter().find(|t| t.role == Role::User) {
-        if first_user.content.trim_start().starts_with(
-            "Analyze the following conversation and produce a JSON array of topic-based summaries",
-        ) {
+        if first_user
+            .content
+            .trim_start()
+            .starts_with(SECALL_SUMMARY_PROMPT_PREFIX)
+        {
             return Some("secall summary prompt");
         }
     }

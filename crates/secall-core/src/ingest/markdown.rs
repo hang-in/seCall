@@ -194,7 +194,7 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
                 ts_str
             ));
         }
-        last_role = Some(turn.role.clone());
+        last_role = Some(turn.role);
 
         // Thinking block
         if let Some(thinking) = &turn.thinking {
