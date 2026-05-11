@@ -31,7 +31,7 @@ path = "/tmp/test-vault"
     assert!(stdout.contains("[claude"));
     assert!(stdout.contains("[codex"));
     assert!(stdout.contains("[haiku"));
-    assert!(stdout.contains("[gemini"));
+    // [gemini] 백엔드는 P46 에서 제거되어 더 이상 stdout 에 노출되지 않음.
     assert!(stdout.contains("haiku"));
     assert!(stdout.contains("FAIL ANTHROPIC_API_KEY not set"));
     assert_eq!(output.status.code(), Some(2));

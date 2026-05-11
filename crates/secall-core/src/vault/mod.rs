@@ -108,7 +108,9 @@ impl Vault {
 }
 
 fn split_frontmatter(content: &str) -> Result<(String, String)> {
-    let stripped = content
+    // CRLF (Windows) 와 LF 모두 지원하기 위해 우선 LF 로 normalize.
+    let normalized = content.replace("\r\n", "\n");
+    let stripped = normalized
         .strip_prefix("---\n")
         .ok_or_else(|| anyhow::anyhow!("session markdown missing frontmatter prefix"))?;
     let (fm, body) = stripped
@@ -439,5 +441,40 @@ pub mod integration {
 
         let log = std::fs::read_to_string(dir.path().join("log.md")).unwrap();
         assert_eq!(log.matches("ingest | claude-code testproject").count(), 3);
+    }
+
+    // ─── split_frontmatter cross-platform line ending 회귀 테스트 ──────────
+
+    #[test]
+    fn test_split_frontmatter_handles_lf() {
+        let content = "---\nfoo: bar\nbaz: qux\n---\nbody content\nmore body\n";
+        let (fm, body) = split_frontmatter(content).expect("LF should parse");
+        assert!(fm.contains("foo: bar"));
+        assert!(fm.contains("baz: qux"));
+        assert_eq!(body, "body content\nmore body\n");
+    }
+
+    #[test]
+    fn test_split_frontmatter_handles_crlf() {
+        // Windows 환경에서 작성된 파일은 CRLF 라인 엔딩을 사용.
+        let content = "---\r\nfoo: bar\r\nbaz: qux\r\n---\r\nbody content\r\nmore body\r\n";
+        let (fm, body) = split_frontmatter(content).expect("CRLF should parse after normalize");
+        assert!(fm.contains("foo: bar"));
+        assert!(fm.contains("baz: qux"));
+        assert_eq!(body, "body content\nmore body\n");
+    }
+
+    #[test]
+    fn test_split_frontmatter_rejects_missing_prefix() {
+        let content = "no frontmatter here";
+        let result = split_frontmatter(content);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_split_frontmatter_rejects_unterminated() {
+        let content = "---\nfoo: bar\nbody without terminator\n";
+        let result = split_frontmatter(content);
+        assert!(result.is_err());
     }
 }

@@ -390,7 +390,11 @@ fn resolve_pool_size(config: &crate::vault::config::Config) -> usize {
     if let Some(n) = config.embedding.pool_size {
         return n.max(1);
     }
-    let total_gb = sysinfo::System::new_all().total_memory() / (1024 * 1024 * 1024);
+    // 메모리 용량만 필요 — new_all() (CPU/프로세스/네트워크까지 fresh)
+    // 대신 new() + refresh_memory() 로 메모리만 갱신.
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let total_gb = sys.total_memory() / (1024 * 1024 * 1024);
     match total_gb {
         0..=15 => 1,
         16..=31 => 2,
