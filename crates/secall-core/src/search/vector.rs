@@ -778,7 +778,7 @@ mod tests {
         config.embedding.pool_size = None;
         let size = resolve_pool_size(&config);
         assert!(
-            size >= 1 && size <= 4,
+            (1..=4).contains(&size),
             "auto pool_size should be 1–4, got {size}"
         );
     }

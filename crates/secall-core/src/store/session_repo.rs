@@ -1358,7 +1358,7 @@ mod tests {
         let db = Database::open_memory().unwrap();
         let fm = make_fm("sess-arc-unit", None);
         // vault 파일 먼저 생성
-        let md = format!("---\nsession_id: sess-arc-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody");
+        let md = "---\nsession_id: sess-arc-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody".to_string();
         let rel = "raw/sessions/sess-arc-unit.md";
         std::fs::create_dir_all(dir.path().join("raw/sessions")).unwrap();
         std::fs::write(dir.path().join(rel), &md).unwrap();
@@ -1393,7 +1393,7 @@ mod tests {
 
         let db = Database::open_memory().unwrap();
         let fm = make_fm("sess-rst-unit", None);
-        let md = format!("---\nsession_id: sess-rst-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody");
+        let md = "---\nsession_id: sess-rst-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody".to_string();
         let rel = "raw/sessions/sess-rst-unit.md";
         std::fs::create_dir_all(dir.path().join("raw/sessions")).unwrap();
         std::fs::write(dir.path().join(rel), &md).unwrap();

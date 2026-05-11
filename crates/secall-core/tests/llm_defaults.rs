@@ -15,8 +15,13 @@ fn llm_default_constants_match_expected_values() {
     assert_eq!(WIKI_REVIEW_DEFAULT, "sonnet");
     assert_eq!(LOG_OLLAMA_DEFAULT, GRAPH_OLLAMA_DEFAULT);
     assert_eq!(LOG_OLLAMA_CLOUD_DEFAULT, "kimi-k2.6:cloud");
+}
+
+// LOG_CONTEXT_CHAR_LIMIT 는 const 라 compile-time 검증이 더 적합.
+// clippy(assertions_on_constants) 회피.
+const _: () = {
     assert!(
         LOG_CONTEXT_CHAR_LIMIT >= 200_000 && LOG_CONTEXT_CHAR_LIMIT <= 1_000_000,
-        "LOG_CONTEXT_CHAR_LIMIT={LOG_CONTEXT_CHAR_LIMIT} is outside expected range"
+        "LOG_CONTEXT_CHAR_LIMIT is outside expected range"
     );
-}
+};
