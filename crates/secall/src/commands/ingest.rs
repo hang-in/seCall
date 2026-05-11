@@ -881,6 +881,18 @@ fn ingest_single_session(
     error_details: &mut Vec<IngestError>,
     hook_failures: &mut usize,
 ) {
+    // P49: TMPDIR / secall 자기참조 노이즈 세션 차단
+    if let Some(reason) = secall_core::ingest::is_noise_session(&session) {
+        tracing::info!(
+            session = &session.id,
+            cwd = ?session.cwd,
+            reason = reason,
+            "skipping noise session"
+        );
+        *skipped += 1;
+        return;
+    }
+
     // 턴 수 필터 — min_turns > 0 이면 짧은 세션 skip
     if min_turns > 0 && session.turns.len() < min_turns {
         *skipped_min_turns += 1;

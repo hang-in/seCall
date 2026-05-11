@@ -166,6 +166,11 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
     ));
 
     // Turns
+    //
+    // P49: 같은 role 의 연속 turn 들은 h3 + role 명 생략으로 헤더 노이즈를 줄인다.
+    // (claude-code 의 한 응답이 tool_use 마다 별도 turn 으로 쪼개지면서 Assistant 헤더가
+    // 5-10번 연달아 나오던 web UI 가독성 이슈)
+    let mut last_role: Option<Role> = None;
     for turn in &session.turns {
         let role_str = match turn.role {
             Role::User => "User",
@@ -178,12 +183,18 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
             .map(|t| format!(" ({})", t.with_timezone(&tz).format("%H:%M")))
             .unwrap_or_default();
 
-        out.push_str(&format!(
-            "## Turn {} — {}{}\n\n",
-            turn.index + 1,
-            role_str,
-            ts_str
-        ));
+        let same_role_as_prev = last_role.as_ref() == Some(&turn.role);
+        if same_role_as_prev {
+            out.push_str(&format!("### Turn {}{}\n\n", turn.index + 1, ts_str));
+        } else {
+            out.push_str(&format!(
+                "## Turn {} — {}{}\n\n",
+                turn.index + 1,
+                role_str,
+                ts_str
+            ));
+        }
+        last_role = Some(turn.role.clone());
 
         // Thinking block
         if let Some(thinking) = &turn.thinking {
@@ -748,5 +759,125 @@ mod tests {
         let fm = parse_session_frontmatter(content).unwrap();
         assert_eq!(fm.archived, None);
         assert_eq!(fm.archived_at, None);
+    }
+
+    // P49 ─ 같은 role 연속 turn 헤더 강등 (h2 → h3) 회귀 테스트
+    #[test]
+    fn test_consecutive_same_role_turns_use_h3_header() {
+        let turns = vec![
+            Turn {
+                index: 0,
+                role: Role::User,
+                timestamp: None,
+                content: "Q".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 1,
+                role: Role::Assistant,
+                timestamp: None,
+                content: "first reply".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 2,
+                role: Role::Assistant,
+                timestamp: None,
+                content: "more reply".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 3,
+                role: Role::Assistant,
+                timestamp: None,
+                content: "tail".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+        ];
+        let session = make_session(turns);
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        assert!(md.contains("## Turn 1 — User"), "user turn keeps h2");
+        assert!(
+            md.contains("## Turn 2 — Assistant"),
+            "first assistant turn uses h2 + role"
+        );
+        assert!(
+            md.contains("### Turn 3"),
+            "second consecutive assistant turn uses h3"
+        );
+        assert!(
+            md.contains("### Turn 4"),
+            "third consecutive assistant turn uses h3"
+        );
+        // role 명이 h3 헤더에는 등장하지 않음
+        assert!(
+            !md.contains("### Turn 3 — Assistant"),
+            "h3 should omit role name"
+        );
+    }
+
+    #[test]
+    fn test_role_change_resets_to_h2() {
+        let turns = vec![
+            Turn {
+                index: 0,
+                role: Role::User,
+                timestamp: None,
+                content: "Q1".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 1,
+                role: Role::Assistant,
+                timestamp: None,
+                content: "A1".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 2,
+                role: Role::Assistant,
+                timestamp: None,
+                content: "A1-cont".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+            Turn {
+                index: 3,
+                role: Role::User,
+                timestamp: None,
+                content: "Q2".to_string(),
+                actions: vec![],
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            },
+        ];
+        let session = make_session(turns);
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        // role 이 다시 User 로 바뀌면 h2 + role 명 재출현
+        assert!(
+            md.contains("## Turn 4 — User"),
+            "role change back to User must emit h2 again"
+        );
     }
 }
