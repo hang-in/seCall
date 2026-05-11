@@ -241,6 +241,8 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
         turns,
         total_tokens: Default::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     })
 }
 

@@ -164,7 +164,7 @@ impl SessionRepo for Database {
     fn get_session_meta(&self, session_id: &str) -> crate::error::Result<SessionMeta> {
         self.conn()
             .query_row(
-                "SELECT agent, model, project, start_time, vault_path, session_type FROM sessions WHERE id = ?1",
+                "SELECT agent, model, project, start_time, vault_path, session_type, is_archived FROM sessions WHERE id = ?1",
                 [session_id],
                 |row| {
                     let start_time: String = row.get(3)?;
@@ -176,6 +176,7 @@ impl SessionRepo for Database {
                         date,
                         vault_path: row.get(4)?,
                         session_type: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        is_archived: row.get::<_, i64>(6).unwrap_or(0) != 0,
                     })
                 },
             )
@@ -388,15 +389,20 @@ impl Database {
         body_text: &str,
         vault_path: &str,
     ) -> Result<()> {
+        let archived_int: i64 = fm.archived.unwrap_or(false) as i64;
+        let archived_at = fm.archived_at.clone();
+
         self.conn().execute(
             "INSERT OR IGNORE INTO sessions(
                 id, agent, model, project, cwd, git_branch, host,
                 start_time, end_time, turn_count, tokens_in, tokens_out,
-                tools_used, vault_path, summary, ingested_at, status
+                tools_used, vault_path, summary, ingested_at, status,
+                is_archived, archived_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, NULL, ?6,
                 ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, datetime('now'), 'reindexed'
+                ?12, ?13, ?14, datetime('now'), 'reindexed',
+                ?15, ?16
             )",
             rusqlite::params![
                 fm.session_id,
@@ -413,7 +419,15 @@ impl Database {
                 fm.tools_used.as_ref().map(|t| t.join(",")),
                 vault_path,
                 fm.summary,
+                archived_int,
+                archived_at,
             ],
+        )?;
+
+        // P45 — 기존 row 가 있던 경우에도 vault frontmatter 의 archive 상태로 DB 동기화
+        self.conn().execute(
+            "UPDATE sessions SET is_archived = ?1, archived_at = ?2 WHERE id = ?3",
+            rusqlite::params![archived_int, archived_at, fm.session_id],
         )?;
 
         // FTS 인덱싱 — 본문 전체를 하나의 청크로
@@ -548,6 +562,8 @@ impl Database {
                 cached: 0,
             },
             session_type: session_type.unwrap_or_else(|| "interactive".to_string()),
+            archived: false,
+            archived_at: None,
         })
     }
 
@@ -801,6 +817,9 @@ impl Database {
             // automated session_type은 기본 제외 — recall과 일관성
             "session_type != 'automated'".to_string(),
         ];
+        if !f.include_archived {
+            conditions.push("is_archived = 0".to_string());
+        }
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(p) = &f.project {
@@ -859,7 +878,7 @@ impl Database {
 
         // items
         let sql = format!(
-            "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes
+            "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes, is_archived, archived_at
              FROM sessions {where_clause}
              ORDER BY start_time DESC
              LIMIT ? OFFSET ?"
@@ -884,6 +903,8 @@ impl Database {
             let session_type: String = row.get(9)?;
             let vault_path: Option<String> = row.get(10)?;
             let notes: Option<String> = row.get(11).ok().flatten();
+            let is_archived: i64 = row.get(12).unwrap_or(0);
+            let archived_at: Option<String> = row.get(13).ok().flatten();
 
             let tags: Vec<String> = tags_json
                 .as_deref()
@@ -907,6 +928,8 @@ impl Database {
                 session_type,
                 vault_path,
                 notes,
+                is_archived: is_archived != 0,
+                archived_at,
             })
         })?;
 
@@ -1048,7 +1071,7 @@ impl Database {
     pub fn get_session_list_item(&self, session_id: &str) -> crate::error::Result<SessionListItem> {
         self.conn()
             .query_row(
-                "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes
+                "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes, is_archived, archived_at
                  FROM sessions WHERE id = ?1",
                 rusqlite::params![session_id],
                 |row| {
@@ -1064,6 +1087,8 @@ impl Database {
                     let session_type: String = row.get(9)?;
                     let vault_path: Option<String> = row.get(10)?;
                     let notes: Option<String> = row.get(11).ok().flatten();
+                    let is_archived: i64 = row.get(12).unwrap_or(0);
+                    let archived_at: Option<String> = row.get(13).ok().flatten();
                     let tags: Vec<String> = tags_json
                         .as_deref()
                         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
@@ -1083,6 +1108,8 @@ impl Database {
                         session_type,
                         vault_path,
                         notes,
+                        is_archived: is_archived != 0,
+                        archived_at,
                     })
                 },
             )
@@ -1092,6 +1119,101 @@ impl Database {
                 }
                 _ => SecallError::Database(e),
             })
+    }
+
+    /// 세션 archive — DB row 업데이트 + vault frontmatter 갱신.
+    /// vault write 실패 시 DB rollback. idempotent.
+    pub fn archive_session(
+        &self,
+        session_id: &str,
+        vault: &crate::vault::Vault,
+        tz: chrono_tz::Tz,
+    ) -> crate::error::Result<()> {
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
+
+        let result = self.conn().query_row(
+            "SELECT vault_path, is_archived FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
+        );
+
+        let (vault_path, current_archived) = match result {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(SecallError::SessionNotFound(session_id.to_string()))
+            }
+            Err(e) => return Err(SecallError::Database(e)),
+        };
+
+        if current_archived == 1 {
+            return Ok(());
+        }
+
+        let tx = self.conn().unchecked_transaction()?;
+        tx.execute(
+            "UPDATE sessions SET is_archived = 1, archived_at = ?1 WHERE id = ?2",
+            rusqlite::params![now_str, session_id],
+        )?;
+
+        if let Some(rel) = &vault_path {
+            vault
+                .update_session_archive_frontmatter(rel, true, Some(now), tz)
+                .map_err(|e| {
+                    SecallError::Config(format!(
+                        "vault frontmatter update failed for {session_id}: {e}"
+                    ))
+                })?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 세션 restore — DB row 업데이트 + vault frontmatter 에서 archived 라인 제거.
+    /// idempotent.
+    pub fn restore_session(
+        &self,
+        session_id: &str,
+        vault: &crate::vault::Vault,
+        tz: chrono_tz::Tz,
+    ) -> crate::error::Result<()> {
+        let result = self.conn().query_row(
+            "SELECT vault_path, is_archived FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
+        );
+
+        let (vault_path, current_archived) = match result {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(SecallError::SessionNotFound(session_id.to_string()))
+            }
+            Err(e) => return Err(SecallError::Database(e)),
+        };
+
+        if current_archived == 0 {
+            return Ok(());
+        }
+
+        let tx = self.conn().unchecked_transaction()?;
+        tx.execute(
+            "UPDATE sessions SET is_archived = 0, archived_at = NULL WHERE id = ?1",
+            rusqlite::params![session_id],
+        )?;
+
+        if let Some(rel) = &vault_path {
+            vault
+                .update_session_archive_frontmatter(rel, false, None, tz)
+                .map_err(|e| {
+                    SecallError::Config(format!(
+                        "vault frontmatter restore failed for {session_id}: {e}"
+                    ))
+                })?;
+        }
+
+        tx.commit()?;
+        Ok(())
     }
 }
 
@@ -1111,6 +1233,8 @@ pub struct SessionListFilter {
     pub q: Option<String>,
     pub page: usize,
     pub page_size: usize,
+    /// P45 — true 면 archived 세션 포함. 기본 false (제외).
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1129,6 +1253,9 @@ pub struct SessionListItem {
     pub vault_path: Option<String>,
     /// P34 Task 00: 사용자 노트 (free-form markdown)
     pub notes: Option<String>,
+    /// P45
+    pub is_archived: bool,
+    pub archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1172,4 +1299,212 @@ pub struct GraphRebuildFilter {
     pub all: bool,
     /// true 면 `semantic_extracted_at IS NULL` 인 세션만.
     pub retry_failed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ingest::markdown::SessionFrontmatter;
+    use crate::store::db::Database;
+    use crate::store::session_repo::SessionListFilter;
+
+    fn make_fm(session_id: &str, archived: Option<bool>) -> SessionFrontmatter {
+        SessionFrontmatter {
+            session_id: session_id.to_string(),
+            agent: "claude-code".to_string(),
+            date: "2026-05-12".to_string(),
+            start_time: "2026-05-12T10:00:00+00:00".to_string(),
+            archived,
+            archived_at: archived
+                .filter(|&a| a)
+                .map(|_| "2026-05-12T15:00:00Z".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_insert_session_from_vault_with_archived_sets_db() {
+        let db = Database::open_memory().unwrap();
+        let fm = make_fm("sess-archived", Some(true));
+        db.insert_session_from_vault(&fm, "body text", "raw/sessions/test.md")
+            .unwrap();
+        let is_archived: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-archived'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_archived, 1);
+        let archived_at: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT archived_at FROM sessions WHERE id = 'sess-archived'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(archived_at.is_some());
+    }
+
+    #[test]
+    fn test_archive_session_sets_db_and_frontmatter() {
+        use crate::vault::Vault;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::new(dir.path().to_path_buf());
+        vault.init().unwrap();
+
+        let db = Database::open_memory().unwrap();
+        let fm = make_fm("sess-arc-unit", None);
+        // vault 파일 먼저 생성
+        let md = format!("---\nsession_id: sess-arc-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody");
+        let rel = "raw/sessions/sess-arc-unit.md";
+        std::fs::create_dir_all(dir.path().join("raw/sessions")).unwrap();
+        std::fs::write(dir.path().join(rel), &md).unwrap();
+
+        db.insert_session_from_vault(&fm, "body", rel).unwrap();
+
+        db.archive_session("sess-arc-unit", &vault, chrono_tz::UTC)
+            .unwrap();
+
+        let is_archived: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-arc-unit'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_archived, 1);
+
+        let content = std::fs::read_to_string(dir.path().join(rel)).unwrap();
+        assert!(content.contains("\narchived: true\n"));
+        assert!(content.contains("archived_at:"));
+    }
+
+    #[test]
+    fn test_restore_session_clears_db_and_frontmatter() {
+        use crate::vault::Vault;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::new(dir.path().to_path_buf());
+        vault.init().unwrap();
+
+        let db = Database::open_memory().unwrap();
+        let fm = make_fm("sess-rst-unit", None);
+        let md = format!("---\nsession_id: sess-rst-unit\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nbody");
+        let rel = "raw/sessions/sess-rst-unit.md";
+        std::fs::create_dir_all(dir.path().join("raw/sessions")).unwrap();
+        std::fs::write(dir.path().join(rel), &md).unwrap();
+
+        db.insert_session_from_vault(&fm, "body", rel).unwrap();
+        db.archive_session("sess-rst-unit", &vault, chrono_tz::UTC)
+            .unwrap();
+        db.restore_session("sess-rst-unit", &vault, chrono_tz::UTC)
+            .unwrap();
+
+        let is_archived: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-rst-unit'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_archived, 0);
+
+        let content = std::fs::read_to_string(dir.path().join(rel)).unwrap();
+        assert!(!content.contains("archived:"));
+    }
+
+    #[test]
+    fn test_archive_session_unknown_id_returns_error() {
+        use crate::vault::Vault;
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::new(dir.path().to_path_buf());
+        vault.init().unwrap();
+        let db = Database::open_memory().unwrap();
+
+        let result = db.archive_session("nonexistent-id", &vault, chrono_tz::UTC);
+        assert!(result.is_err(), "should return error for unknown session_id");
+    }
+
+    #[test]
+    fn test_list_sessions_filtered_excludes_archived() {
+        let db = Database::open_memory().unwrap();
+        let fm_normal = make_fm("sess-list-normal", None);
+        db.insert_session_from_vault(&fm_normal, "body", "raw/sessions/n.md")
+            .unwrap();
+        let fm_arc = make_fm("sess-list-arc", Some(true));
+        db.insert_session_from_vault(&fm_arc, "body", "raw/sessions/a.md")
+            .unwrap();
+
+        let filter = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            ..Default::default()
+        };
+        let page = db.list_sessions_filtered(&filter).unwrap();
+        assert!(page.items.iter().all(|it| it.id != "sess-list-arc"));
+        assert!(page.items.iter().any(|it| it.id == "sess-list-normal"));
+    }
+
+    #[test]
+    fn test_list_sessions_filtered_include_archived_returns_all() {
+        let db = Database::open_memory().unwrap();
+        let fm_normal = make_fm("sess-ia-normal", None);
+        db.insert_session_from_vault(&fm_normal, "body", "raw/sessions/n2.md")
+            .unwrap();
+        let fm_arc = make_fm("sess-ia-arc", Some(true));
+        db.insert_session_from_vault(&fm_arc, "body", "raw/sessions/a2.md")
+            .unwrap();
+
+        let filter = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            include_archived: true,
+            ..Default::default()
+        };
+        let page = db.list_sessions_filtered(&filter).unwrap();
+        assert!(page.items.iter().any(|it| it.id == "sess-ia-arc"));
+        assert!(page.items.iter().any(|it| it.id == "sess-ia-normal"));
+    }
+
+    #[test]
+    fn test_insert_session_from_vault_archived_changed_updates_db() {
+        let db = Database::open_memory().unwrap();
+
+        // 처음엔 archived=false 로 insert
+        let fm_normal = make_fm("sess-reindex", None);
+        db.insert_session_from_vault(&fm_normal, "body", "raw/sessions/test2.md")
+            .unwrap();
+
+        let is_archived_before: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-reindex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_archived_before, 0);
+
+        // archived=true 로 re-ingest (다른 머신에서 archive 후 git pull 시나리오)
+        let fm_archived = make_fm("sess-reindex", Some(true));
+        db.insert_session_from_vault(&fm_archived, "body", "raw/sessions/test2.md")
+            .unwrap();
+
+        let is_archived_after: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-reindex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_archived_after, 1);
+    }
+
 }

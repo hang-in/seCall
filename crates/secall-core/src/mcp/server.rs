@@ -301,12 +301,14 @@ impl SeCallMcpServer {
     pub fn do_config_get(&self) -> anyhow::Result<serde_json::Value> {
         let config = Config::load_or_default();
         let mut json = serde_json::to_value(config)?;
-        if let Some(graph) = json.get_mut("graph").and_then(|v| v.as_object_mut()) {
-            if graph.get("gemini_api_key").is_some() {
-                graph.insert(
-                    "gemini_api_key".to_string(),
-                    serde_json::Value::String("<masked>".to_string()),
-                );
+        for section_key in ["graph", "log", "embedding"] {
+            if let Some(section) = json.get_mut(section_key).and_then(|v| v.as_object_mut()) {
+                if section.get("cloud_api_key").is_some() {
+                    section.insert(
+                        "cloud_api_key".to_string(),
+                        serde_json::Value::String("<masked>".to_string()),
+                    );
+                }
             }
         }
         if let Some(root) = json.as_object_mut() {
@@ -314,7 +316,7 @@ impl SeCallMcpServer {
                 "env_indicators".to_string(),
                 serde_json::json!({
                     "ANTHROPIC_API_KEY": std::env::var("ANTHROPIC_API_KEY").is_ok(),
-                    "SECALL_GEMINI_API_KEY": std::env::var("SECALL_GEMINI_API_KEY").is_ok(),
+                    "OLLAMA_CLOUD_API_KEY": std::env::var("OLLAMA_CLOUD_API_KEY").is_ok(),
                     "OPENAI_API_KEY": std::env::var("OPENAI_API_KEY").is_ok(),
                 }),
             );
@@ -345,7 +347,7 @@ impl SeCallMcpServer {
             "graph" => {
                 let mut sanitized_patch = serde_json::Map::new();
                 for (key, value) in patch {
-                    if key != "gemini_api_key" {
+                    if key != "cloud_api_key" {
                         sanitized_patch.insert(key.clone(), value.clone());
                     }
                 }
@@ -354,13 +356,25 @@ impl SeCallMcpServer {
                 config.graph = serde_json::from_value(current)?;
             }
             "log" => {
+                let mut sanitized_patch = serde_json::Map::new();
+                for (key, value) in patch {
+                    if key != "cloud_api_key" {
+                        sanitized_patch.insert(key.clone(), value.clone());
+                    }
+                }
                 let mut current = serde_json::to_value(&config.log)?;
-                merge_json_object(&mut current, &serde_json::Value::Object(patch.clone()));
+                merge_json_object(&mut current, &serde_json::Value::Object(sanitized_patch));
                 config.log = serde_json::from_value(current)?;
             }
             "embedding" => {
+                let mut sanitized_patch = serde_json::Map::new();
+                for (key, value) in patch {
+                    if key != "cloud_api_key" {
+                        sanitized_patch.insert(key.clone(), value.clone());
+                    }
+                }
                 let mut current = serde_json::to_value(&config.embedding)?;
-                merge_json_object(&mut current, &serde_json::Value::Object(patch.clone()));
+                merge_json_object(&mut current, &serde_json::Value::Object(sanitized_patch));
                 config.embedding = serde_json::from_value(current)?;
             }
             _ => anyhow::bail!("unknown config section: {section}"),

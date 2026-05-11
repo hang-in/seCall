@@ -32,13 +32,13 @@ pub async fn run_semantic(
     }
     if let Some(m) = model {
         match config.graph.semantic_backend.as_str() {
-            "gemini" => config.graph.gemini_model = Some(m),
             "anthropic" => config.graph.anthropic_model = Some(m),
+            "ollama_cloud" => config.graph.cloud_model = Some(m),
             _ => config.graph.ollama_model = Some(m),
         }
     }
     if let Some(k) = api_key {
-        config.graph.gemini_api_key = Some(k);
+        config.graph.cloud_api_key = Some(k);
     }
     let db = Database::open(&get_default_db_path())?;
 
@@ -347,6 +347,8 @@ mod tests {
             turns: Vec::new(),
             total_tokens: TokenUsage::default(),
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         };
         use secall_core::store::SessionRepo;
         db.insert_session(&session).unwrap();

@@ -264,6 +264,8 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
         turns,
         total_tokens: Default::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     })
 }
 

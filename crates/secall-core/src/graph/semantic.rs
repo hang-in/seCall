@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::ingest::markdown::SessionFrontmatter;
 use crate::llm::defaults::{
-    warn_using_default, GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_LMSTUDIO_DEFAULT,
+    warn_using_default, GRAPH_ANTHROPIC_DEFAULT, GRAPH_LMSTUDIO_DEFAULT, GRAPH_OLLAMA_CLOUD_DEFAULT,
     GRAPH_OLLAMA_DEFAULT,
 };
 use crate::store::Database;
@@ -64,31 +64,6 @@ struct OpenAIChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAIMessage {
     content: String,
-}
-
-// ─── Gemini 응답 구조 ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct GeminiResponse {
-    candidates: Vec<GeminiCandidate>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GeminiCandidate {
-    content: GeminiContent,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiContent {
-    parts: Vec<GeminiPart>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GeminiPart {
-    text: String,
 }
 
 // ─── 정적 프롬프트 ──────────────────────────────────────────────────────────
@@ -224,6 +199,50 @@ async fn extract_with_ollama(
     parse_llm_edges(&ollama_resp.message.content, &fm.session_id)
 }
 
+// ─── Ollama Cloud API 호출 ───────────────────────────────────────────────────
+
+async fn extract_with_ollama_cloud(
+    fm: &SessionFrontmatter,
+    body: &str,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+) -> Result<Vec<GraphEdge>> {
+    let user_content = build_user_content(fm, body);
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "options": {"temperature": 0.1},
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content}
+        ]
+    });
+
+    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(api_key)
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Ollama Cloud API error {}: {}", status, text);
+    }
+
+    let ollama_resp: OllamaResponse = resp.json().await?;
+    parse_llm_edges(&ollama_resp.message.content, &fm.session_id)
+}
+
 // ─── OpenAI-compat API 호출 (LM Studio 등) ────────────────────────────────
 
 async fn extract_with_openai_compat(
@@ -269,92 +288,6 @@ async fn extract_with_openai_compat(
 }
 
 // ─── Gemini API 호출 ──────────────────────────────────────────────────────
-
-/// Internal helper exposed for crate-local tests.
-pub(crate) async fn extract_with_gemini(
-    fm: &SessionFrontmatter,
-    body: &str,
-    cfg: &GraphConfig,
-) -> Result<Vec<GraphEdge>> {
-    let api_key = cfg
-        .gemini_api_key
-        .clone()
-        .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "gemini api key not set (config.graph.gemini_api_key or SECALL_GEMINI_API_KEY)"
-            )
-        })?;
-
-    let model = cfg.gemini_model.as_deref().unwrap_or_else(|| {
-        warn_using_default("graph.gemini_model", GRAPH_GEMINI_DEFAULT);
-        GRAPH_GEMINI_DEFAULT
-    });
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
-
-    let user_content = build_user_content(fm, body);
-
-    let payload = serde_json::json!({
-        "contents": [{
-            "role": "user",
-            "parts": [{"text": format!("{}\n\n{}", SYSTEM_PROMPT, user_content)}]
-        }],
-        "generationConfig": {
-            "temperature": 0.0,
-            "maxOutputTokens": 65536,
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "object",
-                "properties": {
-                    "edges": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "relation": { "type": "string" },
-                                "target_type": { "type": "string" },
-                                "target_label": { "type": "string" }
-                            },
-                            "required": ["relation", "target_type", "target_label"]
-                        }
-                    }
-                },
-                "required": ["edges"]
-            }
-        }
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .json(&payload)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("gemini api error {}: {}", status, text);
-    }
-
-    let data: GeminiResponse = resp.json().await?;
-    let candidate = data.candidates.into_iter().next();
-    if let Some(ref c) = candidate {
-        if c.finish_reason.as_deref() == Some("MAX_TOKENS") {
-            anyhow::bail!("gemini response truncated (MAX_TOKENS) — output too long");
-        }
-    }
-    let text = candidate
-        .and_then(|c| c.content.parts.into_iter().next())
-        .map(|p| p.text)
-        .unwrap_or_default();
-
-    parse_llm_edges(&text, &fm.session_id)
-}
 
 // ─── LLM 응답 파싱 (공통) ──────────────────────────────────────────────────
 
@@ -438,7 +371,6 @@ pub(crate) async fn extract_with_llm(
             });
             extract_with_anthropic(fm, body, model).await
         }
-        "gemini" => extract_with_gemini(fm, body, config).await,
         "lmstudio" => {
             let base_url = config
                 .ollama_url
@@ -449,6 +381,27 @@ pub(crate) async fn extract_with_llm(
                 GRAPH_LMSTUDIO_DEFAULT
             });
             extract_with_openai_compat(fm, body, base_url, model).await
+        }
+        "ollama_cloud" => {
+            let base_url = config
+                .cloud_host
+                .as_deref()
+                .unwrap_or("https://ollama.com");
+            let model = config.cloud_model.as_deref().unwrap_or_else(|| {
+                warn_using_default("graph.cloud_model", GRAPH_OLLAMA_CLOUD_DEFAULT);
+                GRAPH_OLLAMA_CLOUD_DEFAULT
+            });
+            let api_key = config
+                .cloud_api_key
+                .as_deref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
+                         (set `OLLAMA_CLOUD_API_KEY` env or \
+                         `[graph].cloud_api_key` in config.toml)"
+                    )
+                })?;
+            extract_with_ollama_cloud(fm, body, base_url, model, api_key).await
         }
         _ => anyhow::bail!("unknown semantic_backend: {}", config.semantic_backend),
     }
@@ -559,6 +512,8 @@ mod tests {
             status: None,
             summary: summary.map(|s| s.to_string()),
             session_type: None,
+            archived: None,
+            archived_at: None,
         }
     }
 
@@ -566,11 +521,7 @@ mod tests {
         GraphConfig {
             semantic: true,
             semantic_backend: "disabled".to_string(),
-            ollama_url: None,
-            ollama_model: None,
-            anthropic_model: None,
-            gemini_api_key: None,
-            gemini_model: None,
+            ..GraphConfig::default()
         }
     }
 
@@ -813,17 +764,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_with_gemini_requires_api_key_before_network() {
+    async fn test_extract_with_llm_ollama_cloud_requires_api_key() {
         let config = GraphConfig {
-            gemini_api_key: None,
-            gemini_model: None,
+            semantic_backend: "ollama_cloud".to_string(),
+            cloud_api_key: None, // no key set
             ..GraphConfig::default()
         };
 
-        let err = extract_with_gemini(&make_fm("sess-semantic", None, None), "body", &config)
+        let err = extract_with_llm(&config, &make_fm("sess-cloud", None, None), "body")
             .await
-            .expect_err("missing api key should fail");
-        assert!(err.to_string().contains("gemini api key not set"));
+            .expect_err("ollama_cloud without api key should fail");
+        assert!(
+            err.to_string().contains("ollama cloud api key not set"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -866,9 +820,7 @@ mod tests {
             semantic_backend: "ollama".to_string(),
             ollama_url: Some("http://localhost:11434".to_string()),
             ollama_model: Some("gemma4:e4b".to_string()),
-            anthropic_model: None,
-            gemini_api_key: None,
-            gemini_model: None,
+            ..GraphConfig::default()
         };
         // introduces_tech 와 discusses_topic 을 유도하는 세션
         let fm = make_fm(
@@ -898,5 +850,100 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
         // 최소한 LLM이 tech/topic 엣지를 하나 이상 추출했거나
         // 아니면 규칙 기반만으로도 0 이상이어야 함
         let _ = stored; // tautology check 제거 — panic 없이 여기 도달하면 성공
+    }
+
+    // ─── P48: ollama_cloud + openai_compat 신규 경로 회귀 테스트 ─────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_extract_with_ollama_cloud_sends_bearer_auth_and_correct_payload() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/api/chat")
+            .match_header("Authorization", "Bearer test-cloud-key")
+            .match_body(Matcher::Regex(r#""model":"gemma4:31b-cloud""#.to_string()))
+            .with_status(200)
+            .with_body(ollama_response())
+            .create_async()
+            .await;
+
+        let fm = make_fm("sess-cloud-01", None, None);
+        let edges =
+            extract_with_ollama_cloud(&fm, "body text", &server.url(), "gemma4:31b-cloud", "test-cloud-key")
+                .await
+                .expect("ollama_cloud extract should succeed");
+        assert!(edges.is_empty());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_extract_with_ollama_cloud_propagates_http_error() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/api/chat")
+            .with_status(401)
+            .with_body(r#"{"error":"unauthorized"}"#)
+            .create_async()
+            .await;
+
+        let fm = make_fm("sess-cloud-02", None, None);
+        let err =
+            extract_with_ollama_cloud(&fm, "body text", &server.url(), "gemma4:31b-cloud", "bad-key")
+                .await
+                .expect_err("401 should propagate as Err");
+        assert!(
+            err.to_string().contains("401"),
+            "expected status 401 in error, got: {err}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_extract_with_openai_compat_sends_chat_completions_payload() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::AllOf(vec![
+                Matcher::Regex(r#""role":"system""#.to_string()),
+                Matcher::Regex(r#""role":"user""#.to_string()),
+            ]))
+            .with_status(200)
+            .with_body(openai_compat_response())
+            .create_async()
+            .await;
+
+        let fm = make_fm("sess-compat-01", None, None);
+        let edges =
+            extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini")
+                .await
+                .expect("openai_compat extract should succeed");
+        assert!(edges.is_empty());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_extract_with_openai_compat_invalid_json_returns_err() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_body(r#"not valid json at all"#)
+            .create_async()
+            .await;
+
+        let fm = make_fm("sess-compat-02", None, None);
+        let result =
+            extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini").await;
+        assert!(result.is_err(), "invalid JSON body should return Err");
+    }
+
+    #[test]
+    fn test_make_fm_with_summary_includes_summary_field() {
+        let fm = make_fm("sess-summary", None, Some("closes #99"));
+        assert_eq!(
+            fm.summary.as_deref(),
+            Some("closes #99"),
+            "summary field should be set from make_fm third arg"
+        );
+        let fm_no_summary = make_fm("sess-no-summary", None, None);
+        assert!(fm_no_summary.summary.is_none());
     }
 }

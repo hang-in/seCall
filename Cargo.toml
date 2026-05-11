@@ -55,3 +55,4 @@ tower-http = { version = "0.6", features = ["cors"] }
 rust-embed = "8"
 mime_guess = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+sysinfo = "0.34"

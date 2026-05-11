@@ -626,6 +626,11 @@ pub async fn ingest_sessions(
         }
     }
 
+    // P47 — embed 단계 끝나면 Ollama embedding 모델을 즉시 unload
+    if !no_embed && !vector_tasks.is_empty() {
+        unload_ollama_embed_model(config).await;
+    }
+
     // 시맨틱 엣지 추출 (graph build 경유 아닌 ingest 직접 연동)
     let semantic_enabled = config.graph.semantic
         && config.graph.semantic_backend != "disabled"
@@ -793,6 +798,28 @@ pub async fn unload_embedding_model_if_needed(config: &Config) {
             "unloaded embedding model before semantic extraction"
         ),
         Err(e) => tracing::debug!(model = embed_model, "embedding model unload skipped: {}", e),
+    }
+}
+
+/// P47 — embed 단계 종료 후 Ollama embedding 모델 즉시 unload.
+/// graph semantic 단계 진입 여부와 무관하게 ollama 백엔드 사용 시 항상 호출.
+/// cloud / ort / openvino / openai 는 keep_alive 개념이 없으므로 early return.
+pub async fn unload_ollama_embed_model(config: &Config) {
+    if config.embedding.backend != "ollama" {
+        return;
+    }
+    let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+    let ollama_url = config
+        .embedding
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
+    let unload_url = format!("{}/api/generate", ollama_url.trim_end_matches('/'));
+    let body = serde_json::json!({"model": embed_model, "keep_alive": 0});
+    if let Err(e) = secall_core::http_post_json(&unload_url, &body).await {
+        tracing::debug!(model = embed_model, error = %e, "embed model unload skipped");
+    } else {
+        tracing::debug!(model = embed_model, "unloaded embedding model after ingest");
     }
 }
 

@@ -67,6 +67,12 @@ impl SearchRepo for Database {
             None => String::new(),
         };
 
+        let archive_clause = if filters.include_archived {
+            String::new()
+        } else {
+            "AND sessions.is_archived = 0".to_string()
+        };
+
         let sql = format!(
             "SELECT turns_fts.session_id, turns_fts.turn_id, turns_fts.content, bm25(turns_fts) as score
              FROM turns_fts
@@ -74,6 +80,7 @@ impl SearchRepo for Database {
              WHERE turns_fts.content MATCH ?1
                AND (?2 IS NULL OR sessions.start_time >= ?2)
                AND (?3 IS NULL OR sessions.start_time < ?3)
+               {archive_clause}
                {exclude_clause}
                {allowlist_clause}
              ORDER BY score

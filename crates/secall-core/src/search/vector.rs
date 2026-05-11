@@ -349,6 +349,9 @@ impl VectorIndexer {
 
 /// Check whether a session's metadata satisfies project/agent/date filters.
 pub fn passes_filters(meta: &SessionMeta, filters: &SearchFilters) -> bool {
+    if !filters.include_archived && meta.is_archived {
+        return false;
+    }
     if let Some(proj) = &filters.project {
         if meta.project.as_deref() != Some(proj.as_str()) {
             return false;
@@ -382,6 +385,19 @@ pub fn passes_filters(meta: &SessionMeta, filters: &SearchFilters) -> bool {
     true
 }
 
+/// Determine ORT session pool size: explicit config → RAM-based heuristic.
+fn resolve_pool_size(config: &crate::vault::config::Config) -> usize {
+    if let Some(n) = config.embedding.pool_size {
+        return n.max(1);
+    }
+    let total_gb = sysinfo::System::new_all().total_memory() / (1024 * 1024 * 1024);
+    match total_gb {
+        0..=15 => 1,
+        16..=31 => 2,
+        _ => 4,
+    }
+}
+
 /// Create a VectorIndexer based on config.embedding.backend.
 /// Falls back to Ollama if ort fails; returns None if neither is available.
 pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
@@ -403,9 +419,10 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
                 }
             }
 
-            match OrtEmbedder::new(&model_dir) {
+            let pool = resolve_pool_size(config);
+            match OrtEmbedder::with_pool_size(&model_dir, pool) {
                 Ok(e) => {
-                    tracing::info!("ort ONNX loaded, local vector search enabled");
+                    tracing::info!(pool_size = pool, "ort ONNX loaded, local vector search enabled");
                     VectorIndexer::new(Box::new(e))
                 }
                 Err(e) => {
@@ -456,6 +473,33 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
                 return try_ollama_fallback_with_ann(config).await;
             }
         }
+        "ollama_cloud" => {
+            let base_url = config
+                .embedding
+                .cloud_host
+                .as_deref()
+                .unwrap_or("https://ollama.com");
+            let model = config
+                .embedding
+                .cloud_model
+                .as_deref()
+                .or(config.embedding.ollama_model.as_deref());
+            let api_key = config.embedding.cloud_api_key.clone();
+            if api_key.is_none() {
+                tracing::warn!(
+                    "OLLAMA_CLOUD_API_KEY not set — set it via env to enable cloud embedding, falling back to local Ollama"
+                );
+                return try_ollama_fallback_with_ann(config).await;
+            }
+            let embedder = OllamaEmbedder::new(Some(base_url), model).with_api_key(api_key);
+            if embedder.is_available().await {
+                tracing::info!(host = base_url, "Ollama Cloud embedder ready");
+                VectorIndexer::new(Box::new(embedder))
+            } else {
+                tracing::warn!("Ollama Cloud unreachable, falling back to local Ollama");
+                return try_ollama_fallback_with_ann(config).await;
+            }
+        }
         _ => {
             // "ollama" or any unknown value → Ollama
             return try_ollama_fallback_with_ann(config).await;
@@ -476,9 +520,10 @@ async fn try_ort_cpu_fallback(config: &Config) -> Option<VectorIndexer> {
         .clone()
         .unwrap_or_else(default_model_path);
 
-    match OrtEmbedder::new(&model_dir) {
+    let pool = resolve_pool_size(config);
+    match OrtEmbedder::with_pool_size(&model_dir, pool) {
         Ok(e) => {
-            tracing::info!("ORT CPU fallback loaded, vector search enabled");
+            tracing::info!(pool_size = pool, "ORT CPU fallback loaded, vector search enabled");
             let indexer = VectorIndexer::new(Box::new(e));
             #[cfg(not(target_os = "windows"))]
             let indexer = attach_ann_index(indexer);
@@ -665,5 +710,126 @@ mod tests {
 
         let c = vec![0.0, 1.0];
         assert!((cosine_distance(&a, &c) - 1.0).abs() < 0.001);
+    }
+
+    fn make_meta(is_archived: bool) -> SessionMeta {
+        SessionMeta {
+            agent: "claude-code".to_string(),
+            model: None,
+            project: None,
+            date: "2026-05-12".to_string(),
+            vault_path: None,
+            session_type: "interactive".to_string(),
+            is_archived,
+        }
+    }
+
+    #[test]
+    fn passes_filters_excludes_archived_by_default() {
+        let meta = make_meta(true);
+        let filters = SearchFilters::default(); // include_archived = false
+        assert!(!passes_filters(&meta, &filters));
+    }
+
+    #[test]
+    fn passes_filters_includes_archived_when_flag_set() {
+        let meta = make_meta(true);
+        let filters = SearchFilters {
+            include_archived: true,
+            ..Default::default()
+        };
+        assert!(passes_filters(&meta, &filters));
+    }
+
+    #[test]
+    fn passes_filters_non_archived_always_passes_archive_check() {
+        let meta = make_meta(false);
+        let filters = SearchFilters::default();
+        assert!(passes_filters(&meta, &filters));
+    }
+
+    #[test]
+    fn resolve_pool_size_uses_explicit_config_value() {
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.pool_size = Some(3);
+        assert_eq!(resolve_pool_size(&config), 3);
+    }
+
+    #[test]
+    fn resolve_pool_size_clamps_zero_to_one() {
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.pool_size = Some(0);
+        assert_eq!(resolve_pool_size(&config), 1);
+    }
+
+    #[test]
+    fn resolve_pool_size_auto_returns_at_least_one() {
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.pool_size = None;
+        let size = resolve_pool_size(&config);
+        assert!(size >= 1 && size <= 4, "auto pool_size should be 1–4, got {size}");
+    }
+
+    // ─── P48: create_vector_indexer ollama_cloud arm 회귀 테스트 ─────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_vector_indexer_ollama_cloud_no_api_key_falls_back() {
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.backend = "ollama_cloud".to_string();
+        config.embedding.cloud_api_key = None;
+        // Point local Ollama fallback to an unreachable port → deterministic None
+        config.embedding.ollama_url = Some("http://127.0.0.1:1".to_string());
+
+        let result = create_vector_indexer(&config).await;
+        // api_key None → warn + try_ollama_fallback_with_ann → local unreachable → None
+        assert!(
+            result.is_none(),
+            "no api_key + unreachable local Ollama should return None"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_vector_indexer_ollama_cloud_unreachable_falls_back() {
+        let mut cloud_server = mockito::Server::new_async().await;
+        let _mock = cloud_server
+            .mock("GET", "/api/tags")
+            .with_status(500)
+            .create_async()
+            .await;
+
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.backend = "ollama_cloud".to_string();
+        config.embedding.cloud_host = Some(cloud_server.url());
+        config.embedding.cloud_api_key = Some("k".to_string());
+        // Point local Ollama fallback to unreachable port → both fail → None
+        config.embedding.ollama_url = Some("http://127.0.0.1:1".to_string());
+
+        let result = create_vector_indexer(&config).await;
+        assert!(
+            result.is_none(),
+            "unreachable cloud + unreachable local should both fail → None"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_create_vector_indexer_ollama_cloud_available_returns_cloud_embedder() {
+        let mut cloud_server = mockito::Server::new_async().await;
+        let _mock = cloud_server
+            .mock("GET", "/api/tags")
+            .with_status(200)
+            .with_body(r#"{"models":[]}"#)
+            .create_async()
+            .await;
+
+        let mut config = crate::vault::config::Config::default();
+        config.embedding.backend = "ollama_cloud".to_string();
+        config.embedding.cloud_host = Some(cloud_server.url());
+        config.embedding.cloud_api_key = Some("k".to_string());
+
+        let result = create_vector_indexer(&config).await;
+        assert!(
+            result.is_some(),
+            "available cloud Ollama should return Some(indexer)"
+        );
     }
 }

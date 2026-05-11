@@ -52,7 +52,7 @@ async fn test_get_config_masks_secret_and_reports_env_indicators() {
 path = "/tmp/test-vault"
 
 [graph]
-gemini_api_key = "secret-key"
+cloud_api_key = "secret-key"
 "#,
     );
     std::env::set_var("SECALL_CONFIG_PATH", &config_path);
@@ -65,7 +65,7 @@ gemini_api_key = "secret-key"
     std::env::remove_var("ANTHROPIC_API_KEY");
 
     assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
-    assert_eq!(body["graph"]["gemini_api_key"], "<masked>");
+    assert_eq!(body["graph"]["cloud_api_key"], "<masked>");
     assert_eq!(body["env_indicators"]["ANTHROPIC_API_KEY"], true);
 }
 
@@ -174,7 +174,7 @@ path = "/tmp/test-vault"
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_patch_graph_section_ignores_gemini_api_key() {
+async fn test_patch_graph_section_ignores_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
@@ -185,7 +185,7 @@ async fn test_patch_graph_section_ignores_gemini_api_key() {
 path = "/tmp/test-vault"
 
 [graph]
-gemini_api_key = "original-secret"
+cloud_api_key = "original-secret"
 "#,
     );
     std::env::set_var("SECALL_CONFIG_PATH", &config_path);
@@ -196,7 +196,7 @@ gemini_api_key = "original-secret"
         Method::PATCH,
         "/api/config/graph",
         Some(json!({
-            "gemini_api_key": "leaked-attacker-input",
+            "cloud_api_key": "leaked-attacker-input",
             "ollama_model": "new-model"
         })),
     )
@@ -207,9 +207,48 @@ gemini_api_key = "original-secret"
     assert_eq!(status, StatusCode::OK);
 
     let saved = std::fs::read_to_string(&config_path).expect("read saved config");
-    assert!(saved.contains(r#"gemini_api_key = "original-secret""#));
+    assert!(saved.contains(r#"cloud_api_key = "original-secret""#));
     assert!(!saved.contains("leaked-attacker-input"));
     assert!(saved.contains(r#"ollama_model = "new-model""#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_log_section_ignores_cloud_api_key() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[log]
+cloud_api_key = "original-log-secret"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, _body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/log",
+        Some(json!({
+            "cloud_api_key": "leaked-attacker-input",
+            "model": "new-model"
+        })),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK);
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved config");
+    assert!(saved.contains(r#"cloud_api_key = "original-log-secret""#));
+    assert!(!saved.contains("leaked-attacker-input"));
+    assert!(saved.contains(r#"model = "new-model""#));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -308,4 +347,170 @@ path = "/tmp/test-vault"
         .as_str()
         .unwrap_or("")
         .contains("must be a JSON object"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_embedding_section_ignores_cloud_api_key() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[embedding]
+cloud_api_key = "original-embed-secret"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, _body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/embedding",
+        Some(json!({
+            "cloud_api_key": "leaked-attacker-input",
+            "backend": "ollama_cloud"
+        })),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK);
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved config");
+    assert!(saved.contains(r#"cloud_api_key = "original-embed-secret""#));
+    assert!(!saved.contains("leaked-attacker-input"));
+    assert!(saved.contains(r#"backend = "ollama_cloud""#));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_config_masks_embedding_cloud_api_key() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[embedding]
+cloud_api_key = "secret-embed-key"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, false);
+    let (status, body) = send_request(&router, Method::GET, "/api/config", None).await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
+    assert_eq!(body["embedding"]["cloud_api_key"], "<masked>");
+}
+
+// ─── P48: embedding PATCH 정상 경로 + env_indicators 회귀 테스트 ─────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_patch_embedding_section_updates_non_secret_fields() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[embedding]
+backend = "ollama"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, true);
+    let (status, _body) = send_request(
+        &router,
+        Method::PATCH,
+        "/api/config/embedding",
+        Some(json!({
+            "backend": "ollama_cloud",
+            "cloud_host": "https://ollama.com",
+            "cloud_model": "bge-m3",
+            "pool_size": 2
+        })),
+    )
+    .await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK, "PATCH embedding should return 200");
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved config");
+    assert!(saved.contains(r#"backend = "ollama_cloud""#), "backend should be updated");
+    assert!(saved.contains(r#"cloud_host = "https://ollama.com""#), "cloud_host should be saved");
+    assert!(saved.contains(r#"cloud_model = "bge-m3""#), "cloud_model should be saved");
+    assert!(saved.contains("pool_size = 2"), "pool_size should be saved");
+    // cloud_api_key was not in PATCH body — must not appear in saved file
+    assert!(!saved.contains("cloud_api_key"), "cloud_api_key must not appear when not patched");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_config_returns_pool_size_field() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+
+[embedding]
+pool_size = 4
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+
+    let router = make_router(&dir, false);
+    let (status, body) = send_request(&router, Method::GET, "/api/config", None).await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
+    assert_eq!(body["embedding"]["pool_size"], 4, "pool_size should be returned as number 4");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_config_env_indicators_includes_ollama_cloud_api_key() {
+    let _guard = ENV_MUTEX.lock().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config").join("config.toml");
+    write_config(
+        &config_path,
+        r#"
+[vault]
+path = "/tmp/test-vault"
+"#,
+    );
+    std::env::set_var("SECALL_CONFIG_PATH", &config_path);
+    std::env::set_var("OLLAMA_CLOUD_API_KEY", "test-indicator-key");
+
+    let router = make_router(&dir, false);
+    let (status, body) = send_request(&router, Method::GET, "/api/config", None).await;
+
+    std::env::remove_var("SECALL_CONFIG_PATH");
+    std::env::remove_var("OLLAMA_CLOUD_API_KEY");
+
+    assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
+    assert_eq!(
+        body["env_indicators"]["OLLAMA_CLOUD_API_KEY"],
+        true,
+        "OLLAMA_CLOUD_API_KEY set → env_indicator should be true"
+    );
 }

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use secall_core::{
     llm::defaults::{
-        warn_using_default, GRAPH_LMSTUDIO_DEFAULT, LOG_GEMINI_DEFAULT, LOG_OLLAMA_DEFAULT,
-        WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT,
+        warn_using_default, GRAPH_LMSTUDIO_DEFAULT, LOG_CONTEXT_CHAR_LIMIT, LOG_OLLAMA_CLOUD_DEFAULT,
+        LOG_OLLAMA_DEFAULT, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT,
     },
     store::{get_default_db_path, Database},
     vault::Config,
@@ -119,7 +119,7 @@ pub async fn run(
     let total = meaningful.len();
     let automated = sessions.len() - meaningful.len();
 
-    let user_prompt = format!(
+    let mut user_prompt = format!(
         "날짜: {target_date}\n총 세션: {total}개 (자동화 제외: {automated}개)\n{topics_line}\
          프로젝트별 작업 내역:\n{project_sections}\n\
          위 내용을 바탕으로 자연스러운 한국어 개발 작업 일지를 작성해주세요.\n\
@@ -129,6 +129,26 @@ pub async fn run(
     let system_prompt = "당신은 개발자의 작업 일지를 작성하는 도우미입니다. \
         주어진 세션 요약을 바탕으로 그날 무엇을 했는지 자연스러운 한국어로 정리해주세요. \
         과장하지 말고 실제 작업 내용을 간결하게 서술하세요.";
+
+    // diary 컨텍스트 가드 — kimi-k2.6 128k token (≈ 400k chars) 초과 방지
+    let total_chars = system_prompt.chars().count() + user_prompt.chars().count();
+    if total_chars > LOG_CONTEXT_CHAR_LIMIT {
+        tracing::warn!(
+            target_date,
+            total_chars,
+            limit = LOG_CONTEXT_CHAR_LIMIT,
+            "diary input exceeds context budget, truncating oldest project entries"
+        );
+        eprintln!(
+            "경고: diary 입력({total_chars}자)이 컨텍스트 한도({LOG_CONTEXT_CHAR_LIMIT}자)를 초과 — 오래된 entries 부터 잘라냄"
+        );
+        // user_prompt 를 limit 내로 자르기
+        let budget = LOG_CONTEXT_CHAR_LIMIT
+            .saturating_sub(system_prompt.chars().count())
+            .saturating_sub(1000); // 출력 여유분
+        let truncated: String = user_prompt.chars().take(budget).collect();
+        user_prompt = format!("{truncated}...(truncated)");
+    }
 
     // LLM 백엔드로 일기 생성
     let body = match generate_log_body(
@@ -200,10 +220,17 @@ pub fn resolve_log_model(
             warn_using_default("log.model", LOG_OLLAMA_DEFAULT);
             LOG_OLLAMA_DEFAULT.to_string()
         })),
-        "gemini" => Some(config.graph.gemini_model.clone().unwrap_or_else(|| {
-            warn_using_default("graph.gemini_model", LOG_GEMINI_DEFAULT);
-            LOG_GEMINI_DEFAULT.to_string()
-        })),
+        "ollama_cloud" => Some(
+            config
+                .log
+                .cloud_model
+                .clone()
+                .or_else(|| config.graph.cloud_model.clone())
+                .unwrap_or_else(|| {
+                    warn_using_default("log.cloud_model", LOG_OLLAMA_CLOUD_DEFAULT);
+                    LOG_OLLAMA_CLOUD_DEFAULT.to_string()
+                }),
+        ),
         _ => None,
     }
 }
@@ -211,6 +238,11 @@ pub fn resolve_log_model(
 fn resolve_log_api_url<'a>(config: &'a Config, backend_name: &str) -> Option<&'a str> {
     config.log.api_url.as_deref().or(match backend_name {
         "ollama" | "lmstudio" => config.graph.ollama_url.as_deref(),
+        "ollama_cloud" => config
+            .log
+            .cloud_host
+            .as_deref()
+            .or(config.graph.cloud_host.as_deref()),
         _ => None,
     })
 }
@@ -223,7 +255,7 @@ fn build_backend_prompt(system_prompt: &str, user_prompt: &str) -> String {
     format!("{system_prompt}\n\n{user_prompt}")
 }
 
-async fn generate_log_body(
+pub async fn generate_log_body(
     config: &Config,
     cli_backend: Option<&str>,
     cli_model: Option<&str>,
@@ -285,6 +317,34 @@ async fn generate_log_body(
                     .to_string(),
                 model: resolved_model.unwrap_or_else(|| LOG_OLLAMA_DEFAULT.to_string()),
                 max_tokens: resolve_log_max_tokens(config),
+                api_key: None,
+            };
+            backend
+                .generate(&build_backend_prompt(system_prompt, user_prompt))
+                .await
+        }
+        "ollama_cloud" => {
+            let api_url = resolve_log_api_url(config, "ollama_cloud")
+                .unwrap_or("https://ollama.com")
+                .to_string();
+            let model = resolved_model.unwrap_or_else(|| LOG_OLLAMA_DEFAULT.to_string());
+            let api_key = config
+                .log
+                .cloud_api_key
+                .clone()
+                .or_else(|| config.graph.cloud_api_key.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
+                         (set `OLLAMA_CLOUD_API_KEY` env or \
+                         `[log].cloud_api_key` in config.toml)"
+                    )
+                })?;
+            let backend = OllamaBackend {
+                api_url,
+                model,
+                max_tokens: resolve_log_max_tokens(config),
+                api_key: Some(api_key),
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
@@ -305,66 +365,8 @@ async fn generate_log_body(
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
                 .await
         }
-        "gemini" => {
-            let api_key = config
-                .graph
-                .gemini_api_key
-                .clone()
-                .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
-                .ok_or_else(|| anyhow::anyhow!("gemini api key not set"))?;
-            let model = resolved_model.unwrap_or_else(|| LOG_GEMINI_DEFAULT.to_string());
-            call_gemini(
-                &build_backend_prompt(system_prompt, user_prompt),
-                &api_key,
-                &model,
-            )
-            .await
-        }
         _ => anyhow::bail!("Unknown log backend: {}", backend_name),
     }
-}
-
-async fn call_gemini(prompt: &str, api_key: &str, model: &str) -> Result<String> {
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
-
-    let payload = serde_json::json!({
-        "contents": [{
-            "role": "user",
-            "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 1024
-        }
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .json(&payload)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("gemini api error {}: {}", status, text);
-    }
-
-    let data: serde_json::Value = resp.json().await?;
-    let text = data["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-
-    Ok(text)
 }
 
 pub(crate) fn generate_template(
@@ -446,13 +448,92 @@ mod tests {
     fn test_resolve_backend_priority_cli_then_log_then_graph_then_default() {
         let mut config = Config::default();
         config.log.backend = Some("claude".to_string());
-        config.graph.semantic_backend = "gemini".to_string();
+        config.graph.semantic_backend = "ollama_cloud".to_string();
         assert_eq!(resolve_backend_name(&config, Some("haiku")), "haiku");
 
         config.log.backend = None;
-        assert_eq!(resolve_backend_name(&config, None), "gemini");
+        assert_eq!(resolve_backend_name(&config, None), "ollama_cloud");
 
         config.graph.semantic_backend.clear();
         assert_eq!(resolve_backend_name(&config, None), "ollama");
+    }
+
+    #[test]
+    fn test_resolve_log_model_ollama_cloud_uses_config_field() {
+        let mut config = Config::default();
+        config.log.cloud_model = Some("custom:tag".to_string());
+        assert_eq!(
+            resolve_log_model(&config, "ollama_cloud", None).as_deref(),
+            Some("custom:tag")
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_model_ollama_cloud_falls_back_to_graph_cloud_model() {
+        let mut config = Config::default();
+        config.log.cloud_model = None;
+        config.graph.cloud_model = Some("g:m".to_string());
+        assert_eq!(
+            resolve_log_model(&config, "ollama_cloud", None).as_deref(),
+            Some("g:m")
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_model_ollama_cloud_falls_back_to_default() {
+        use secall_core::llm::defaults::LOG_OLLAMA_CLOUD_DEFAULT;
+        let config = Config::default();
+        assert_eq!(
+            resolve_log_model(&config, "ollama_cloud", None).as_deref(),
+            Some(LOG_OLLAMA_CLOUD_DEFAULT)
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_api_url_ollama_cloud_uses_log_cloud_host_first() {
+        let mut config = Config::default();
+        config.log.cloud_host = Some("https://custom.ollama.example".to_string());
+        config.graph.cloud_host = Some("https://graph.ollama.example".to_string());
+        assert_eq!(
+            resolve_log_api_url(&config, "ollama_cloud"),
+            Some("https://custom.ollama.example"),
+            "log.cloud_host should take precedence over graph.cloud_host"
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_api_url_ollama_cloud_falls_back_to_graph_cloud_host() {
+        let mut config = Config::default();
+        config.log.cloud_host = None;
+        config.graph.cloud_host = Some("https://graph.ollama.example".to_string());
+        assert_eq!(
+            resolve_log_api_url(&config, "ollama_cloud"),
+            Some("https://graph.ollama.example"),
+            "when log.cloud_host is None, graph.cloud_host should be used"
+        );
+
+        // 둘 다 None → None 반환 (caller 에서 default "https://ollama.com" 적용)
+        config.graph.cloud_host = None;
+        assert_eq!(
+            resolve_log_api_url(&config, "ollama_cloud"),
+            None,
+            "when both are None, resolve_log_api_url returns None"
+        );
+    }
+
+    #[test]
+    fn test_diary_input_truncated_when_over_limit() {
+        use secall_core::llm::defaults::LOG_CONTEXT_CHAR_LIMIT;
+        // limit + 1000 chars over 로 강제 생성
+        let big_input: String = "x".repeat(LOG_CONTEXT_CHAR_LIMIT + 1000);
+        let system = "sys";
+        let budget = LOG_CONTEXT_CHAR_LIMIT
+            .saturating_sub(system.chars().count())
+            .saturating_sub(1000);
+        let truncated: String = big_input.chars().take(budget).collect();
+        let result = format!("{truncated}...(truncated)");
+        // 결과가 limit + 여유분 이내여야 함
+        assert!(result.chars().count() <= LOG_CONTEXT_CHAR_LIMIT);
+        assert!(result.ends_with("...(truncated)"));
     }
 }

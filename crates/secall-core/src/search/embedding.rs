@@ -24,6 +24,7 @@ pub struct OllamaEmbedder {
     client: Client,
     base_url: String,
     model: String,
+    pub api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -45,7 +46,13 @@ impl OllamaEmbedder {
             client: Client::new(),
             base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
             model: model.unwrap_or("bge-m3").to_string(),
+            api_key: None,
         }
+    }
+
+    pub fn with_api_key(mut self, key: Option<String>) -> Self {
+        self.api_key = key;
+        self
     }
 
     pub fn model(&self) -> &str {
@@ -69,12 +76,14 @@ impl Embedder for OllamaEmbedder {
             truncate: Some(true),
         };
 
-        let resp = self
+        let mut request = self
             .client
             .post(format!("{}/api/embed", self.base_url))
-            .json(&req)
-            .send()
-            .await?;
+            .json(&req);
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
+        let resp = request.send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -87,11 +96,31 @@ impl Embedder for OllamaEmbedder {
     }
 
     async fn is_available(&self) -> bool {
-        self.client
-            .get(format!("{}/api/tags", self.base_url))
-            .send()
-            .await
-            .is_ok()
+        let mut request = self
+            .client
+            .get(format!("{}/api/tags", self.base_url));
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
+        match request.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    tracing::debug!(
+                        status = status.as_u16(),
+                        base_url = %self.base_url,
+                        "Ollama /api/tags returned non-2xx, treating as unavailable"
+                    );
+                    false
+                } else {
+                    true
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, base_url = %self.base_url, "Ollama /api/tags unreachable");
+                false
+            }
+        }
     }
 
     fn dimensions(&self) -> usize {
@@ -119,7 +148,7 @@ pub struct OrtEmbedder {
 
 impl OrtEmbedder {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        Self::with_pool_size(model_dir, 4)
+        Self::with_pool_size(model_dir, 1)
     }
 
     pub fn with_pool_size(model_dir: &Path, pool_size: usize) -> Result<Self> {
@@ -130,7 +159,15 @@ impl OrtEmbedder {
             .map_err(|e| anyhow!("tokenizer load failed: {e}"))?;
 
         // Build first session and probe dimensions
-        let mut first_session = ort::session::Session::builder()?
+        #[allow(unused_mut)]
+        let mut builder = ort::session::Session::builder()?;
+        #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
+        {
+            use ort::execution_providers::CoreMLExecutionProvider;
+            builder = builder
+                .with_execution_providers([CoreMLExecutionProvider::default().build()])?;
+        }
+        let mut first_session = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .commit_from_file(model_dir.join("model.onnx"))?;
 
@@ -141,13 +178,26 @@ impl OrtEmbedder {
 
         // Build remaining sessions
         for _ in 1..pool_size {
-            let sess = ort::session::Session::builder()?
+            #[allow(unused_mut)]
+            let mut builder = ort::session::Session::builder()?;
+            #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
+            {
+                use ort::execution_providers::CoreMLExecutionProvider;
+                builder = builder
+                    .with_execution_providers([CoreMLExecutionProvider::default().build()])?;
+            }
+            let sess = builder
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .commit_from_file(model_dir.join("model.onnx"))?;
             sessions.push(Arc::new(Mutex::new(sess)));
         }
 
-        tracing::info!(pool_size, dim, "ORT session pool created");
+        tracing::info!(
+            pool_size,
+            dim,
+            coreml = cfg!(all(feature = "coreml", target_os = "macos", target_arch = "aarch64")),
+            "ORT session pool created"
+        );
 
         Ok(Self {
             sessions,
@@ -835,6 +885,50 @@ mod tests {
         let e = OllamaEmbedder::new(None, Some("test-model"));
         assert_eq!(e.model_name(), "test-model");
         assert_eq!(e.dimensions(), 1024);
+    }
+
+    // ─── P48: OllamaEmbedder::is_available HTTP status 분기 회귀 테스트 ──────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ollama_embedder_is_available_returns_false_for_401() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/api/tags")
+            .with_status(401)
+            .with_body(r#"{"error":"unauthorized"}"#)
+            .create_async()
+            .await;
+
+        let embedder = OllamaEmbedder::new(Some(&server.url()), None)
+            .with_api_key(Some("invalid-key".to_string()));
+        assert!(!embedder.is_available().await, "401 should be treated as unavailable");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ollama_embedder_is_available_returns_false_for_404() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/api/tags")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let embedder = OllamaEmbedder::new(Some(&server.url()), None);
+        assert!(!embedder.is_available().await, "404 should be treated as unavailable");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ollama_embedder_is_available_returns_true_for_200() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/api/tags")
+            .with_status(200)
+            .with_body(r#"{"models":[]}"#)
+            .create_async()
+            .await;
+
+        let embedder = OllamaEmbedder::new(Some(&server.url()), None);
+        assert!(embedder.is_available().await, "200 should be treated as available");
     }
 
     #[test]

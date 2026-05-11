@@ -337,6 +337,7 @@ mod tests {
                 date: "2026-04-05".to_string(),
                 vault_path: None,
                 session_type: "interactive".to_string(),
+                is_archived: false,
             },
         }
     }
@@ -505,6 +506,8 @@ mod integration {
             }],
             total_tokens: TokenUsage::default(),
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         }
     }
 

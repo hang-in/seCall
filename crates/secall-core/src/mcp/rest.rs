@@ -404,6 +404,7 @@ impl From<SessionListQuery> for SessionListFilter {
             q: q.q,
             page: q.page.unwrap_or(1),
             page_size: q.page_size.unwrap_or(30),
+            include_archived: false,
         }
     }
 }

@@ -23,6 +23,10 @@ pub struct SessionFrontmatter {
     pub status: Option<String>,
     pub summary: Option<String>,
     pub session_type: Option<String>,
+    /// P45 — vault SSOT. archived=true 면 DB 의 is_archived 도 갱신.
+    pub archived: Option<bool>,
+    /// RFC3339 string.
+    pub archived_at: Option<String>,
 }
 
 /// vault 마크다운 파일에서 frontmatter YAML을 파싱.
@@ -95,6 +99,16 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
     out.push_str(&format!("turns: {}\n", session.turns.len()));
     out.push_str(&format!("tokens_in: {}\n", session.total_tokens.input));
     out.push_str(&format!("tokens_out: {}\n", session.total_tokens.output));
+
+    if session.archived {
+        out.push_str("archived: true\n");
+        if let Some(at) = session.archived_at {
+            out.push_str(&format!(
+                "archived_at: \"{}\"\n",
+                at.with_timezone(&tz).format("%Y-%m-%dT%H:%M:%S%:z")
+            ));
+        }
+    }
 
     // Collect unique tool names
     let mut tools_used: Vec<String> = Vec::new();
@@ -422,6 +436,8 @@ mod tests {
                 cached: 0,
             },
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         }
     }
 
@@ -435,6 +451,24 @@ mod tests {
         assert!(md.contains("session_id: a1b2c3d4"));
         assert!(md.contains("project: seCall\n"));
         assert!(md.contains("model: claude-opus-4-6\n"));
+    }
+
+    #[test]
+    fn test_render_session_archived_false_omits_field() {
+        let session = make_session(vec![]);
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        assert!(!md.contains("archived:"), "archived: should not appear when false");
+    }
+
+    #[test]
+    fn test_render_session_archived_true_includes_field() {
+        let mut session = make_session(vec![]);
+        session.archived = true;
+        session.archived_at =
+            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap());
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        assert!(md.contains("\narchived: true\n"), "archived: true missing");
+        assert!(md.contains("archived_at:"), "archived_at missing");
     }
 
     #[test]
@@ -696,5 +730,21 @@ mod tests {
         // body에서 :: 가 이스케이프되어야 함
         assert!(md.contains("field:\u{200B}: value"));
         // frontmatter의 :: 는 이 테스트와 무관
+    }
+
+    #[test]
+    fn test_parse_session_frontmatter_with_archived() {
+        let content = "---\nsession_id: test-id\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\narchived: true\narchived_at: \"2026-05-12T15:00:00Z\"\n---\n\nBody text.";
+        let fm = parse_session_frontmatter(content).unwrap();
+        assert_eq!(fm.archived, Some(true));
+        assert_eq!(fm.archived_at.as_deref(), Some("2026-05-12T15:00:00Z"));
+    }
+
+    #[test]
+    fn test_parse_session_frontmatter_without_archived_defaults_to_none() {
+        let content = "---\nsession_id: test-id\nagent: claude-code\ndate: 2026-05-12\nstart_time: \"2026-05-12T10:00:00+00:00\"\n---\n\nBody text.";
+        let fm = parse_session_frontmatter(content).unwrap();
+        assert_eq!(fm.archived, None);
+        assert_eq!(fm.archived_at, None);
     }
 }

@@ -30,14 +30,18 @@ export interface AppConfig {
     ollama_url?: string | null;
     ollama_model?: string | null;
     anthropic_model?: string | null;
-    gemini_api_key?: string | null;
-    gemini_model?: string | null;
+    cloud_host?: string | null;
+    cloud_model?: string | null;
+    cloud_api_key?: string | null;
   };
   log: {
     backend?: string | null;
     model?: string | null;
     api_url?: string | null;
     max_tokens?: number | null;
+    cloud_host?: string | null;
+    cloud_model?: string | null;
+    cloud_api_key?: string | null;
   };
   embedding: {
     backend: string;
@@ -45,6 +49,10 @@ export interface AppConfig {
     ollama_model?: string | null;
     openai_model?: string | null;
     openvino_device?: string | null;
+    pool_size?: number | null;
+    cloud_host?: string | null;
+    cloud_model?: string | null;
+    cloud_api_key?: string | null;
   };
   env_indicators?: Record<string, boolean>;
 }

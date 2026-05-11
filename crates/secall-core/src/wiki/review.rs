@@ -230,6 +230,7 @@ mod tests {
 
     #[test]
     fn prompt_loads_for_anthropic_kind() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let prompt = load_review_system_prompt(ReviewerKind::Anthropic);
         assert!(!prompt.is_empty());
         assert!(prompt.contains("위키"));
@@ -237,6 +238,7 @@ mod tests {
 
     #[test]
     fn prompt_for_local_backends_includes_strict_json_suffix() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let anthropic = load_review_system_prompt(ReviewerKind::Anthropic);
         let ollama = load_review_system_prompt(ReviewerKind::Ollama);
         let lmstudio = load_review_system_prompt(ReviewerKind::LmStudio);

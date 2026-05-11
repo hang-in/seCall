@@ -26,6 +26,8 @@ fn make_session(id: &str, project: &str, day_offset: u32) -> Session {
         turns: vec![],
         total_tokens: TokenUsage::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     }
 }
 

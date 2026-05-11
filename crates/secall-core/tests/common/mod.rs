@@ -198,6 +198,8 @@ pub fn insert_minimal_session(db: &Database, id: &str) {
         turns: vec![],
         total_tokens: TokenUsage::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     };
     db.insert_session(&session).expect("insert minimal session");
 }

@@ -60,6 +60,28 @@ impl Vault {
         Ok(rel_path)
     }
 
+    /// 기존 vault session markdown 의 frontmatter `archived` / `archived_at` 만 in-place 갱신.
+    /// 본문은 보존. 파일이 존재하지 않으면 에러.
+    pub fn update_session_archive_frontmatter(
+        &self,
+        vault_rel_path: &str,
+        archived: bool,
+        archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        tz: chrono_tz::Tz,
+    ) -> Result<()> {
+        let abs = self.path.join(vault_rel_path);
+        let content = std::fs::read_to_string(&abs)?;
+
+        let (fm_block, body) = split_frontmatter(&content)?;
+        let new_fm = upsert_archive_lines(&fm_block, archived, archived_at, tz);
+
+        let new_content = format!("---\n{new_fm}---\n{body}");
+        let tmp = abs.with_extension("md.tmp");
+        std::fs::write(&tmp, &new_content)?;
+        std::fs::rename(&tmp, &abs)?;
+        Ok(())
+    }
+
     /// Check if a session has already been ingested (by ID)
     pub fn session_exists(&self, session_id: &str) -> bool {
         // Walk raw/sessions/ looking for a file containing the session ID
@@ -83,6 +105,46 @@ impl Vault {
         }
         false
     }
+}
+
+fn split_frontmatter(content: &str) -> Result<(String, String)> {
+    let stripped = content
+        .strip_prefix("---\n")
+        .ok_or_else(|| anyhow::anyhow!("session markdown missing frontmatter prefix"))?;
+    let (fm, body) = stripped
+        .split_once("\n---\n")
+        .ok_or_else(|| anyhow::anyhow!("session markdown frontmatter not terminated"))?;
+    Ok((format!("{fm}\n"), body.to_string()))
+}
+
+fn upsert_archive_lines(
+    fm: &str,
+    archived: bool,
+    archived_at: Option<chrono::DateTime<chrono::Utc>>,
+    tz: chrono_tz::Tz,
+) -> String {
+    let mut kept: Vec<String> = fm
+        .lines()
+        .filter(|line| {
+            let t = line.trim_start();
+            !t.starts_with("archived:") && !t.starts_with("archived_at:")
+        })
+        .map(|l| l.to_string())
+        .collect();
+
+    if archived {
+        kept.push("archived: true".to_string());
+        if let Some(at) = archived_at {
+            kept.push(format!(
+                "archived_at: \"{}\"",
+                at.with_timezone(&tz).format("%Y-%m-%dT%H:%M:%S%:z")
+            ));
+        }
+    }
+
+    kept.iter()
+        .map(|l| format!("{l}\n"))
+        .collect::<String>()
 }
 
 #[cfg(test)]
@@ -119,6 +181,8 @@ mod tests {
                 cached: 0,
             },
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         }
     }
 
@@ -263,6 +327,63 @@ mod tests {
         assert!(config.ingest.tool_output_max_chars > 0);
         std::env::remove_var("SECALL_CONFIG_PATH");
     }
+
+    #[test]
+    fn test_update_archive_frontmatter_adds_lines() {
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::new(dir.path().to_path_buf());
+        vault.init().unwrap();
+        let session = make_session();
+        let rel = vault.write_session(&session, chrono_tz::Tz::UTC).unwrap();
+        let rel_str = rel.to_string_lossy().to_string();
+
+        vault
+            .update_session_archive_frontmatter(
+                &rel_str,
+                true,
+                Some(chrono::Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap()),
+                chrono_tz::Tz::UTC,
+            )
+            .unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(&rel)).unwrap();
+        assert!(content.contains("\narchived: true\n"), "archived: true missing");
+        assert!(content.contains("archived_at:"), "archived_at missing");
+        // 본문 보존 확인
+        assert!(content.contains("Test session content"));
+    }
+
+    #[test]
+    fn test_update_archive_frontmatter_removes_lines_on_restore() {
+        let dir = TempDir::new().unwrap();
+        let vault = Vault::new(dir.path().to_path_buf());
+        vault.init().unwrap();
+        let session = make_session();
+        let rel = vault.write_session(&session, chrono_tz::Tz::UTC).unwrap();
+        let rel_str = rel.to_string_lossy().to_string();
+
+        vault
+            .update_session_archive_frontmatter(
+                &rel_str,
+                true,
+                Some(chrono::Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap()),
+                chrono_tz::Tz::UTC,
+            )
+            .unwrap();
+        vault
+            .update_session_archive_frontmatter(&rel_str, false, None, chrono_tz::Tz::UTC)
+            .unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(&rel)).unwrap();
+        assert!(
+            !content.contains("archived:"),
+            "archived: should be removed"
+        );
+        assert!(
+            !content.contains("archived_at:"),
+            "archived_at: should be removed"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +424,8 @@ pub mod integration {
                 }],
                 total_tokens: TokenUsage::default(),
                 session_type: "interactive".to_string(),
+                archived: false,
+                archived_at: None,
             })
             .collect();
 

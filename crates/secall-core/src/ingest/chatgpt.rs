@@ -344,6 +344,8 @@ fn conversation_to_session(conv: &GptConversation) -> crate::error::Result<Sessi
         turns,
         total_tokens: TokenUsage::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     })
 }
 

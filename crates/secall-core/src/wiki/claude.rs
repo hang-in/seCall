@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt as _;
 
 use super::WikiBackend;
 
@@ -16,9 +18,6 @@ impl WikiBackend for ClaudeBackend {
     }
 
     async fn generate(&self, prompt: &str) -> anyhow::Result<String> {
-        use std::io::{BufRead, Write as _};
-        use std::process::Stdio;
-
         if !crate::command_exists("claude") {
             anyhow::bail!(
                 "Claude Code CLI not found in PATH. \
@@ -31,45 +30,28 @@ impl WikiBackend for ClaudeBackend {
             _ => "claude-sonnet-4-6",
         };
 
-        let mut child = std::process::Command::new("claude")
+        let mut child = tokio::process::Command::new("claude")
             .args(["-p", "--model", model_id])
             .arg("--allowedTools")
             .arg("mcp__secall__recall,mcp__secall__get,mcp__secall__status,mcp__secall__wiki_search,Read,Write,Edit,Glob,Grep")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .current_dir(&self.vault_path)
             .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes())?;
+            stdin.write_all(prompt.as_bytes()).await?;
+            stdin.shutdown().await?;
         }
 
-        let output = if let Some(stdout) = child.stdout.take() {
-            let reader = std::io::BufReader::new(stdout);
-            let mut lines = Vec::new();
-            for line in reader.lines() {
-                match line {
-                    Ok(l) => {
-                        eprintln!("  | {}", l);
-                        lines.push(l);
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "failed to read claude stdout");
-                        break;
-                    }
-                }
-            }
-            lines.join("\n")
-        } else {
-            String::new()
-        };
-
-        let status = child.wait()?;
-        if !status.success() {
-            anyhow::bail!("claude exited with code {:?}", status.code());
+        let output = child.wait_with_output().await?;
+        if !output.status.success() {
+            anyhow::bail!("claude exited with code {:?}", output.status.code());
         }
 
-        Ok(output)
+        String::from_utf8(output.stdout)
+            .map_err(|e| anyhow::anyhow!("claude stdout was not UTF-8: {e}"))
     }
 }

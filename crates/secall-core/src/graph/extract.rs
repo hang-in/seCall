@@ -451,6 +451,8 @@ mod tests {
             status: None,
             summary: Some("test summary".to_string()),
             session_type: None,
+            archived: None,
+            archived_at: None,
         }
     }
 
@@ -590,6 +592,8 @@ mod tests {
             status: None,
             summary: summary.map(|s| s.to_string()),
             session_type: None,
+            archived: None,
+            archived_at: None,
         }
     }
 

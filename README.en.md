@@ -666,13 +666,17 @@ secall serve --port 8080 --allow-config-edit
 | `vault.branch` | Git branch name | `main` |
 | `search.tokenizer` | Tokenizer (`lindera` / `kiwi`) | `lindera` |
 | `search.default_limit` | Search result count | `10` |
-| `embedding.backend` | Embedding backend (`ollama` / `ort` / `none`) | `ollama` |
+| `embedding.backend` | Embedding backend (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`) | `ollama` |
 | `embedding.ollama_model` | Ollama model name | `bge-m3` |
+| `embedding.pool_size` | ORT session pool size (null = auto from RAM) | `null` |
+| `embedding.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
+| `embedding.cloud_model` | Ollama Cloud embedding model name | `null` |
 | `output.timezone` | Timezone (IANA) | `UTC` |
 | `ingest.classification.default` | Default session_type when no rule matches | `interactive` |
 | `ingest.classification.skip_embed_types` | Session types to skip vector embedding | `[]` |
-| `graph.semantic_backend` | Semantic edge extraction backend (`gemini` / `ollama` / `none`) | `none` |
-| `graph.gemini_model` | Gemini model name | `gemini-2.5-flash` |
+| `graph.semantic_backend` | Semantic edge extraction backend (`ollama_cloud` / `ollama` / `lmstudio` / `anthropic` / `none`) | `none` |
+| `graph.cloud_model` | Ollama Cloud semantic model | `gemma4:31b-cloud` |
+| `graph.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
 | `graph.ollama_model` | Ollama / LM Studio semantic model | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.review_backend` | Wiki review backend (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | falls back to `wiki.default_backend` |
@@ -754,43 +758,7 @@ For auto-sync on session start/end:
 
 ## Architecture
 
-```
-┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-│  Claude Code │  │ Codex CLI │  │Gemini CLI│  │claude.ai │  │ ChatGPT  │
-│    (JSONL)   │  │  (JSONL)  │  │  (JSON)  │  │JSON (ZIP)│  │JSON (ZIP)│
-└──────┬───────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘
-       │               │             │              │              │
-       └───────┬───────┴─────────────┴──────────────┴──────────────┘
-               │
-         ┌─────▼──────┐
-         │   Parsers   │  claude.rs / codex.rs / gemini.rs / claude_ai.rs / chatgpt.rs
-         └─────┬──────┘
-                    │
-          ┌─────────▼─────────┐
-          │   Unified Session  │  Session → Turn → Action
-          └─────────┬─────────┘
-                    │
-       ┌────────────┼────────────┐
-       │            │            │
-  ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
-  │ SQLite  │ │  Vault  │ │  Vector │
-  │  FTS5   │ │   (MD)  │ │  Store  │
-  │  BM25   │ │Obsidian │ │BGE-M3   │
-  └────┬────┘ └─────────┘ └────┬────┘
-       │                       │
-       └───────────┬───────────┘
-                   │
-            ┌──────▼──────┐
-            │  Hybrid RRF  │  k=60
-            └──────┬──────┘
-                   │
-          ┌────────┼────────┐
-          │        │        │
-     ┌────▼──┐ ┌──▼───┐ ┌──▼──┐
-     │  CLI  │ │ MCP  │ │Wiki │
-     │recall │ │Server│ │Agent│
-     └───────┘ └──────┘ └─────┘
-```
+![seCall architecture](arch_v0.png)
 
 ## Tech Stack
 

@@ -263,6 +263,8 @@ fn conversation_to_session(conv: &Conversation) -> crate::error::Result<Session>
         turns,
         total_tokens: TokenUsage::default(),
         session_type: "interactive".to_string(),
+        archived: false,
+        archived_at: None,
     })
 }
 

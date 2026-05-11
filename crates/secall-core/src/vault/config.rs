@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::defaults::{GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_OLLAMA_DEFAULT};
+use crate::llm::defaults::{GRAPH_ANTHROPIC_DEFAULT, GRAPH_OLLAMA_DEFAULT};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -68,7 +68,7 @@ pub struct SearchConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EmbeddingConfig {
-    /// Embedding backend: "ollama" | "ort" | "openai" | "openvino"
+    /// Embedding backend: "ollama" | "ort" | "openai" | "openvino" | "ollama_cloud"
     pub backend: String,
     /// Ollama base URL (ollama backend)
     pub ollama_url: Option<String>,
@@ -80,6 +80,14 @@ pub struct EmbeddingConfig {
     pub openai_model: Option<String>,
     /// OpenVINO device type: "NPU" | "GPU" | "CPU" (openvino backend)
     pub openvino_device: Option<String>,
+    /// ORT session pool size. None = auto-detect from RAM (≤15GB→1, 16-31GB→2, ≥32GB→4)
+    pub pool_size: Option<usize>,
+    /// Ollama Cloud API host (ollama_cloud backend)
+    pub cloud_host: Option<String>,
+    /// Ollama Cloud embedding model name (ollama_cloud backend)
+    pub cloud_model: Option<String>,
+    /// Ollama Cloud API key — managed via env OLLAMA_CLOUD_API_KEY, not stored in config
+    pub cloud_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -160,7 +168,7 @@ impl Default for WikiConfig {
 pub struct GraphConfig {
     /// 시맨틱 엣지 추출 활성화 (기본: true)
     pub semantic: bool,
-    /// LLM backend: "ollama" (기본) | "anthropic" | "gemini" | "lmstudio" | "disabled" (규칙 기반만)
+    /// LLM backend: "ollama" (기본) | "anthropic" | "ollama_cloud" | "lmstudio" | "disabled" (규칙 기반만)
     pub semantic_backend: String,
     /// Ollama base URL (ollama backend)
     pub ollama_url: Option<String>,
@@ -168,10 +176,12 @@ pub struct GraphConfig {
     pub ollama_model: Option<String>,
     /// Anthropic model name (anthropic backend, 기본: claude-haiku-4-5-20251001)
     pub anthropic_model: Option<String>,
-    /// Gemini API key (gemini backend, fallback: SECALL_GEMINI_API_KEY 환경변수)
-    pub gemini_api_key: Option<String>,
-    /// Gemini model name (gemini backend, 기본: gemini-2.5-flash)
-    pub gemini_model: Option<String>,
+    /// Ollama Cloud base URL (ollama_cloud backend, 기본: https://ollama.com)
+    pub cloud_host: Option<String>,
+    /// Ollama Cloud model (ollama_cloud backend, 기본: GRAPH_OLLAMA_CLOUD_DEFAULT)
+    pub cloud_model: Option<String>,
+    /// Ollama Cloud API key (config field; env OLLAMA_CLOUD_API_KEY 우선)
+    pub cloud_api_key: Option<String>,
 }
 
 impl Default for GraphConfig {
@@ -182,8 +192,9 @@ impl Default for GraphConfig {
             ollama_url: None,
             ollama_model: None,
             anthropic_model: None,
-            gemini_api_key: None,
-            gemini_model: None,
+            cloud_host: None,
+            cloud_model: None,
+            cloud_api_key: None,
         }
     }
 }
@@ -199,6 +210,12 @@ pub struct LogConfig {
     pub api_url: Option<String>,
     /// Max generation tokens override
     pub max_tokens: Option<u32>,
+    /// Ollama Cloud base URL override (ollama_cloud backend)
+    pub cloud_host: Option<String>,
+    /// Ollama Cloud model override (ollama_cloud backend)
+    pub cloud_model: Option<String>,
+    /// Ollama Cloud API key (config field; env OLLAMA_CLOUD_API_KEY 우선)
+    pub cloud_api_key: Option<String>,
 }
 
 /// 단일 세션 분류 규칙
@@ -295,6 +312,10 @@ impl Default for EmbeddingConfig {
             model_path: None,
             openai_model: None,
             openvino_device: None,
+            pool_size: None,
+            cloud_host: None,
+            cloud_model: None,
+            cloud_api_key: None,
         }
     }
 }
@@ -369,13 +390,15 @@ impl Config {
         }
         if let Ok(m) = std::env::var("SECALL_GRAPH_MODEL") {
             match self.graph.semantic_backend.as_str() {
-                "gemini" => self.graph.gemini_model = Some(m),
                 "anthropic" => self.graph.anthropic_model = Some(m),
+                "ollama_cloud" => self.graph.cloud_model = Some(m),
                 _ => self.graph.ollama_model = Some(m),
             }
         }
-        if let Ok(k) = std::env::var("SECALL_GRAPH_API_KEY") {
-            self.graph.gemini_api_key = Some(k);
+        if let Ok(k) = std::env::var("OLLAMA_CLOUD_API_KEY") {
+            self.graph.cloud_api_key = Some(k.clone());
+            self.log.cloud_api_key = Some(k.clone());
+            self.embedding.cloud_api_key = Some(k);
         }
         self
     }
@@ -531,10 +554,6 @@ pub fn default_graph_anthropic_model() -> &'static str {
     GRAPH_ANTHROPIC_DEFAULT
 }
 
-pub fn default_graph_gemini_model() -> &'static str {
-    GRAPH_GEMINI_DEFAULT
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,10 +595,10 @@ path = "/tmp/test-vault"
     #[test]
     fn test_graph_env_override_backend() {
         let _guard = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("SECALL_GRAPH_BACKEND", "gemini");
+        std::env::set_var("SECALL_GRAPH_BACKEND", "ollama_cloud");
         let config = Config::default().apply_env_overrides();
         std::env::remove_var("SECALL_GRAPH_BACKEND");
-        assert_eq!(config.graph.semantic_backend, "gemini");
+        assert_eq!(config.graph.semantic_backend, "ollama_cloud");
     }
 
     #[test]
@@ -595,29 +614,69 @@ path = "/tmp/test-vault"
     }
 
     #[test]
-    fn test_graph_env_override_model_gemini() {
+    fn test_graph_env_override_model_ollama_cloud() {
         let _guard = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("SECALL_GRAPH_BACKEND", "gemini");
-        std::env::set_var("SECALL_GRAPH_MODEL", "gemini-2.0-flash");
+        std::env::set_var("SECALL_GRAPH_BACKEND", "ollama_cloud");
+        std::env::set_var("SECALL_GRAPH_MODEL", "gemma4:custom");
         let config = Config::default().apply_env_overrides();
         std::env::remove_var("SECALL_GRAPH_BACKEND");
         std::env::remove_var("SECALL_GRAPH_MODEL");
+        // ollama_cloud 일 때 SECALL_GRAPH_MODEL → cloud_model 에 저장돼야 함
         assert_eq!(
-            config.graph.gemini_model,
-            Some("gemini-2.0-flash".to_string())
+            config.graph.cloud_model,
+            Some("gemma4:custom".to_string())
+        );
+        // ollama_model 에는 저장되지 않아야 함
+        assert_eq!(config.graph.ollama_model, None);
+    }
+
+    #[test]
+    fn test_ollama_cloud_api_key_env_override() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("OLLAMA_CLOUD_API_KEY", "test-cloud-key");
+        let config = Config::default().apply_env_overrides();
+        std::env::remove_var("OLLAMA_CLOUD_API_KEY");
+        assert_eq!(
+            config.graph.cloud_api_key,
+            Some("test-cloud-key".to_string())
+        );
+        assert_eq!(
+            config.log.cloud_api_key,
+            Some("test-cloud-key".to_string())
+        );
+        assert_eq!(
+            config.embedding.cloud_api_key,
+            Some("test-cloud-key".to_string()),
+            "OLLAMA_CLOUD_API_KEY should propagate to embedding.cloud_api_key"
         );
     }
 
     #[test]
-    fn test_graph_env_override_api_key() {
+    fn test_embedding_pool_size_round_trip() {
         let _guard = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("SECALL_GRAPH_API_KEY", "test-key-123");
-        let config = Config::default().apply_env_overrides();
-        std::env::remove_var("SECALL_GRAPH_API_KEY");
-        assert_eq!(
-            config.graph.gemini_api_key,
-            Some("test-key-123".to_string())
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[vault]
+path = "/tmp/test"
+
+[embedding]
+pool_size = 2
+"#,
+        )
+        .unwrap();
+        std::env::set_var("SECALL_CONFIG_PATH", &path);
+        let config = Config::load_or_default();
+        std::env::remove_var("SECALL_CONFIG_PATH");
+        assert_eq!(config.embedding.pool_size, Some(2), "pool_size should round-trip as Some(2)");
+    }
+
+    #[test]
+    fn test_embedding_pool_size_default_is_none() {
+        let config = Config::default();
+        assert_eq!(config.embedding.pool_size, None, "pool_size default should be None (auto-detect)");
     }
 
     #[test]

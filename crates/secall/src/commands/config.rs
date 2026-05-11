@@ -4,9 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use secall_core::command_exists;
-use secall_core::llm::defaults::{
-    GRAPH_ANTHROPIC_DEFAULT, GRAPH_GEMINI_DEFAULT, GRAPH_LMSTUDIO_DEFAULT,
-};
+use secall_core::llm::defaults::{GRAPH_ANTHROPIC_DEFAULT, GRAPH_LMSTUDIO_DEFAULT};
 use secall_core::vault::config::WikiBackendConfig;
 use secall_core::vault::Config;
 
@@ -122,13 +120,13 @@ fn short_http_client() -> std::result::Result<reqwest::Client, String> {
 pub async fn run_llm_test(backend: Option<String>, no_network: bool) -> Result<()> {
     let config = Config::load_or_default();
     let backends = match backend.as_deref() {
-        None => vec!["claude", "codex", "haiku", "ollama", "lmstudio", "gemini"],
-        Some(name @ ("claude" | "codex" | "haiku" | "ollama" | "lmstudio" | "gemini")) => {
+        None => vec!["claude", "codex", "haiku", "ollama", "lmstudio", "ollama_cloud"],
+        Some(name @ ("claude" | "codex" | "haiku" | "ollama" | "lmstudio" | "ollama_cloud")) => {
             vec![name]
         }
         Some(other) => {
             anyhow::bail!(
-                "unknown backend: {}. valid: claude/codex/haiku/ollama/lmstudio/gemini",
+                "unknown backend: {}. valid: claude/codex/haiku/ollama/lmstudio/ollama_cloud",
                 other
             )
         }
@@ -202,19 +200,23 @@ fn print_llm_summary(config: &Config) {
             .unwrap_or("claude-haiku-4-5-20251001")
     );
     println!(
-        "  gemini_model: {}",
+        "  cloud_host: {}",
         config
             .graph
-            .gemini_model
+            .cloud_host
             .as_deref()
-            .unwrap_or("gemini-2.5-flash")
+            .unwrap_or("https://ollama.com")
     );
     println!(
-        "  gemini_api_key: {}",
-        if config.graph.gemini_api_key.is_some() {
+        "  cloud_model: {}",
+        config.graph.cloud_model.as_deref().unwrap_or("(not set)")
+    );
+    println!(
+        "  cloud_api_key: {}",
+        if config.graph.cloud_api_key.is_some() {
             "<masked>"
         } else {
-            "<env: SECALL_GEMINI_API_KEY>"
+            "<env: OLLAMA_CLOUD_API_KEY>"
         }
     );
     println!();
@@ -289,8 +291,8 @@ fn print_llm_summary(config: &Config) {
             std::env::var("ANTHROPIC_API_KEY").is_ok(),
         ),
         (
-            "SECALL_GEMINI_API_KEY",
-            std::env::var("SECALL_GEMINI_API_KEY").is_ok(),
+            "OLLAMA_CLOUD_API_KEY",
+            std::env::var("OLLAMA_CLOUD_API_KEY").is_ok(),
         ),
         ("OPENAI_API_KEY", std::env::var("OPENAI_API_KEY").is_ok()),
     ] {
@@ -305,7 +307,7 @@ async fn test_backend(config: &Config, backend: &str, no_network: bool) -> TestO
         "haiku" => test_haiku_backend(config, no_network).await,
         "ollama" => test_ollama_backend(config, no_network).await,
         "lmstudio" => test_lmstudio_backend(config, no_network).await,
-        "gemini" => test_gemini_backend(config, no_network).await,
+        "ollama_cloud" => test_ollama_cloud_backend(config, no_network).await,
         _ => fail_outcome(backend, "unsupported backend"),
     }
 }
@@ -450,57 +452,48 @@ async fn test_lmstudio_backend(config: &Config, no_network: bool) -> TestOutcome
     }
 }
 
-async fn test_gemini_backend(config: &Config, no_network: bool) -> TestOutcome {
+async fn test_ollama_cloud_backend(config: &Config, no_network: bool) -> TestOutcome {
     let api_key = match config
         .graph
-        .gemini_api_key
+        .cloud_api_key
         .clone()
-        .or_else(|| std::env::var("SECALL_GEMINI_API_KEY").ok())
+        .or_else(|| std::env::var("OLLAMA_CLOUD_API_KEY").ok())
     {
         Some(value) if !value.is_empty() => value,
-        _ => return fail_outcome("gemini", "SECALL_GEMINI_API_KEY not set"),
+        _ => return fail_outcome("ollama_cloud", "OLLAMA_CLOUD_API_KEY not set"),
     };
 
     if no_network {
         let _ = api_key;
-        return ok_outcome("gemini", "SECALL_GEMINI_API_KEY set");
+        return ok_outcome("ollama_cloud", "OLLAMA_CLOUD_API_KEY set");
     }
 
-    let model = config
+    let base_url = config
         .graph
-        .gemini_model
+        .cloud_host
         .as_deref()
-        .unwrap_or(GRAPH_GEMINI_DEFAULT);
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
-    let payload = serde_json::json!({
-        "contents": [{
-            "role": "user",
-            "parts": [{"text": "hi"}]
-        }],
-        "generationConfig": {"maxOutputTokens": 1}
-    });
+        .unwrap_or("https://ollama.com")
+        .trim_end_matches('/');
+    let url = format!("{base_url}/api/tags");
     let client = match short_http_client() {
-        Ok(client) => client,
-        Err(err) => return fail_outcome("gemini", err),
+        Ok(c) => c,
+        Err(err) => return fail_outcome("ollama_cloud", err),
     };
 
-    match client.post(url).json(&payload).send().await {
-        Ok(resp) if resp.status().is_success() => ok_outcome(
-            "gemini",
-            format!("{} 1-token call {}", model, resp.status()),
-        ),
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            fail_outcome(
-                "gemini",
-                format!("{} {}", status, truncate_for_display(&body)),
-            )
+    match client
+        .get(&url)
+        .bearer_auth(&api_key)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+            ok_outcome("ollama_cloud", format!("reachable ({})", resp.status()))
         }
-        Err(err) => fail_outcome("gemini", err.to_string()),
+        Ok(resp) => fail_outcome(
+            "ollama_cloud",
+            format!("{} — check OLLAMA_CLOUD_API_KEY", resp.status()),
+        ),
+        Err(err) => fail_outcome("ollama_cloud", err.to_string()),
     }
 }
 
@@ -653,11 +646,17 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
         "graph.anthropic_model" => {
             config.graph.anthropic_model = Some(value.to_string());
         }
-        "graph.gemini_model" => {
-            config.graph.gemini_model = Some(value.to_string());
+        "graph.cloud_host" => {
+            config.graph.cloud_host = Some(value.to_string());
         }
-        "graph.gemini_api_key" => {
-            config.graph.gemini_api_key = Some(value.to_string());
+        "graph.cloud_model" => {
+            config.graph.cloud_model = Some(value.to_string());
+        }
+        "log.cloud_host" => {
+            config.log.cloud_host = Some(value.to_string());
+        }
+        "log.cloud_model" => {
+            config.log.cloud_model = Some(value.to_string());
         }
         "log.backend" => {
             config.log.backend = Some(value.to_string());

@@ -42,6 +42,8 @@ pub struct SearchFilters {
     /// 검색 대상 세션 ID 허용 목록 — graph_filter 해석 결과가 여기에 삽입됨
     /// None = 제한 없음, Some([]) = 결과 없음 (일치하는 그래프 노드 없음)
     pub session_ids_allowlist: Option<Vec<String>>,
+    /// P45 — true 면 archived 세션 포함. 기본 false (제외).
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +54,8 @@ pub struct SessionMeta {
     pub date: String,
     pub vault_path: Option<String>,
     pub session_type: String,
+    /// P45 — vault SSOT archive 상태. vector passes_filters 에서 사용.
+    pub is_archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -233,6 +237,8 @@ mod tests {
             start_time: Utc.with_ymd_and_hms(2026, 4, 5, 0, 0, 0).unwrap(),
             end_time: None,
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
             turns: vec![Turn {
                 index: 0,
                 role: Role::User,
@@ -339,6 +345,8 @@ mod tests {
                 .collect(),
             total_tokens: TokenUsage::default(),
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         }
     }
 
@@ -423,5 +431,44 @@ mod tests {
         };
         let results = indexer.search(&db, "rust", 10, &filters).unwrap();
         assert!(results.is_empty(), "빈 allowlist는 결과 없음이어야 함");
+    }
+
+    #[test]
+    fn test_bm25_search_excludes_archived() {
+        let db = Database::open_memory().unwrap();
+        let tok = LinderaKoTokenizer::new().unwrap();
+        let indexer = Bm25Indexer::new(Box::new(tok));
+
+        let session = make_session("sess-arc-bm25", "proj", "unique-token-xyz archived content");
+        indexer.index_session(&db, &session).unwrap();
+
+        // archive 처리: is_archived = 1 로 직접 업데이트
+        db.conn()
+            .execute(
+                "UPDATE sessions SET is_archived = 1 WHERE id = 'sess-arc-bm25'",
+                [],
+            )
+            .unwrap();
+
+        let filters = SearchFilters::default(); // include_archived=false
+        let hits = indexer
+            .search(&db, "unique-token-xyz", 10, &filters)
+            .unwrap();
+        assert!(
+            hits.iter().all(|h| h.session_id != "sess-arc-bm25"),
+            "archived session should be excluded by default"
+        );
+
+        let filters_inc = SearchFilters {
+            include_archived: true,
+            ..Default::default()
+        };
+        let hits_inc = indexer
+            .search(&db, "unique-token-xyz", 10, &filters_inc)
+            .unwrap();
+        assert!(
+            hits_inc.iter().any(|h| h.session_id == "sess-arc-bm25"),
+            "archived session should appear with include_archived=true"
+        );
     }
 }

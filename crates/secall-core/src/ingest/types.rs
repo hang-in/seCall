@@ -43,6 +43,10 @@ pub struct Session {
     pub total_tokens: TokenUsage,
     /// 세션 분류 레이블 (e.g. "interactive", "automated"). 기본값: "interactive"
     pub session_type: String,
+    /// P45 — archive 상태. vault frontmatter SSOT 와 동기화.
+    pub archived: bool,
+    /// archive 된 시각 (archived=true 일 때만 Some)
+    pub archived_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -109,27 +109,37 @@ export default function SettingsRoute() {
       const urlError = validateHttpUrl(graphForm.ollama_url ?? "");
       const ollamaModelError = validateModelName(graphForm.ollama_model ?? "");
       const anthropicModelError = validateModelName(graphForm.anthropic_model ?? "");
-      const geminiModelError = validateModelName(graphForm.gemini_model ?? "");
+      const cloudModelError = validateModelName(graphForm.cloud_model ?? "");
+      const cloudHostError = validateHttpUrl(graphForm.cloud_host ?? "");
       if (urlError) graph.push(`ollama_url: ${urlError}`);
       if (ollamaModelError) graph.push(`ollama_model: ${ollamaModelError}`);
       if (anthropicModelError) graph.push(`anthropic_model: ${anthropicModelError}`);
-      if (geminiModelError) graph.push(`gemini_model: ${geminiModelError}`);
+      if (cloudModelError) graph.push(`cloud_model: ${cloudModelError}`);
+      if (cloudHostError) graph.push(`cloud_host: ${cloudHostError}`);
     }
 
     if (logForm) {
       const modelError = validateModelName(logForm.model ?? "");
       const urlError = validateHttpUrl(logForm.api_url ?? "");
+      const cloudModelError = validateModelName(logForm.cloud_model ?? "");
+      const cloudHostError = validateHttpUrl(logForm.cloud_host ?? "");
       if (modelError) log.push(`model: ${modelError}`);
       if (urlError) log.push(`api_url: ${urlError}`);
+      if (cloudModelError) log.push(`cloud_model: ${cloudModelError}`);
+      if (cloudHostError) log.push(`cloud_host: ${cloudHostError}`);
     }
 
     if (embeddingForm) {
       const ollamaModelError = validateModelName(embeddingForm.ollama_model ?? "");
       const openAiModelError = validateModelName(embeddingForm.openai_model ?? "");
       const urlError = validateHttpUrl(embeddingForm.ollama_url ?? "");
+      const cloudHostError = validateHttpUrl(embeddingForm.cloud_host ?? "");
+      const cloudModelError = validateModelName(embeddingForm.cloud_model ?? "");
       if (ollamaModelError) embedding.push(`ollama_model: ${ollamaModelError}`);
       if (openAiModelError) embedding.push(`openai_model: ${openAiModelError}`);
       if (urlError) embedding.push(`ollama_url: ${urlError}`);
+      if (cloudHostError) embedding.push(`cloud_host: ${cloudHostError}`);
+      if (cloudModelError) embedding.push(`cloud_model: ${cloudModelError}`);
     }
 
     return { wiki, graph, log, embedding };
@@ -185,7 +195,7 @@ export default function SettingsRoute() {
       <MaskedKeyInfoModal
         open={maskedModalOpen}
         onOpenChange={setMaskedModalOpen}
-        envVar="SECALL_GEMINI_API_KEY"
+        envVar="OLLAMA_CLOUD_API_KEY"
       />
 
       <div className="mx-auto max-w-6xl px-ds-6 py-ds-6">
@@ -329,7 +339,7 @@ export default function SettingsRoute() {
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {["ollama", "anthropic", "gemini", "lmstudio", "disabled"].map((item) => (
+                        {["ollama", "anthropic", "ollama_cloud", "lmstudio", "disabled"].map((item) => (
                           <SelectItem key={item} value={item}>{item}</SelectItem>
                         ))}
                       </SelectContent>
@@ -373,21 +383,36 @@ export default function SettingsRoute() {
                       />
                     </Field>
                     <Field
-                      label="Gemini model"
-                      error={fieldError(validateModelName(graphForm.gemini_model ?? ""))}
+                      label="Cloud host"
+                      error={fieldError(validateHttpUrl(graphForm.cloud_host ?? ""))}
                     >
                       <Input
-                        aria-label="Gemini model"
-                        value={graphForm.gemini_model ?? ""}
+                        aria-label="Cloud host"
+                        value={graphForm.cloud_host ?? ""}
                         onChange={(e) =>
-                          setGraphForm((prev) => (prev ? { ...prev, gemini_model: e.target.value } : prev))
+                          setGraphForm((prev) => (prev ? { ...prev, cloud_host: e.target.value } : prev))
                         }
                         disabled={readOnly}
+                        placeholder="https://ollama.com"
+                      />
+                    </Field>
+                    <Field
+                      label="Cloud model"
+                      error={fieldError(validateModelName(graphForm.cloud_model ?? ""))}
+                    >
+                      <Input
+                        aria-label="Cloud model"
+                        value={graphForm.cloud_model ?? ""}
+                        onChange={(e) =>
+                          setGraphForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        }
+                        disabled={readOnly}
+                        placeholder="gemma4:31b-cloud"
                       />
                     </Field>
                   </SettingsGrid>
                   <Field
-                    label="Gemini API key"
+                    label="Ollama Cloud API key"
                     hint="환경변수 또는 .env 에서만 관리합니다."
                   >
                     <button
@@ -396,7 +421,7 @@ export default function SettingsRoute() {
                       onClick={() => setMaskedModalOpen(true)}
                     >
                       <Input
-                        aria-label="Gemini API key"
+                        aria-label="Ollama Cloud API key"
                         value="<masked>"
                         readOnly
                         className="cursor-pointer"
@@ -428,7 +453,7 @@ export default function SettingsRoute() {
                     >
                       <SelectTrigger><SelectValue placeholder="(graph fallback)" /></SelectTrigger>
                       <SelectContent>
-                        {["claude", "codex", "haiku", "ollama", "lmstudio"].map((item) => (
+                        {["claude", "codex", "haiku", "ollama", "ollama_cloud", "lmstudio"].map((item) => (
                           <SelectItem key={item} value={item}>{item}</SelectItem>
                         ))}
                       </SelectContent>
@@ -466,6 +491,34 @@ export default function SettingsRoute() {
                         disabled={readOnly}
                       />
                     </Field>
+                    <Field
+                      label="Cloud host"
+                      error={fieldError(validateHttpUrl(logForm.cloud_host ?? ""))}
+                    >
+                      <Input
+                        aria-label="Log cloud host"
+                        value={logForm.cloud_host ?? ""}
+                        onChange={(e) =>
+                          setLogForm((prev) => (prev ? { ...prev, cloud_host: e.target.value } : prev))
+                        }
+                        disabled={readOnly}
+                        placeholder="https://ollama.com"
+                      />
+                    </Field>
+                    <Field
+                      label="Cloud model"
+                      error={fieldError(validateModelName(logForm.cloud_model ?? ""))}
+                    >
+                      <Input
+                        aria-label="Log cloud model"
+                        value={logForm.cloud_model ?? ""}
+                        onChange={(e) =>
+                          setLogForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        }
+                        disabled={readOnly}
+                        placeholder="kimi-k2.6:cloud"
+                      />
+                    </Field>
                   </SettingsGrid>
                   <SaveRow
                     disabled={saveDisabled}
@@ -491,7 +544,7 @@ export default function SettingsRoute() {
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {["ollama", "ort", "openai", "openvino"].map((item) => (
+                        {["ollama", "ort", "openai", "openvino", "ollama_cloud"].map((item) => (
                           <SelectItem key={item} value={item}>{item}</SelectItem>
                         ))}
                       </SelectContent>
@@ -544,6 +597,60 @@ export default function SettingsRoute() {
                         }
                         disabled={readOnly}
                       />
+                    </Field>
+                    <Field label="Pool size">
+                      <Input
+                        aria-label="Embedding pool size"
+                        type="number"
+                        min={1}
+                        value={embeddingForm.pool_size ?? ""}
+                        onChange={(e) =>
+                          setEmbeddingForm((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  pool_size: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                                }
+                              : prev,
+                          )
+                        }
+                        disabled={readOnly}
+                      />
+                    </Field>
+                    <Field
+                      label="Embedding cloud host"
+                      error={fieldError(validateHttpUrl(embeddingForm.cloud_host ?? ""))}
+                    >
+                      <Input
+                        aria-label="Embedding cloud host"
+                        value={embeddingForm.cloud_host ?? ""}
+                        onChange={(e) =>
+                          setEmbeddingForm((prev) => (prev ? { ...prev, cloud_host: e.target.value } : prev))
+                        }
+                        disabled={readOnly}
+                      />
+                    </Field>
+                    <Field
+                      label="Embedding cloud model"
+                      error={fieldError(validateModelName(embeddingForm.cloud_model ?? ""))}
+                    >
+                      <Input
+                        aria-label="Embedding cloud model"
+                        value={embeddingForm.cloud_model ?? ""}
+                        onChange={(e) =>
+                          setEmbeddingForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        }
+                        disabled={readOnly}
+                      />
+                    </Field>
+                    <Field label="Ollama Cloud API key">
+                      <button
+                        type="button"
+                        className="text-t-small text-accent underline"
+                        onClick={() => setMaskedModalOpen(true)}
+                      >
+                        환경변수로 관리 (OLLAMA_CLOUD_API_KEY)
+                      </button>
                     </Field>
                   </SettingsGrid>
                   <SaveRow

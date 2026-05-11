@@ -647,13 +647,17 @@ secall serve --port 8080 --allow-config-edit
 | `vault.branch` | Git 브랜치 이름 | `main` |
 | `search.tokenizer` | 토크나이저 (`lindera` / `kiwi`) | `lindera` |
 | `search.default_limit` | 검색 결과 수 | `10` |
-| `embedding.backend` | 임베딩 백엔드 (`ollama` / `ort` / `none`) | `ollama` |
+| `embedding.backend` | 임베딩 백엔드 (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`) | `ollama` |
 | `embedding.ollama_model` | Ollama 모델 이름 | `bge-m3` |
+| `embedding.pool_size` | ORT session pool 크기 (미설정 = RAM 기반 자동) | `null` |
+| `embedding.cloud_host` | Ollama Cloud API 호스트 | `https://ollama.com` |
+| `embedding.cloud_model` | Ollama Cloud embedding 모델 이름 | `null` |
 | `output.timezone` | 타임존 (IANA) | `UTC` |
 | `ingest.classification.default` | 분류 규칙 미매칭 시 기본 session_type | `interactive` |
 | `ingest.classification.skip_embed_types` | 임베딩을 스킵할 session_type 목록 | `[]` |
-| `graph.semantic_backend` | 시맨틱 엣지 추출 백엔드 (`gemini` / `ollama` / `lmstudio` / `none`) | `none` |
-| `graph.gemini_model` | Gemini 모델 이름 | `gemini-2.5-flash` |
+| `graph.semantic_backend` | 시맨틱 엣지 추출 백엔드 (`ollama_cloud` / `ollama` / `lmstudio` / `anthropic` / `none`) | `none` |
+| `graph.cloud_model` | Ollama Cloud 시맨틱 모델 | `gemma4:31b-cloud` |
+| `graph.cloud_host` | Ollama Cloud API 호스트 | `https://ollama.com` |
 | `graph.ollama_model` | Ollama/LM Studio 시맨틱 모델 | `gemma4:e4b` / `gemma-4-e4b-it` |
 | `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
 | `wiki.review_backend` | 위키 review 백엔드 (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `wiki.default_backend` 폴백 |
@@ -733,43 +737,7 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 ## 아키텍처
 
-```
-┌─────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-│  Claude Code │  │ Codex CLI │  │Gemini CLI│  │claude.ai │  │ ChatGPT  │
-│    (JSONL)   │  │  (JSONL)  │  │  (JSON)  │  │JSON (ZIP)│  │JSON (ZIP)│
-└──────┬───────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘
-       │               │             │              │              │
-       └───────┬───────┴─────────────┴──────────────┴──────────────┘
-               │
-         ┌─────▼──────┐
-         │   파서들     │  claude.rs / codex.rs / gemini.rs / claude_ai.rs / chatgpt.rs
-         └─────┬──────┘
-                    │
-          ┌─────────▼─────────┐
-          │   통합 세션 모델    │  Session → Turn → Action
-          └─────────┬─────────┘
-                    │
-       ┌────────────┼────────────┐
-       │            │            │
-  ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
-  │ SQLite  │ │  볼트   │ │  벡터   │
-  │  FTS5   │ │  (MD)   │ │  스토어 │
-  │  BM25   │ │Obsidian │ │ BGE-M3  │
-  └────┬────┘ └─────────┘ └────┬────┘
-       │                       │
-       └───────────┬───────────┘
-                   │
-            ┌──────▼──────┐
-            │ 하이브리드 RRF │  k=60
-            └──────┬──────┘
-                   │
-          ┌────────┼────────┐
-          │        │        │
-     ┌────▼──┐ ┌──▼───┐ ┌──▼──┐
-     │  CLI  │ │ MCP  │ │위키 │
-     │recall │ │서버   │ │에이전트│
-     └───────┘ └──────┘ └─────┘
-```
+![seCall 아키텍처](arch_v0.png)
 
 ## 기술 스택
 

@@ -639,6 +639,7 @@ fn build_wiki_backend(
                     .unwrap_or_else(|| "http://localhost:11434".to_string()),
                 model: cfg.model.unwrap_or_else(|| "llama3".to_string()),
                 max_tokens: cfg.max_tokens,
+                api_key: None,
             }))
         }
         "lmstudio" => {

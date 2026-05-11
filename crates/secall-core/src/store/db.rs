@@ -123,6 +123,26 @@ impl Database {
         if current < 9 {
             self.conn.execute_batch(CREATE_WIKI_VECTORS)?;
         }
+        if current < 10 {
+            if !self.column_exists("sessions", "is_archived")? {
+                self.conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+            if !self.column_exists("sessions", "archived_at")? {
+                self.conn
+                    .execute("ALTER TABLE sessions ADD COLUMN archived_at TEXT", [])?;
+            }
+            self.conn.execute(
+                "UPDATE sessions SET is_archived = 0 WHERE is_archived IS NULL",
+                [],
+            )?;
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_archived \
+                 ON sessions(is_archived) WHERE is_archived = 1;",
+            )?;
+        }
         if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO config(key, value) VALUES ('schema_version', ?1)",
@@ -314,6 +334,8 @@ mod tests {
                 cached: 0,
             },
             session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
         }
     }
 
@@ -409,6 +431,47 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fav, 0);
+    }
+
+    #[test]
+    fn test_migration_to_v10_adds_archive_columns() {
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, agent TEXT NOT NULL, model TEXT, project TEXT,
+                cwd TEXT, git_branch TEXT, start_time TEXT NOT NULL, end_time TEXT,
+                turn_count INTEGER DEFAULT 0, tokens_in INTEGER DEFAULT 0,
+                tokens_out INTEGER DEFAULT 0, tools_used TEXT, tags TEXT,
+                vault_path TEXT, host TEXT, summary TEXT, ingested_at TEXT NOT NULL,
+                status TEXT DEFAULT 'raw', session_type TEXT DEFAULT 'interactive',
+                is_favorite INTEGER DEFAULT 0, notes TEXT, semantic_extracted_at INTEGER
+            );
+            CREATE TABLE turns (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER NOT NULL, role TEXT NOT NULL, timestamp TEXT, content TEXT NOT NULL, has_tool INTEGER DEFAULT 0, tool_names TEXT, thinking TEXT, tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0, UNIQUE(session_id, turn_index));
+            CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
+            INSERT INTO config(key, value) VALUES ('schema_version', '9');
+            INSERT INTO sessions(id, agent, start_time, ingested_at) VALUES ('test-arc', 'claude-code', '2026-05-01T00:00:00Z', '2026-05-02T00:00:00Z');",
+        )
+        .unwrap();
+
+        let db = Database::from_connection(conn);
+        db.migrate().unwrap();
+
+        assert!(db.column_exists("sessions", "is_archived").unwrap());
+        assert!(db.column_exists("sessions", "archived_at").unwrap());
+        assert_eq!(
+            db.schema_version().unwrap(),
+            crate::store::schema::CURRENT_SCHEMA_VERSION
+        );
+        let archived: i64 = db
+            .conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'test-arc'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 0);
     }
 
     // ─── CRUD tests ──────────────────────────────────────────────────────────

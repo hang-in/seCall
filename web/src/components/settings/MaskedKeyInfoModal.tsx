@@ -17,7 +17,7 @@ export function MaskedKeyInfoModal({ open, onOpenChange, envVar }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader className="space-y-ds-1">
-          <DialogTitle className="text-t-h1">Gemini API key 안내</DialogTitle>
+          <DialogTitle className="text-t-h1">{envVar} 안내</DialogTitle>
           <DialogDescription className="text-t-small text-text-3">
             보안상 이 값은 설정 화면에서 직접 편집하지 않고 환경변수나 `.env` 파일로만 관리합니다.
           </DialogDescription>
