@@ -17,14 +17,15 @@ impl WikiBackend for OllamaBackend {
 
     async fn generate(&self, prompt: &str) -> anyhow::Result<String> {
         let client = reqwest::Client::new();
-        let mut req = client
-            .post(format!("{}/api/generate", self.api_url))
-            .json(&serde_json::json!({
-                "model": self.model,
-                "prompt": prompt,
-                "stream": false,
-                "options": { "num_predict": self.max_tokens }
-            }));
+        let mut req =
+            client
+                .post(format!("{}/api/generate", self.api_url))
+                .json(&serde_json::json!({
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": false,
+                    "options": { "num_predict": self.max_tokens }
+                }));
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
@@ -78,7 +79,11 @@ mod tests {
         };
 
         let result = backend.generate("test prompt").await;
-        assert!(result.is_ok(), "generate should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "generate should succeed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), "wiki content");
         mock.assert_async().await;
     }
@@ -102,7 +107,11 @@ mod tests {
         };
 
         let result = backend.generate("test prompt").await;
-        assert!(result.is_ok(), "generate without api_key should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "generate without api_key should succeed: {:?}",
+            result.err()
+        );
         mock.assert_async().await;
     }
 

@@ -622,10 +622,7 @@ path = "/tmp/test-vault"
         std::env::remove_var("SECALL_GRAPH_BACKEND");
         std::env::remove_var("SECALL_GRAPH_MODEL");
         // ollama_cloud 일 때 SECALL_GRAPH_MODEL → cloud_model 에 저장돼야 함
-        assert_eq!(
-            config.graph.cloud_model,
-            Some("gemma4:custom".to_string())
-        );
+        assert_eq!(config.graph.cloud_model, Some("gemma4:custom".to_string()));
         // ollama_model 에는 저장되지 않아야 함
         assert_eq!(config.graph.ollama_model, None);
     }
@@ -640,10 +637,7 @@ path = "/tmp/test-vault"
             config.graph.cloud_api_key,
             Some("test-cloud-key".to_string())
         );
-        assert_eq!(
-            config.log.cloud_api_key,
-            Some("test-cloud-key".to_string())
-        );
+        assert_eq!(config.log.cloud_api_key, Some("test-cloud-key".to_string()));
         assert_eq!(
             config.embedding.cloud_api_key,
             Some("test-cloud-key".to_string()),
@@ -670,13 +664,20 @@ pool_size = 2
         std::env::set_var("SECALL_CONFIG_PATH", &path);
         let config = Config::load_or_default();
         std::env::remove_var("SECALL_CONFIG_PATH");
-        assert_eq!(config.embedding.pool_size, Some(2), "pool_size should round-trip as Some(2)");
+        assert_eq!(
+            config.embedding.pool_size,
+            Some(2),
+            "pool_size should round-trip as Some(2)"
+        );
     }
 
     #[test]
     fn test_embedding_pool_size_default_is_none() {
         let config = Config::default();
-        assert_eq!(config.embedding.pool_size, None, "pool_size default should be None (auto-detect)");
+        assert_eq!(
+            config.embedding.pool_size, None,
+            "pool_size default should be None (auto-detect)"
+        );
     }
 
     #[test]

@@ -452,12 +452,24 @@ backend = "ollama"
     assert_eq!(status, StatusCode::OK, "PATCH embedding should return 200");
 
     let saved = std::fs::read_to_string(&config_path).expect("read saved config");
-    assert!(saved.contains(r#"backend = "ollama_cloud""#), "backend should be updated");
-    assert!(saved.contains(r#"cloud_host = "https://ollama.com""#), "cloud_host should be saved");
-    assert!(saved.contains(r#"cloud_model = "bge-m3""#), "cloud_model should be saved");
+    assert!(
+        saved.contains(r#"backend = "ollama_cloud""#),
+        "backend should be updated"
+    );
+    assert!(
+        saved.contains(r#"cloud_host = "https://ollama.com""#),
+        "cloud_host should be saved"
+    );
+    assert!(
+        saved.contains(r#"cloud_model = "bge-m3""#),
+        "cloud_model should be saved"
+    );
     assert!(saved.contains("pool_size = 2"), "pool_size should be saved");
     // cloud_api_key was not in PATCH body — must not appear in saved file
-    assert!(!saved.contains("cloud_api_key"), "cloud_api_key must not appear when not patched");
+    assert!(
+        !saved.contains("cloud_api_key"),
+        "cloud_api_key must not appear when not patched"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -483,7 +495,10 @@ pool_size = 4
     std::env::remove_var("SECALL_CONFIG_PATH");
 
     assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
-    assert_eq!(body["embedding"]["pool_size"], 4, "pool_size should be returned as number 4");
+    assert_eq!(
+        body["embedding"]["pool_size"], 4,
+        "pool_size should be returned as number 4"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -509,8 +524,7 @@ path = "/tmp/test-vault"
 
     assert_eq!(status, StatusCode::OK, "expected 200, got {status}: {body}");
     assert_eq!(
-        body["env_indicators"]["OLLAMA_CLOUD_API_KEY"],
-        true,
+        body["env_indicators"]["OLLAMA_CLOUD_API_KEY"], true,
         "OLLAMA_CLOUD_API_KEY set → env_indicator should be true"
     );
 }

@@ -422,7 +422,10 @@ pub async fn create_vector_indexer(config: &Config) -> Option<VectorIndexer> {
             let pool = resolve_pool_size(config);
             match OrtEmbedder::with_pool_size(&model_dir, pool) {
                 Ok(e) => {
-                    tracing::info!(pool_size = pool, "ort ONNX loaded, local vector search enabled");
+                    tracing::info!(
+                        pool_size = pool,
+                        "ort ONNX loaded, local vector search enabled"
+                    );
                     VectorIndexer::new(Box::new(e))
                 }
                 Err(e) => {
@@ -523,7 +526,10 @@ async fn try_ort_cpu_fallback(config: &Config) -> Option<VectorIndexer> {
     let pool = resolve_pool_size(config);
     match OrtEmbedder::with_pool_size(&model_dir, pool) {
         Ok(e) => {
-            tracing::info!(pool_size = pool, "ORT CPU fallback loaded, vector search enabled");
+            tracing::info!(
+                pool_size = pool,
+                "ORT CPU fallback loaded, vector search enabled"
+            );
             let indexer = VectorIndexer::new(Box::new(e));
             #[cfg(not(target_os = "windows"))]
             let indexer = attach_ann_index(indexer);
@@ -767,7 +773,10 @@ mod tests {
         let mut config = crate::vault::config::Config::default();
         config.embedding.pool_size = None;
         let size = resolve_pool_size(&config);
-        assert!(size >= 1 && size <= 4, "auto pool_size should be 1–4, got {size}");
+        assert!(
+            size >= 1 && size <= 4,
+            "auto pool_size should be 1–4, got {size}"
+        );
     }
 
     // ─── P48: create_vector_indexer ollama_cloud arm 회귀 테스트 ─────────────

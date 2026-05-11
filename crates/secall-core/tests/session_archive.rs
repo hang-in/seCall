@@ -93,15 +93,14 @@ fn archive_round_trip_updates_db_and_vault_and_excludes_from_list() {
         .expect("archive_session");
 
     // DB: is_archived = 1
-    let is_archived: i64 = h
-        .db
-        .conn()
-        .query_row(
-            "SELECT is_archived FROM sessions WHERE id = 'sess-rt-a'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let is_archived: i64 =
+        h.db.conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-rt-a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
     assert_eq!(is_archived, 1);
 
     // Vault frontmatter: archived: true + archived_at 존재
@@ -153,15 +152,14 @@ fn restore_round_trip_clears_db_and_vault() {
         .expect("restore_session");
 
     // DB: is_archived = 0
-    let is_archived: i64 = h
-        .db
-        .conn()
-        .query_row(
-            "SELECT is_archived FROM sessions WHERE id = 'sess-rt-r'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let is_archived: i64 =
+        h.db.conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-rt-r'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
     assert_eq!(is_archived, 0);
 
     // Vault frontmatter: archived: 라인 없어야 함
@@ -207,15 +205,14 @@ fn cross_host_archive_via_re_ingest_syncs_db() {
     h.db.insert_session_from_vault(&fm, &body, &vault_rel)
         .expect("re-ingest");
 
-    let is_archived: i64 = h
-        .db
-        .conn()
-        .query_row(
-            "SELECT is_archived FROM sessions WHERE id = 'sess-xh'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
+    let is_archived: i64 =
+        h.db.conn()
+            .query_row(
+                "SELECT is_archived FROM sessions WHERE id = 'sess-xh'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
     assert_eq!(is_archived, 1, "re-ingest must sync archived=true to DB");
 }
 

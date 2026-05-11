@@ -3,8 +3,8 @@ use serde::Deserialize;
 
 use crate::ingest::markdown::SessionFrontmatter;
 use crate::llm::defaults::{
-    warn_using_default, GRAPH_ANTHROPIC_DEFAULT, GRAPH_LMSTUDIO_DEFAULT, GRAPH_OLLAMA_CLOUD_DEFAULT,
-    GRAPH_OLLAMA_DEFAULT,
+    warn_using_default, GRAPH_ANTHROPIC_DEFAULT, GRAPH_LMSTUDIO_DEFAULT,
+    GRAPH_OLLAMA_CLOUD_DEFAULT, GRAPH_OLLAMA_DEFAULT,
 };
 use crate::store::Database;
 use crate::vault::config::GraphConfig;
@@ -383,24 +383,18 @@ pub(crate) async fn extract_with_llm(
             extract_with_openai_compat(fm, body, base_url, model).await
         }
         "ollama_cloud" => {
-            let base_url = config
-                .cloud_host
-                .as_deref()
-                .unwrap_or("https://ollama.com");
+            let base_url = config.cloud_host.as_deref().unwrap_or("https://ollama.com");
             let model = config.cloud_model.as_deref().unwrap_or_else(|| {
                 warn_using_default("graph.cloud_model", GRAPH_OLLAMA_CLOUD_DEFAULT);
                 GRAPH_OLLAMA_CLOUD_DEFAULT
             });
-            let api_key = config
-                .cloud_api_key
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "ollama cloud api key not set \
+            let api_key = config.cloud_api_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "ollama cloud api key not set \
                          (set `OLLAMA_CLOUD_API_KEY` env or \
                          `[graph].cloud_api_key` in config.toml)"
-                    )
-                })?;
+                )
+            })?;
             extract_with_ollama_cloud(fm, body, base_url, model, api_key).await
         }
         _ => anyhow::bail!("unknown semantic_backend: {}", config.semantic_backend),
@@ -867,10 +861,15 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
             .await;
 
         let fm = make_fm("sess-cloud-01", None, None);
-        let edges =
-            extract_with_ollama_cloud(&fm, "body text", &server.url(), "gemma4:31b-cloud", "test-cloud-key")
-                .await
-                .expect("ollama_cloud extract should succeed");
+        let edges = extract_with_ollama_cloud(
+            &fm,
+            "body text",
+            &server.url(),
+            "gemma4:31b-cloud",
+            "test-cloud-key",
+        )
+        .await
+        .expect("ollama_cloud extract should succeed");
         assert!(edges.is_empty());
         mock.assert_async().await;
     }
@@ -886,10 +885,15 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
             .await;
 
         let fm = make_fm("sess-cloud-02", None, None);
-        let err =
-            extract_with_ollama_cloud(&fm, "body text", &server.url(), "gemma4:31b-cloud", "bad-key")
-                .await
-                .expect_err("401 should propagate as Err");
+        let err = extract_with_ollama_cloud(
+            &fm,
+            "body text",
+            &server.url(),
+            "gemma4:31b-cloud",
+            "bad-key",
+        )
+        .await
+        .expect_err("401 should propagate as Err");
         assert!(
             err.to_string().contains("401"),
             "expected status 401 in error, got: {err}"
@@ -911,10 +915,9 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
             .await;
 
         let fm = make_fm("sess-compat-01", None, None);
-        let edges =
-            extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini")
-                .await
-                .expect("openai_compat extract should succeed");
+        let edges = extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini")
+            .await
+            .expect("openai_compat extract should succeed");
         assert!(edges.is_empty());
         mock.assert_async().await;
     }

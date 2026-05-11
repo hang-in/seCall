@@ -1,8 +1,8 @@
 use anyhow::Result;
 use secall_core::{
     llm::defaults::{
-        warn_using_default, GRAPH_LMSTUDIO_DEFAULT, LOG_CONTEXT_CHAR_LIMIT, LOG_OLLAMA_CLOUD_DEFAULT,
-        LOG_OLLAMA_DEFAULT, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT,
+        warn_using_default, GRAPH_LMSTUDIO_DEFAULT, LOG_CONTEXT_CHAR_LIMIT,
+        LOG_OLLAMA_CLOUD_DEFAULT, LOG_OLLAMA_DEFAULT, WIKI_CLAUDE_DEFAULT, WIKI_CODEX_DEFAULT,
     },
     store::{get_default_db_path, Database},
     vault::Config,

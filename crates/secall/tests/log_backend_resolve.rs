@@ -125,7 +125,11 @@ async fn generate_log_body_ollama_cloud_includes_bearer_auth() {
         "2026-05-12",
     )
     .await;
-    assert!(result.is_ok(), "generate_log_body should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "generate_log_body should succeed: {:?}",
+        result.err()
+    );
     mock.assert_async().await;
 }
 
@@ -136,7 +140,9 @@ async fn generate_log_body_ollama_cloud_uses_resolve_log_model_chain() {
     // log.cloud_model 없고 graph.cloud_model 만 있는 경우
     let mock = server
         .mock("POST", "/api/generate")
-        .match_body(mockito::Matcher::Regex(r#""model":"g-cloud-model""#.to_string()))
+        .match_body(mockito::Matcher::Regex(
+            r#""model":"g-cloud-model""#.to_string(),
+        ))
         .with_status(200)
         .with_body(ollama_generate_response())
         .create_async()
@@ -157,7 +163,11 @@ async fn generate_log_body_ollama_cloud_uses_resolve_log_model_chain() {
         "2026-05-12",
     )
     .await;
-    assert!(result.is_ok(), "should use graph.cloud_model: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "should use graph.cloud_model: {:?}",
+        result.err()
+    );
     mock.assert_async().await;
 }
 
@@ -180,7 +190,9 @@ async fn generate_log_body_ollama_cloud_missing_api_key_returns_err() {
     assert!(result.is_err(), "missing api_key should return Err");
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("OLLAMA_CLOUD_API_KEY") || msg.contains("cloud_api_key") || msg.contains("api key"),
+        msg.contains("OLLAMA_CLOUD_API_KEY")
+            || msg.contains("cloud_api_key")
+            || msg.contains("api key"),
         "error message should mention missing key, got: {msg}"
     );
 }

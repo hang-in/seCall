@@ -1428,7 +1428,10 @@ mod tests {
         let db = Database::open_memory().unwrap();
 
         let result = db.archive_session("nonexistent-id", &vault, chrono_tz::UTC);
-        assert!(result.is_err(), "should return error for unknown session_id");
+        assert!(
+            result.is_err(),
+            "should return error for unknown session_id"
+        );
     }
 
     #[test]
@@ -1506,5 +1509,4 @@ mod tests {
             .unwrap();
         assert_eq!(is_archived_after, 1);
     }
-
 }

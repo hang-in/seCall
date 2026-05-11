@@ -120,7 +120,14 @@ fn short_http_client() -> std::result::Result<reqwest::Client, String> {
 pub async fn run_llm_test(backend: Option<String>, no_network: bool) -> Result<()> {
     let config = Config::load_or_default();
     let backends = match backend.as_deref() {
-        None => vec!["claude", "codex", "haiku", "ollama", "lmstudio", "ollama_cloud"],
+        None => vec![
+            "claude",
+            "codex",
+            "haiku",
+            "ollama",
+            "lmstudio",
+            "ollama_cloud",
+        ],
         Some(name @ ("claude" | "codex" | "haiku" | "ollama" | "lmstudio" | "ollama_cloud")) => {
             vec![name]
         }
@@ -480,12 +487,7 @@ async fn test_ollama_cloud_backend(config: &Config, no_network: bool) -> TestOut
         Err(err) => return fail_outcome("ollama_cloud", err),
     };
 
-    match client
-        .get(&url)
-        .bearer_auth(&api_key)
-        .send()
-        .await
-    {
+    match client.get(&url).bearer_auth(&api_key).send().await {
         Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
             ok_outcome("ollama_cloud", format!("reachable ({})", resp.status()))
         }

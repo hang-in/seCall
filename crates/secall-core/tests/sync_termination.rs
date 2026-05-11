@@ -29,7 +29,10 @@ async fn test_async_child_killed_on_drop() {
         .expect("kill -0 실행 가능해야 함")
         .success();
 
-    assert!(!alive, "kill_on_drop 으로 spawn 된 자식은 handle drop 시 종료되어야 함");
+    assert!(
+        !alive,
+        "kill_on_drop 으로 spawn 된 자식은 handle drop 시 종료되어야 함"
+    );
 }
 
 /// ClaudeBackend::generate 가 claude CLI 미설치 시 즉시 에러를 반환하고
@@ -51,8 +54,14 @@ async fn test_claude_backend_fails_fast_when_not_found() {
     let result = tokio::time::timeout(Duration::from_secs(5), backend.generate("test")).await;
 
     // timeout 이 아닌 즉시 에러여야 한다
-    assert!(result.is_ok(), "generate() 가 5초 내에 완료(에러 포함)되어야 함");
-    assert!(result.unwrap().is_err(), "claude CLI 없으면 에러를 반환해야 함");
+    assert!(
+        result.is_ok(),
+        "generate() 가 5초 내에 완료(에러 포함)되어야 함"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "claude CLI 없으면 에러를 반환해야 함"
+    );
 }
 
 /// CodexBackend::generate 가 codex CLI 미설치 시 즉시 에러를 반환하는지 검증.
@@ -71,6 +80,12 @@ async fn test_codex_backend_fails_fast_when_not_found() {
 
     let result = tokio::time::timeout(Duration::from_secs(5), backend.generate("test")).await;
 
-    assert!(result.is_ok(), "generate() 가 5초 내에 완료(에러 포함)되어야 함");
-    assert!(result.unwrap().is_err(), "codex CLI 없으면 에러를 반환해야 함");
+    assert!(
+        result.is_ok(),
+        "generate() 가 5초 내에 완료(에러 포함)되어야 함"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "codex CLI 없으면 에러를 반환해야 함"
+    );
 }

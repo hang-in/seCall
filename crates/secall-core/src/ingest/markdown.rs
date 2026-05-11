@@ -457,15 +457,17 @@ mod tests {
     fn test_render_session_archived_false_omits_field() {
         let session = make_session(vec![]);
         let md = render_session(&session, chrono_tz::Tz::UTC);
-        assert!(!md.contains("archived:"), "archived: should not appear when false");
+        assert!(
+            !md.contains("archived:"),
+            "archived: should not appear when false"
+        );
     }
 
     #[test]
     fn test_render_session_archived_true_includes_field() {
         let mut session = make_session(vec![]);
         session.archived = true;
-        session.archived_at =
-            Some(chrono::Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap());
+        session.archived_at = Some(chrono::Utc.with_ymd_and_hms(2026, 5, 12, 10, 0, 0).unwrap());
         let md = render_session(&session, chrono_tz::Tz::UTC);
         assert!(md.contains("\narchived: true\n"), "archived: true missing");
         assert!(md.contains("archived_at:"), "archived_at missing");

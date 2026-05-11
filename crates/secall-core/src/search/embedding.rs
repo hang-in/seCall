@@ -96,9 +96,7 @@ impl Embedder for OllamaEmbedder {
     }
 
     async fn is_available(&self) -> bool {
-        let mut request = self
-            .client
-            .get(format!("{}/api/tags", self.base_url));
+        let mut request = self.client.get(format!("{}/api/tags", self.base_url));
         if let Some(key) = &self.api_key {
             request = request.bearer_auth(key);
         }
@@ -164,8 +162,8 @@ impl OrtEmbedder {
         #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
         {
             use ort::execution_providers::CoreMLExecutionProvider;
-            builder = builder
-                .with_execution_providers([CoreMLExecutionProvider::default().build()])?;
+            builder =
+                builder.with_execution_providers([CoreMLExecutionProvider::default().build()])?;
         }
         let mut first_session = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)?
@@ -195,7 +193,11 @@ impl OrtEmbedder {
         tracing::info!(
             pool_size,
             dim,
-            coreml = cfg!(all(feature = "coreml", target_os = "macos", target_arch = "aarch64")),
+            coreml = cfg!(all(
+                feature = "coreml",
+                target_os = "macos",
+                target_arch = "aarch64"
+            )),
             "ORT session pool created"
         );
 
@@ -901,7 +903,10 @@ mod tests {
 
         let embedder = OllamaEmbedder::new(Some(&server.url()), None)
             .with_api_key(Some("invalid-key".to_string()));
-        assert!(!embedder.is_available().await, "401 should be treated as unavailable");
+        assert!(
+            !embedder.is_available().await,
+            "401 should be treated as unavailable"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -914,7 +919,10 @@ mod tests {
             .await;
 
         let embedder = OllamaEmbedder::new(Some(&server.url()), None);
-        assert!(!embedder.is_available().await, "404 should be treated as unavailable");
+        assert!(
+            !embedder.is_available().await,
+            "404 should be treated as unavailable"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -928,7 +936,10 @@ mod tests {
             .await;
 
         let embedder = OllamaEmbedder::new(Some(&server.url()), None);
-        assert!(embedder.is_available().await, "200 should be treated as available");
+        assert!(
+            embedder.is_available().await,
+            "200 should be treated as available"
+        );
     }
 
     #[test]

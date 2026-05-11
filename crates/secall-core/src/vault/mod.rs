@@ -142,9 +142,7 @@ fn upsert_archive_lines(
         }
     }
 
-    kept.iter()
-        .map(|l| format!("{l}\n"))
-        .collect::<String>()
+    kept.iter().map(|l| format!("{l}\n")).collect::<String>()
 }
 
 #[cfg(test)]
@@ -347,7 +345,10 @@ mod tests {
             .unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(&rel)).unwrap();
-        assert!(content.contains("\narchived: true\n"), "archived: true missing");
+        assert!(
+            content.contains("\narchived: true\n"),
+            "archived: true missing"
+        );
         assert!(content.contains("archived_at:"), "archived_at missing");
         // 본문 보존 확인
         assert!(content.contains("Test session content"));
