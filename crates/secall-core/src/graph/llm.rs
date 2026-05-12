@@ -55,7 +55,9 @@ impl LlmBackend for AnthropicGraphBackend {
             "messages": [{"role": "user", "content": user}]
         });
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .build()?;
         let resp = client
             .post(ANTHROPIC_API_URL)
             .header("x-api-key", &self.api_key)
@@ -72,11 +74,11 @@ impl LlmBackend for AnthropicGraphBackend {
         }
 
         let api_resp: AnthropicResponse = resp.json().await?;
-        Ok(api_resp
+        let first = api_resp
             .content
             .first()
-            .map(|c| c.text.clone())
-            .unwrap_or_else(|| "{}".to_string()))
+            .ok_or_else(|| anyhow::anyhow!("Anthropic API returned empty content array"))?;
+        Ok(first.text.clone())
     }
 }
 
