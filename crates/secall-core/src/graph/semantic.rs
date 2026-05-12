@@ -10,6 +10,10 @@ use crate::store::Database;
 use crate::vault::config::GraphConfig;
 
 use super::extract::{extract_semantic_edges, GraphEdge};
+use super::llm::{
+    AnthropicGraphBackend, LlmBackend, OllamaCloudGraphBackend, OllamaGraphBackend,
+    OpenAiCompatGraphBackend,
+};
 
 // ─── LLM 응답 구조 (공통) ──────────────────────────────────────────────────
 
@@ -25,46 +29,8 @@ struct SemanticEdgeItem {
     target_label: String,
 }
 
-// ─── Anthropic 응답 구조 ───────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct AnthropicResponse {
-    content: Vec<AnthropicContent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AnthropicContent {
-    text: String,
-}
-
-// ─── Ollama 응답 구조 ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct OllamaResponse {
-    message: OllamaMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaMessage {
-    content: String,
-}
-
-// ─── OpenAI-compat 응답 구조 ──────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct OpenAIResponse {
-    choices: Vec<OpenAIChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAIChoice {
-    message: OpenAIMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAIMessage {
-    content: String,
-}
+// P50-B: 백엔드별 응답 struct (AnthropicResponse / OllamaResponse / OpenAIResponse)
+// 는 graph/llm.rs 로 이동했다.
 
 // ─── 정적 프롬프트 ──────────────────────────────────────────────────────────
 
@@ -110,184 +76,10 @@ fn build_user_content(fm: &SessionFrontmatter, body: &str) -> String {
     )
 }
 
-// ─── Anthropic API 호출 ────────────────────────────────────────────────────
-
-const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
-
-async fn extract_with_anthropic(
-    fm: &SessionFrontmatter,
-    body: &str,
-    model: &str,
-) -> Result<Vec<GraphEdge>> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-
-    let user_content = build_user_content(fm, body);
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "max_tokens": 512,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_content}]
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(ANTHROPIC_API_URL)
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Anthropic API error {}: {}", status, text);
-    }
-
-    let api_resp: AnthropicResponse = resp.json().await?;
-    let text = api_resp
-        .content
-        .first()
-        .map(|c| c.text.as_str())
-        .unwrap_or("{}");
-
-    parse_llm_edges(text, &fm.session_id)
-}
-
-// ─── Ollama API 호출 ───────────────────────────────────────────────────────
-
-async fn extract_with_ollama(
-    fm: &SessionFrontmatter,
-    body: &str,
-    base_url: &str,
-    model: &str,
-) -> Result<Vec<GraphEdge>> {
-    let user_content = build_user_content(fm, body);
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "stream": false,
-        "options": {"temperature": 0.1},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
-    });
-
-    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Ollama API error {}: {}", status, text);
-    }
-
-    let ollama_resp: OllamaResponse = resp.json().await?;
-    parse_llm_edges(&ollama_resp.message.content, &fm.session_id)
-}
-
-// ─── Ollama Cloud API 호출 ───────────────────────────────────────────────────
-
-async fn extract_with_ollama_cloud(
-    fm: &SessionFrontmatter,
-    body: &str,
-    base_url: &str,
-    model: &str,
-    api_key: &str,
-) -> Result<Vec<GraphEdge>> {
-    let user_content = build_user_content(fm, body);
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "stream": false,
-        "options": {"temperature": 0.1},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
-    });
-
-    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client
-        .post(&url)
-        .bearer_auth(api_key)
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Ollama Cloud API error {}: {}", status, text);
-    }
-
-    let ollama_resp: OllamaResponse = resp.json().await?;
-    parse_llm_edges(&ollama_resp.message.content, &fm.session_id)
-}
-
-// ─── OpenAI-compat API 호출 (LM Studio 등) ────────────────────────────────
-
-async fn extract_with_openai_compat(
-    fm: &SessionFrontmatter,
-    body: &str,
-    base_url: &str,
-    model: &str,
-) -> Result<Vec<GraphEdge>> {
-    let user_content = build_user_content(fm, body);
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "temperature": 0.1,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
-    });
-
-    let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("OpenAI-compat API error {}: {}", status, text);
-    }
-
-    let openai_resp: OpenAIResponse = resp.json().await?;
-    if openai_resp.choices.is_empty() {
-        anyhow::bail!("OpenAI-compat API returned empty choices");
-    }
-    parse_llm_edges(&openai_resp.choices[0].message.content, &fm.session_id)
-}
-
-// ─── Gemini API 호출 ──────────────────────────────────────────────────────
+// P50-B: 백엔드별 HTTP 호출 함수 (extract_with_anthropic / extract_with_ollama /
+// extract_with_ollama_cloud / extract_with_openai_compat) 는 graph/llm.rs 의
+// `LlmBackend` trait + 4 struct impl 로 이동했다. 디스패치는 아래
+// `extract_with_llm` 한 곳으로 집중.
 
 // ─── LLM 응답 파싱 (공통) ──────────────────────────────────────────────────
 
@@ -352,6 +144,16 @@ pub(crate) async fn extract_with_llm(
     fm: &SessionFrontmatter,
     body: &str,
 ) -> Result<Vec<GraphEdge>> {
+    let backend: Box<dyn LlmBackend> = build_backend(config)?;
+    let user_content = build_user_content(fm, body);
+    tracing::debug!(backend = backend.name(), session = %fm.session_id, "graph semantic LLM 호출");
+    let text = backend.generate(SYSTEM_PROMPT, &user_content).await?;
+    parse_llm_edges(&text, &fm.session_id)
+}
+
+/// `config.semantic_backend` 에 맞는 `LlmBackend` 구현체를 만들어 반환한다.
+/// 모델/URL 디폴트 적용과 cloud API key 검증을 한 자리에서 처리.
+fn build_backend(config: &GraphConfig) -> Result<Box<dyn LlmBackend>> {
     match config.semantic_backend.as_str() {
         "ollama" => {
             let base_url = config
@@ -362,14 +164,22 @@ pub(crate) async fn extract_with_llm(
                 warn_using_default("graph.ollama_model", GRAPH_OLLAMA_DEFAULT);
                 GRAPH_OLLAMA_DEFAULT
             });
-            extract_with_ollama(fm, body, base_url, model).await
+            Ok(Box::new(OllamaGraphBackend {
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+            }))
         }
         "anthropic" => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
             let model = config.anthropic_model.as_deref().unwrap_or_else(|| {
                 warn_using_default("graph.anthropic_model", GRAPH_ANTHROPIC_DEFAULT);
                 GRAPH_ANTHROPIC_DEFAULT
             });
-            extract_with_anthropic(fm, body, model).await
+            Ok(Box::new(AnthropicGraphBackend {
+                api_key,
+                model: model.to_string(),
+            }))
         }
         "lmstudio" => {
             let base_url = config
@@ -380,22 +190,37 @@ pub(crate) async fn extract_with_llm(
                 warn_using_default("graph.ollama_model", GRAPH_LMSTUDIO_DEFAULT);
                 GRAPH_LMSTUDIO_DEFAULT
             });
-            extract_with_openai_compat(fm, body, base_url, model).await
+            Ok(Box::new(OpenAiCompatGraphBackend {
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+            }))
         }
         "ollama_cloud" => {
-            let base_url = config.cloud_host.as_deref().unwrap_or("https://ollama.com");
+            let base_url = config
+                .cloud_host
+                .as_deref()
+                .unwrap_or("https://ollama.com")
+                .to_string();
             let model = config.cloud_model.as_deref().unwrap_or_else(|| {
                 warn_using_default("graph.cloud_model", GRAPH_OLLAMA_CLOUD_DEFAULT);
                 GRAPH_OLLAMA_CLOUD_DEFAULT
             });
-            let api_key = config.cloud_api_key.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "ollama cloud api key not set \
+            let api_key = config
+                .cloud_api_key
+                .as_deref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
                          (set `OLLAMA_CLOUD_API_KEY` env or \
                          `[graph].cloud_api_key` in config.toml)"
-                )
-            })?;
-            extract_with_ollama_cloud(fm, body, base_url, model, api_key).await
+                    )
+                })?
+                .to_string();
+            Ok(Box::new(OllamaCloudGraphBackend {
+                base_url,
+                model: model.to_string(),
+                api_key,
+            }))
         }
         _ => anyhow::bail!("unknown semantic_backend: {}", config.semantic_backend),
     }
@@ -846,97 +671,9 @@ Added tokio and hyper dependencies. Created src/server.rs with async handler."#;
         let _ = stored; // tautology check 제거 — panic 없이 여기 도달하면 성공
     }
 
-    // ─── P48: ollama_cloud + openai_compat 신규 경로 회귀 테스트 ─────────────
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_extract_with_ollama_cloud_sends_bearer_auth_and_correct_payload() {
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/api/chat")
-            .match_header("Authorization", "Bearer test-cloud-key")
-            .match_body(Matcher::Regex(r#""model":"gemma4:31b-cloud""#.to_string()))
-            .with_status(200)
-            .with_body(ollama_response())
-            .create_async()
-            .await;
-
-        let fm = make_fm("sess-cloud-01", None, None);
-        let edges = extract_with_ollama_cloud(
-            &fm,
-            "body text",
-            &server.url(),
-            "gemma4:31b-cloud",
-            "test-cloud-key",
-        )
-        .await
-        .expect("ollama_cloud extract should succeed");
-        assert!(edges.is_empty());
-        mock.assert_async().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_extract_with_ollama_cloud_propagates_http_error() {
-        let mut server = Server::new_async().await;
-        let _mock = server
-            .mock("POST", "/api/chat")
-            .with_status(401)
-            .with_body(r#"{"error":"unauthorized"}"#)
-            .create_async()
-            .await;
-
-        let fm = make_fm("sess-cloud-02", None, None);
-        let err = extract_with_ollama_cloud(
-            &fm,
-            "body text",
-            &server.url(),
-            "gemma4:31b-cloud",
-            "bad-key",
-        )
-        .await
-        .expect_err("401 should propagate as Err");
-        assert!(
-            err.to_string().contains("401"),
-            "expected status 401 in error, got: {err}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_extract_with_openai_compat_sends_chat_completions_payload() {
-        let mut server = Server::new_async().await;
-        let mock = server
-            .mock("POST", "/v1/chat/completions")
-            .match_body(Matcher::AllOf(vec![
-                Matcher::Regex(r#""role":"system""#.to_string()),
-                Matcher::Regex(r#""role":"user""#.to_string()),
-            ]))
-            .with_status(200)
-            .with_body(openai_compat_response())
-            .create_async()
-            .await;
-
-        let fm = make_fm("sess-compat-01", None, None);
-        let edges = extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini")
-            .await
-            .expect("openai_compat extract should succeed");
-        assert!(edges.is_empty());
-        mock.assert_async().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_extract_with_openai_compat_invalid_json_returns_err() {
-        let mut server = Server::new_async().await;
-        let _mock = server
-            .mock("POST", "/v1/chat/completions")
-            .with_status(200)
-            .with_body(r#"not valid json at all"#)
-            .create_async()
-            .await;
-
-        let fm = make_fm("sess-compat-02", None, None);
-        let result =
-            extract_with_openai_compat(&fm, "body text", &server.url(), "gpt-4o-mini").await;
-        assert!(result.is_err(), "invalid JSON body should return Err");
-    }
+    // P50-B: 백엔드 직접 호출 단위 테스트 (bearer auth, endpoint matching) 는
+    // graph/llm.rs 의 `cfg(test) mod tests` 로 이동했다. 여기 남은 테스트는
+    // dispatcher (`extract_with_llm`) + parse_llm_edges 통합 검증.
 
     #[test]
     fn test_make_fm_with_summary_includes_summary_field() {
