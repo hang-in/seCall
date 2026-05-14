@@ -186,6 +186,77 @@ async fn run_update_with_sink(
         anyhow::bail!("wiki/ directory not found. Run `secall init` first.");
     }
 
+    preflight_vault_git(&config, dry_run, no_pull).await?;
+
+    // 4. 백엔드 선택: --backend 플래그 → config wiki.default_backend → "claude"
+    let backend_name = backend
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| config.wiki.default_backend.clone());
+    let resolved_model = resolve_backend_model(&config, &backend_name, model);
+
+    // 2. Load prompt — haiku 백엔드는 세션 데이터를 직접 주입
+    let prompt = if backend_name == "haiku" {
+        build_haiku_prompt(&config, &wiki_dir, session, since)?
+    } else if let Some(sid) = session {
+        load_incremental_prompt(sid)?
+    } else {
+        load_batch_prompt(since)?
+    };
+
+    // 3. dry-run: print prompt and exit
+    if dry_run {
+        println!("{prompt}");
+        return Ok(pages_written);
+    }
+
+    let target = if let Some(sid) = session {
+        format!("session {}", &sid[..sid.len().min(8)])
+    } else {
+        "all sessions".to_string()
+    };
+    eprintln!("Wiki update: {} (backend: {})", target, backend_name);
+
+    // 5. WikiBackend 인스턴스 생성
+    let backend_box = build_wiki_backend(&config, &backend_name, &resolved_model)?;
+
+    // 6. 생성 + 후처리
+    if backend_name == "haiku" && session.is_none() {
+        pages_written = process_haiku_batch(
+            &config,
+            &wiki_dir,
+            since,
+            backend_box.as_ref(),
+            review,
+            review_backend,
+            review_model,
+            sink,
+        )
+        .await?;
+    } else if backend_name == "haiku" {
+        pages_written = process_haiku_incremental(
+            &config,
+            &wiki_dir,
+            session.unwrap(),
+            &prompt,
+            backend_box.as_ref(),
+            review,
+            review_backend,
+            review_model,
+            sink,
+        )
+        .await?;
+    } else {
+        process_generic_backend(&prompt, backend_box.as_ref(), &backend_name, sink).await?;
+    }
+
+    Ok(pages_written)
+}
+
+/// `run_update_with_sink` 분해 (helper 1/4): vault git preflight.
+///
+/// - conflicted state 검사 → bail
+/// - dry_run/no_pull 가 아니면 auto_commit + pull + wiki 충돌 자동 해결
+async fn preflight_vault_git(config: &Config, dry_run: bool, no_pull: bool) -> Result<()> {
     let vault_git = VaultGit::new(&config.vault.path, &config.vault.branch);
     if vault_git.is_git_repo() {
         if let Some(msg) = vault_git.check_conflicted_state() {
@@ -223,350 +294,275 @@ async fn run_update_with_sink(
                         wiki_conflicts.len()
                     );
                     let resolved =
-                        auto_resolve_wiki_conflicts(&config, &vault_git, &wiki_conflicts).await?;
+                        auto_resolve_wiki_conflicts(config, &vault_git, &wiki_conflicts).await?;
                     eprintln!("Resolved {resolved} wiki conflict(s).");
                 }
             }
         }
     }
+    Ok(())
+}
 
-    // 4. 백엔드 선택: --backend 플래그 → config wiki.default_backend → "claude"
-    let backend_name = backend
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| config.wiki.default_backend.clone());
-    let resolved_model = resolve_backend_model(&config, &backend_name, model);
-
-    // 2. Load prompt — haiku 백엔드는 세션 데이터를 직접 주입
-    let prompt = if backend_name == "haiku" {
-        build_haiku_prompt(&config, &wiki_dir, session, since)?
-    } else if let Some(sid) = session {
-        load_incremental_prompt(sid)?
-    } else {
-        load_batch_prompt(since)?
-    };
-
-    // 3. dry-run: print prompt and exit
-    if dry_run {
-        println!("{prompt}");
+/// `run_update_with_sink` 분해 (helper 2/4): haiku 배치 모드 — 프로젝트별 개별 호출.
+///
+/// 세션을 프로젝트별로 묶어 각각 LLM 호출하고 page 작성 + 옵션 review.
+/// 반환값은 새로 작성된 페이지 개수 (review-regen 은 카운트 X).
+#[allow(clippy::too_many_arguments)]
+async fn process_haiku_batch(
+    config: &Config,
+    wiki_dir: &std::path::Path,
+    since: Option<&str>,
+    backend: &dyn secall_core::wiki::WikiBackend,
+    review: bool,
+    review_backend: Option<&str>,
+    review_model: Option<&str>,
+    sink: Option<&dyn ProgressSink>,
+) -> Result<usize> {
+    let mut pages_written: usize = 0;
+    let db = Database::open(&get_default_db_path())?;
+    let since_date = since.unwrap_or("2000-01-01");
+    let sessions = db.get_sessions_since(since_date)?;
+    if sessions.is_empty() {
+        eprintln!("  No sessions found since {}", since_date);
         return Ok(pages_written);
     }
 
-    let target = if let Some(sid) = session {
-        format!("session {}", &sid[..sid.len().min(8)])
-    } else {
-        "all sessions".to_string()
-    };
-    eprintln!("Wiki update: {} (backend: {})", target, backend_name);
+    let mut by_project: std::collections::BTreeMap<
+        String,
+        Vec<&secall_core::store::db::SessionMeta>,
+    > = std::collections::BTreeMap::new();
+    for s in &sessions {
+        let proj = s.project.as_deref().unwrap_or("(기타)").to_string();
+        by_project.entry(proj).or_default().push(s);
+    }
 
-    // 5. WikiBackend 인스턴스 생성
-    let backend_box = build_wiki_backend(&config, &backend_name, &resolved_model)?;
+    let resolved_review_backend = resolve_review_backend(review_backend, config);
+    let resolved_model = resolve_review_model(review_model, config, &resolved_review_backend);
+    let reviewer = build_reviewer(config, &resolved_review_backend, &resolved_model)?;
 
-    // 6. 생성 + 후처리
-    if backend_name == "haiku" && session.is_none() {
-        // ── 배치 모드: 프로젝트별 개별 호출 ──
-        let db = Database::open(&get_default_db_path())?;
-        let since_date = since.unwrap_or("2000-01-01");
-        let sessions = db.get_sessions_since(since_date)?;
-        if sessions.is_empty() {
-            eprintln!("  No sessions found since {}", since_date);
-            return Ok(pages_written);
-        }
+    // Gemini PR #59: 매 페이지 작성마다 wiki/ 전체를 재귀 스캔하면 O(N²) 부하.
+    // 루프 시작 시 한 번 수집한 뒤, 새 페이지를 작성할 때마다 list 에 추가한다.
+    let mut wiki_pages = collect_wiki_pages(wiki_dir);
 
-        let mut by_project: std::collections::BTreeMap<
-            String,
-            Vec<&secall_core::store::db::SessionMeta>,
-        > = std::collections::BTreeMap::new();
-        for s in &sessions {
-            let proj = s.project.as_deref().unwrap_or("(기타)").to_string();
-            by_project.entry(proj).or_default().push(s);
-        }
-
-        let resolved_review_backend = resolve_review_backend(review_backend, &config);
-        let resolved_model = resolve_review_model(review_model, &config, &resolved_review_backend);
-        let reviewer = build_reviewer(&config, &resolved_review_backend, &resolved_model)?;
-
-        let total_proj = by_project.len();
-        for (proj_idx, (proj_name, proj_sessions)) in by_project.iter().enumerate() {
-            // P36 — cancel check at top of project loop
-            if let Some(s) = sink {
-                if s.is_cancelled() {
-                    s.message(&format!(
-                        "취소 요청 — {}/{} 프로젝트까지 처리 후 종료합니다",
-                        proj_idx, total_proj
-                    ))
-                    .await;
-                    return Ok(pages_written);
-                }
-                if total_proj > 0 {
-                    s.progress((proj_idx as f32) / (total_proj as f32)).await;
-                }
-            }
-            let session_ids: Vec<String> = proj_sessions.iter().map(|s| s.id.clone()).collect();
-            let vault_paths = collect_vault_paths(&db, &session_ids);
-            let proj_prompt = build_haiku_single_project_prompt(&db, proj_name, proj_sessions)?;
-
-            eprintln!("  Generating wiki for project: {}...", proj_name);
-            // P36 — cancel check just before LLM call (expensive)
-            if let Some(s) = sink {
-                if s.is_cancelled() {
-                    s.message(&format!(
-                        "취소 요청 — LLM 호출 직전 취소 ({} 프로젝트)",
-                        proj_name
-                    ))
-                    .await;
-                    return Ok(pages_written);
-                }
-            }
-            let output = backend_box.generate(&proj_prompt).await?;
-
-            if output.trim().is_empty() {
-                eprintln!("    (no output, skipping)");
-                continue;
-            }
-
-            let page_path = format!("projects/{}.md", safe_project_name(proj_name));
-
-            let validated = secall_core::wiki::lint::validate_frontmatter(&output, &session_ids);
-            let merged = secall_core::wiki::lint::merge_with_existing(
-                &wiki_dir,
-                &page_path,
-                &validated,
-                &session_ids,
-            )?;
-            let wiki_pages = collect_wiki_pages(&wiki_dir);
-            let linked = secall_core::wiki::lint::insert_obsidian_links(
-                &merged,
-                &session_ids,
-                &vault_paths,
-                &wiki_pages,
-            );
-
-            let full_path = wiki_dir.join(&page_path);
-            if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&full_path, &linked)?;
-            // P36 rework — 새 페이지 작성 성공 시 카운트 +1.
-            // (review-regen 은 같은 파일 덮어쓰기라 카운트 증가 안 함)
-            pages_written += 1;
-            eprintln!("    Written: {}", full_path.display());
-
-            match secall_core::wiki::lint::run_markdownlint(&full_path) {
-                Ok(Some(msg)) => eprintln!("    Lint: {}", msg),
-                Ok(None) => {}
-                Err(e) => eprintln!("    Lint error (skipped): {}", e),
-            }
-
-            if review {
-                // markdownlint가 파일을 수정했을 수 있으므로 최종 저장본을 다시 읽음
-                let final_content =
-                    std::fs::read_to_string(&full_path).unwrap_or_else(|_| linked.clone());
-                let source_summary = build_review_source(&db, &session_ids);
-                let needs_regen =
-                    run_review(reviewer.as_ref(), &final_content, &source_summary).await;
-
-                // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
-                if needs_regen {
-                    // P36 — cancel check before regeneration LLM call
-                    if let Some(s) = sink {
-                        if s.is_cancelled() {
-                            s.message(&format!(
-                                "취소 요청 — 재생성 직전 취소 ({} 프로젝트)",
-                                proj_name
-                            ))
-                            .await;
-                            return Ok(pages_written);
-                        }
-                    }
-                    eprintln!("    Regenerating due to review errors...");
-                    match backend_box.generate(&proj_prompt).await {
-                        Ok(regen_output) if !regen_output.trim().is_empty() => {
-                            let validated2 = secall_core::wiki::lint::validate_frontmatter(
-                                &regen_output,
-                                &session_ids,
-                            );
-                            let merged2 = secall_core::wiki::lint::merge_with_existing(
-                                &wiki_dir,
-                                &page_path,
-                                &validated2,
-                                &session_ids,
-                            )
-                            .unwrap_or(validated2);
-                            let wiki_pages2 = collect_wiki_pages(&wiki_dir);
-                            let linked2 = secall_core::wiki::lint::insert_obsidian_links(
-                                &merged2,
-                                &session_ids,
-                                &vault_paths,
-                                &wiki_pages2,
-                            );
-                            if let Err(e) = std::fs::write(&full_path, &linked2) {
-                                eprintln!("    Write failed, skipping re-review: {e}");
-                            } else {
-                                // 재검수 (반환값 무시 — 재시도는 1회만)
-                                run_review(reviewer.as_ref(), &linked2, &source_summary).await;
-                            }
-                        }
-                        _ => eprintln!("    Regeneration skipped (empty output)"),
-                    }
-                }
-            }
-        }
-        eprintln!(
-            "  ✓ Wiki batch update complete ({} projects).",
-            by_project.len()
-        );
-    } else if backend_name == "haiku" {
-        // ── 인크리멘탈 모드: 단일 세션 ──
-        // P36 — cancel check just before LLM call
-        if let Some(s) = sink {
-            if s.is_cancelled() {
-                s.message("취소 요청 — LLM 호출 직전 취소 (haiku incremental)")
-                    .await;
-                return Ok(pages_written);
-            }
-        }
-        eprintln!("  Launching {}...", backend_box.name());
-        let output = backend_box.generate(&prompt).await?;
-
-        if output.trim().is_empty() {
-            eprintln!("  (no output from backend)");
-            return Ok(pages_written);
-        }
-
-        let db = Database::open(&get_default_db_path())?;
-        let sid = session.unwrap();
-        let full_id = resolve_session_id(&db, sid)?;
-        let session_ids = vec![full_id.clone()];
-
-        // 페이지 경로: 프로젝트 정보로 결정
-        let page_path = if let Ok((meta, _)) = db.get_session_with_turns(&full_id) {
-            if let Some(proj) = &meta.project {
-                let safe = safe_project_name(proj);
-                if !safe.is_empty() {
-                    format!("projects/{}.md", safe)
-                } else {
-                    format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
-                }
-            } else {
-                format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
-            }
-        } else {
-            format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
-        };
-
-        let vault_paths = collect_vault_paths(&db, &session_ids);
-
-        let validated = secall_core::wiki::lint::validate_frontmatter(&output, &session_ids);
-        let merged = secall_core::wiki::lint::merge_with_existing(
-            &wiki_dir,
-            &page_path,
-            &validated,
-            &session_ids,
-        )?;
-        let wiki_pages = collect_wiki_pages(&wiki_dir);
-        let linked = secall_core::wiki::lint::insert_obsidian_links(
-            &merged,
-            &session_ids,
-            &vault_paths,
-            &wiki_pages,
-        );
-
-        let full_path = wiki_dir.join(&page_path);
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&full_path, &linked)?;
-        // P36 rework — 새 페이지 작성 성공 시 카운트 +1 (review-regen 은 동일 파일 덮어쓰기).
-        pages_written += 1;
-        eprintln!("  Written: {}", full_path.display());
-
-        match secall_core::wiki::lint::run_markdownlint(&full_path) {
-            Ok(Some(msg)) => eprintln!("  Lint: {}", msg),
-            Ok(None) => {}
-            Err(e) => eprintln!("  Lint error (skipped): {}", e),
-        }
-
-        eprintln!("  ✓ Wiki update complete.");
-
-        if review {
-            // markdownlint가 파일을 수정했을 수 있으므로 최종 저장본을 다시 읽음
-            let final_content =
-                std::fs::read_to_string(&full_path).unwrap_or_else(|_| linked.clone());
-            let source_summary = build_review_source(&db, &session_ids);
-            let resolved_review_backend = resolve_review_backend(review_backend, &config);
-            let resolved_model =
-                resolve_review_model(review_model, &config, &resolved_review_backend);
-            let reviewer = build_reviewer(&config, &resolved_review_backend, &resolved_model)?;
-            let needs_regen = run_review(reviewer.as_ref(), &final_content, &source_summary).await;
-
-            // error급 이슈 → 1회 재생성 후 재검수 (무한 루프 방지: 최대 1회)
-            if needs_regen {
-                // P36 — cancel check before regeneration LLM call
-                if let Some(s) = sink {
-                    if s.is_cancelled() {
-                        s.message("취소 요청 — 재생성 직전 취소 (haiku incremental)")
-                            .await;
-                        return Ok(pages_written);
-                    }
-                }
-                eprintln!("    Regenerating due to review errors...");
-                match backend_box.generate(&prompt).await {
-                    Ok(regen_output) if !regen_output.trim().is_empty() => {
-                        let validated2 = secall_core::wiki::lint::validate_frontmatter(
-                            &regen_output,
-                            &session_ids,
-                        );
-                        let merged2 = secall_core::wiki::lint::merge_with_existing(
-                            &wiki_dir,
-                            &page_path,
-                            &validated2,
-                            &session_ids,
-                        )
-                        .unwrap_or(validated2);
-                        let wiki_pages2 = collect_wiki_pages(&wiki_dir);
-                        let linked2 = secall_core::wiki::lint::insert_obsidian_links(
-                            &merged2,
-                            &session_ids,
-                            &vault_paths,
-                            &wiki_pages2,
-                        );
-                        if let Err(e) = std::fs::write(&full_path, &linked2) {
-                            eprintln!("    Write failed, skipping re-review: {e}");
-                        } else {
-                            // 재검수 (반환값 무시 — 재시도는 1회만)
-                            run_review(reviewer.as_ref(), &linked2, &source_summary).await;
-                        }
-                    }
-                    _ => eprintln!("    Regeneration skipped (empty output)"),
-                }
-            }
-        }
-    } else {
-        // ── 비-haiku 백엔드: 기존 동작 (출력만) ──
-        // P36 — cancel check just before LLM call
+    let total_proj = by_project.len();
+    for (proj_idx, (proj_name, proj_sessions)) in by_project.iter().enumerate() {
+        // P36 — cancel check at top of project loop
         if let Some(s) = sink {
             if s.is_cancelled() {
                 s.message(&format!(
-                    "취소 요청 — LLM 호출 직전 취소 ({})",
-                    backend_name
+                    "취소 요청 — {}/{} 프로젝트까지 처리 후 종료합니다",
+                    proj_idx, total_proj
+                ))
+                .await;
+                return Ok(pages_written);
+            }
+            if total_proj > 0 {
+                s.progress((proj_idx as f32) / (total_proj as f32)).await;
+            }
+        }
+        let session_ids: Vec<String> = proj_sessions.iter().map(|s| s.id.clone()).collect();
+        let vault_paths = collect_vault_paths(&db, &session_ids);
+        let proj_prompt = build_haiku_single_project_prompt(&db, proj_name, proj_sessions)?;
+
+        eprintln!("  Generating wiki for project: {}...", proj_name);
+        // P36 — cancel check just before LLM call (expensive)
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message(&format!(
+                    "취소 요청 — LLM 호출 직전 취소 ({} 프로젝트)",
+                    proj_name
                 ))
                 .await;
                 return Ok(pages_written);
             }
         }
-        eprintln!("  Launching {}...", backend_box.name());
-        let output = backend_box.generate(&prompt).await?;
+        let output = backend.generate(&proj_prompt).await?;
 
         if output.trim().is_empty() {
-            eprintln!("  (no output from backend)");
-            return Ok(pages_written);
+            eprintln!("    (no output, skipping)");
+            continue;
         }
 
-        println!("{}", output);
-        eprintln!("  ✓ Wiki update complete.");
+        let page_path = format!("projects/{}.md", safe_project_name(proj_name));
+
+        let (full_path, linked) = write_wiki_page(
+            wiki_dir,
+            &page_path,
+            &output,
+            &session_ids,
+            &vault_paths,
+            &wiki_pages,
+            "    ",
+        )?;
+        // 새로 만든 페이지를 link 풀에 추가 — 다음 iteration 의 페이지가
+        // 이 페이지를 wikilink 로 참조할 수 있도록.
+        let new_link = page_path.trim_end_matches(".md").to_string();
+        if !wiki_pages.contains(&new_link) {
+            wiki_pages.push(new_link);
+        }
+        // P36 rework — 새 페이지 작성 성공 시 카운트 +1.
+        // (review-regen 은 같은 파일 덮어쓰기라 카운트 증가 안 함)
+        pages_written += 1;
+        eprintln!("    Written: {}", full_path.display());
+
+        if review {
+            maybe_review_with_regen(
+                backend,
+                reviewer.as_ref(),
+                &db,
+                wiki_dir,
+                &page_path,
+                &proj_prompt,
+                &session_ids,
+                &vault_paths,
+                &wiki_pages,
+                &full_path,
+                &linked,
+                sink,
+                &format!("{} 프로젝트", proj_name),
+                "    ",
+            )
+            .await?;
+        }
+    }
+    eprintln!(
+        "  ✓ Wiki batch update complete ({} projects).",
+        by_project.len()
+    );
+    Ok(pages_written)
+}
+
+/// `run_update_with_sink` 분해 (helper 3/4): haiku 인크리멘탈 모드 — 단일 세션.
+///
+/// 지정한 세션 1개를 LLM 으로 생성, 프로젝트 정보 기반 page_path 결정,
+/// 작성 후 옵션 review. 반환값은 새 페이지 카운트 (0/1).
+#[allow(clippy::too_many_arguments)]
+async fn process_haiku_incremental(
+    config: &Config,
+    wiki_dir: &std::path::Path,
+    session_id: &str,
+    prompt: &str,
+    backend: &dyn secall_core::wiki::WikiBackend,
+    review: bool,
+    review_backend: Option<&str>,
+    review_model: Option<&str>,
+    sink: Option<&dyn ProgressSink>,
+) -> Result<usize> {
+    let mut pages_written: usize = 0;
+
+    // P36 — cancel check just before LLM call
+    if let Some(s) = sink {
+        if s.is_cancelled() {
+            s.message("취소 요청 — LLM 호출 직전 취소 (haiku incremental)")
+                .await;
+            return Ok(pages_written);
+        }
+    }
+    eprintln!("  Launching {}...", backend.name());
+    let output = backend.generate(prompt).await?;
+
+    if output.trim().is_empty() {
+        eprintln!("  (no output from backend)");
+        return Ok(pages_written);
+    }
+
+    let db = Database::open(&get_default_db_path())?;
+    let full_id = resolve_session_id(&db, session_id)?;
+    let session_ids = vec![full_id.clone()];
+
+    // 페이지 경로: 프로젝트 정보로 결정
+    let page_path = if let Ok((meta, _)) = db.get_session_with_turns(&full_id) {
+        if let Some(proj) = &meta.project {
+            let safe = safe_project_name(proj);
+            if !safe.is_empty() {
+                format!("projects/{}.md", safe)
+            } else {
+                format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+            }
+        } else {
+            format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+        }
+    } else {
+        format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+    };
+
+    let vault_paths = collect_vault_paths(&db, &session_ids);
+    // incremental 모드는 한 페이지만 작성 → caller 가 한 번만 수집.
+    let wiki_pages = collect_wiki_pages(wiki_dir);
+
+    let (full_path, linked) = write_wiki_page(
+        wiki_dir,
+        &page_path,
+        &output,
+        &session_ids,
+        &vault_paths,
+        &wiki_pages,
+        "  ",
+    )?;
+    // P36 rework — 새 페이지 작성 성공 시 카운트 +1 (review-regen 은 동일 파일 덮어쓰기).
+    pages_written += 1;
+    eprintln!("  Written: {}", full_path.display());
+
+    eprintln!("  ✓ Wiki update complete.");
+
+    if review {
+        let resolved_review_backend = resolve_review_backend(review_backend, config);
+        let resolved_model = resolve_review_model(review_model, config, &resolved_review_backend);
+        let reviewer = build_reviewer(config, &resolved_review_backend, &resolved_model)?;
+        maybe_review_with_regen(
+            backend,
+            reviewer.as_ref(),
+            &db,
+            wiki_dir,
+            &page_path,
+            prompt,
+            &session_ids,
+            &vault_paths,
+            &wiki_pages,
+            &full_path,
+            &linked,
+            sink,
+            "haiku incremental",
+            "    ",
+        )
+        .await?;
     }
 
     Ok(pages_written)
+}
+
+/// `run_update_with_sink` 분해 (helper 4/4): 비-haiku 백엔드 (claude/codex/ollama/lmstudio).
+///
+/// LLM 호출 직전 cancel 체크, 호출 후 출력을 stdout 으로 그대로 흘려보낸다.
+/// 페이지 작성/카운트는 하지 않는다.
+async fn process_generic_backend(
+    prompt: &str,
+    backend: &dyn secall_core::wiki::WikiBackend,
+    backend_name: &str,
+    sink: Option<&dyn ProgressSink>,
+) -> Result<()> {
+    // P36 — cancel check just before LLM call
+    if let Some(s) = sink {
+        if s.is_cancelled() {
+            s.message(&format!(
+                "취소 요청 — LLM 호출 직전 취소 ({})",
+                backend_name
+            ))
+            .await;
+            return Ok(());
+        }
+    }
+    eprintln!("  Launching {}...", backend.name());
+    let output = backend.generate(prompt).await?;
+
+    if output.trim().is_empty() {
+        eprintln!("  (no output from backend)");
+        return Ok(());
+    }
+
+    println!("{}", output);
+    eprintln!("  ✓ Wiki update complete.");
+    Ok(())
 }
 
 async fn auto_resolve_wiki_conflicts(
@@ -1353,6 +1349,110 @@ async fn run_review(
             false
         }
     }
+}
+
+/// P50-C: wiki 페이지 markdown 을 validate → merge → obsidian links 삽입 →
+/// disk write → markdownlint 까지 수행. `run_update_with_sink` 의 haiku
+/// batch / haiku incremental 양쪽 흐름에서 동일하게 반복되던 ~30 lines 블록을
+/// 한 곳으로 모았다.
+///
+/// 반환: 디스크에 쓰여진 `(절대 경로, 최종 markdown 본문)`. 호출자는 후속
+/// review/regen 단계에서 본문을 다시 읽거나 그대로 사용한다.
+#[allow(clippy::too_many_arguments)]
+fn write_wiki_page(
+    wiki_dir: &std::path::Path,
+    page_path: &str,
+    output: &str,
+    session_ids: &[String],
+    vault_paths: &std::collections::HashMap<String, String>,
+    wiki_pages: &[String],
+    log_indent: &str,
+) -> Result<(PathBuf, String)> {
+    let validated = secall_core::wiki::lint::validate_frontmatter(output, session_ids);
+    let merged =
+        secall_core::wiki::lint::merge_with_existing(wiki_dir, page_path, &validated, session_ids)?;
+    let linked = secall_core::wiki::lint::insert_obsidian_links(
+        &merged,
+        session_ids,
+        vault_paths,
+        wiki_pages,
+    );
+
+    let full_path = wiki_dir.join(page_path);
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&full_path, &linked)?;
+
+    match secall_core::wiki::lint::run_markdownlint(&full_path) {
+        Ok(Some(msg)) => eprintln!("{log_indent}Lint: {}", msg),
+        Ok(None) => {}
+        Err(e) => eprintln!("{log_indent}Lint error (skipped): {}", e),
+    }
+
+    Ok((full_path, linked))
+}
+
+/// P50-C: review 가 error 급 이슈를 잡으면 1회만 재생성 + 재검수.
+/// haiku batch / haiku incremental 양쪽 흐름에서 동일했던 ~50 lines 블록을 묶었다.
+///
+/// `initial_full_path` 가 markdownlint 단계에서 수정됐을 가능성을 고려해 디스크
+/// 내용을 다시 읽어 review 에 전달한다 (실패 시 `initial_linked` fallback).
+#[allow(clippy::too_many_arguments)]
+async fn maybe_review_with_regen(
+    backend: &dyn secall_core::wiki::WikiBackend,
+    reviewer: &dyn secall_core::wiki::WikiReviewer,
+    db: &Database,
+    wiki_dir: &std::path::Path,
+    page_path: &str,
+    prompt: &str,
+    session_ids: &[String],
+    vault_paths: &std::collections::HashMap<String, String>,
+    wiki_pages: &[String],
+    initial_full_path: &std::path::Path,
+    initial_linked: &str,
+    sink: Option<&dyn ProgressSink>,
+    cancel_label: &str,
+    log_indent: &str,
+) -> Result<()> {
+    let final_content =
+        std::fs::read_to_string(initial_full_path).unwrap_or_else(|_| initial_linked.to_string());
+    let source_summary = build_review_source(db, session_ids);
+    let needs_regen = run_review(reviewer, &final_content, &source_summary).await;
+
+    if !needs_regen {
+        return Ok(());
+    }
+
+    if let Some(s) = sink {
+        if s.is_cancelled() {
+            s.message(&format!("취소 요청 — 재생성 직전 취소 ({cancel_label})"))
+                .await;
+            return Ok(());
+        }
+    }
+    eprintln!("{log_indent}Regenerating due to review errors...");
+    match backend.generate(prompt).await {
+        Ok(regen_output) if !regen_output.trim().is_empty() => {
+            let (full_path2, linked2) = write_wiki_page(
+                wiki_dir,
+                page_path,
+                &regen_output,
+                session_ids,
+                vault_paths,
+                wiki_pages,
+                log_indent,
+            )?;
+            // Gemini PR #59: 재검수도 첫 검수처럼 markdownlint 가 수정했을 가능성을
+            // 고려해 디스크 최종본을 다시 읽어 review 에 전달한다.
+            let final_content2 =
+                std::fs::read_to_string(&full_path2).unwrap_or_else(|_| linked2.clone());
+            // 재검수 (반환값 무시 — 재시도는 1회만)
+            run_review(reviewer, &final_content2, &source_summary).await;
+        }
+        _ => eprintln!("{log_indent}Regeneration skipped (empty output)"),
+    }
+    Ok(())
 }
 
 /// wiki/ 디렉토리를 스캔하여 페이지 경로 목록 반환 (확장자 제거, Obsidian 링크용)

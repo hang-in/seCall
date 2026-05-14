@@ -381,27 +381,7 @@ pub async fn ingest_sessions(
     // BM25/vault 완료 후 벡터 임베딩을 일괄 처리하기 위한 수집 목록.
     let mut vector_tasks: Vec<secall_core::ingest::Session> = Vec::new();
 
-    let compiled_rules: Vec<CompiledRule> = {
-        let classification = &config.ingest.classification;
-        classification
-            .rules
-            .iter()
-            .map(|rule| {
-                if let Some(pattern) = &rule.pattern {
-                    regex::Regex::new(pattern)
-                        .map(|re| CompiledRule::Pattern(re, rule.session_type.clone()))
-                        .map_err(|e| anyhow::anyhow!("invalid regex pattern {:?}: {}", pattern, e))
-                } else if let Some(project) = &rule.project {
-                    Ok(CompiledRule::Project(project.clone(), rule.session_type.clone()))
-                } else {
-                    Err(anyhow::anyhow!(
-                        "classification rule missing both 'pattern' and 'project' fields (session_type: {:?})",
-                        rule.session_type
-                    ))
-                }
-            })
-            .collect::<anyhow::Result<_>>()?
-    };
+    let compiled_rules = compile_classification_rules(config)?;
 
     let total_paths = paths.len();
     for (path_idx, session_path) in paths.iter().enumerate() {
@@ -427,151 +407,25 @@ pub async fn ingest_sessions(
                 s.progress((path_idx as f32) / (total_paths as f32)).await;
             }
         }
-        // detect_parser()를 한 번 호출 — 포맷 탐지와 라우팅을 동시에 결정
-        let parser = match detect_parser(session_path) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(path = %session_path.display(), error = %e, "failed to detect session format");
-                error_details.push(IngestError {
-                    path: session_path.display().to_string(),
-                    session_id: None,
-                    phase: IngestPhase::Detection,
-                    message: e.to_string(),
-                });
-                errors += 1;
-                continue;
-            }
-        };
-
-        // ClaudeAiParser는 항상 parse_all() 경로 (1:N)
-        // agent_kind()로 판단하여 포맷·인코딩 방식과 무관하게 정확히 라우팅
-        if parser.agent_kind() == AgentKind::ClaudeAi || parser.agent_kind() == AgentKind::ChatGpt {
-            match parser.parse_all(session_path) {
-                Ok(sessions) => {
-                    eprintln!(
-                        "Parsed {} conversations from {}",
-                        sessions.len(),
-                        session_path.display()
-                    );
-                    for session in sessions {
-                        ingest_single_session(
-                            config,
-                            &compiled_rules,
-                            db,
-                            engine,
-                            vault,
-                            session,
-                            format,
-                            min_turns,
-                            force,
-                            &mut ingested,
-                            &mut skipped,
-                            &mut errors,
-                            &mut skipped_min_turns,
-                            &mut new_session_ids,
-                            &mut vector_tasks,
-                            &mut error_details,
-                            &mut hook_failures,
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(path = %session_path.display(), error = %e, "failed to parse multi-session file");
-                    error_details.push(IngestError {
-                        path: session_path.display().to_string(),
-                        session_id: None,
-                        phase: IngestPhase::Parsing,
-                        message: e.to_string(),
-                    });
-                    errors += 1;
-                }
-            }
-            continue;
-        }
-
-        // 1:1 파서: filename-stem 힌트로 빠른 중복 체크 (--force 시 스킵)
-        if !force {
-            let session_id_hint = session_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-
-            match db.session_exists(session_id_hint) {
-                Ok(true) => {
-                    // 오픈 세션(end_time IS NULL)이면 파일이 변경됐을 수 있으므로 재인제스트
-                    match db.is_session_open(session_id_hint) {
-                        Ok(true) => {
-                            // 기존 레코드 삭제 후 재인제스트
-                            if let Err(e) = db.delete_session_full(session_id_hint) {
-                                tracing::warn!(
-                                    session = session_id_hint,
-                                    "failed to delete open session: {}",
-                                    e
-                                );
-                                skipped += 1;
-                                continue;
-                            }
-                            tracing::debug!(session = session_id_hint, "re-ingesting open session");
-                        }
-                        Ok(false) => {
-                            skipped += 1;
-                            continue;
-                        }
-                        Err(e) => {
-                            tracing::warn!(session = session_id_hint, "open check failed: {}", e);
-                            skipped += 1;
-                            continue;
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    tracing::warn!(path = %session_path.display(), error = %e, "DB check failed, skipping");
-                    error_details.push(IngestError {
-                        path: session_path.display().to_string(),
-                        session_id: None,
-                        phase: IngestPhase::DuplicateCheck,
-                        message: e.to_string(),
-                    });
-                    errors += 1;
-                    continue;
-                }
-            }
-        }
-
-        match parser.parse(session_path) {
-            Ok(session) => {
-                ingest_single_session(
-                    config,
-                    &compiled_rules,
-                    db,
-                    engine,
-                    vault,
-                    session,
-                    format,
-                    min_turns,
-                    force,
-                    &mut ingested,
-                    &mut skipped,
-                    &mut errors,
-                    &mut skipped_min_turns,
-                    &mut new_session_ids,
-                    &mut vector_tasks,
-                    &mut error_details,
-                    &mut hook_failures,
-                );
-            }
-            Err(e) => {
-                tracing::warn!(path = %session_path.display(), error = %e, "failed to parse session file");
-                error_details.push(IngestError {
-                    path: session_path.display().to_string(),
-                    session_id: None,
-                    phase: IngestPhase::Parsing,
-                    message: e.to_string(),
-                });
-                errors += 1;
-            }
-        }
+        ingest_path(
+            config,
+            &compiled_rules,
+            db,
+            engine,
+            vault,
+            session_path,
+            format,
+            min_turns,
+            force,
+            &mut ingested,
+            &mut skipped,
+            &mut errors,
+            &mut skipped_min_turns,
+            &mut new_session_ids,
+            &mut vector_tasks,
+            &mut error_details,
+            &mut hook_failures,
+        );
     }
 
     // 벡터 인덱싱 일괄 처리 (BM25/vault와 분리하여 체감 속도 개선)
@@ -584,50 +438,28 @@ pub async fn ingest_sessions(
         vector_tasks.clear();
     }
     if !no_embed && !vector_tasks.is_empty() {
-        let total = vector_tasks.len();
-        eprintln!("Embedding {total} session(s)...");
-        let tz = config.timezone();
-        for (i, session) in vector_tasks.iter().enumerate() {
-            // P36 — cancel check at top of embedding sub-loop
-            if let Some(s) = sink {
-                if s.is_cancelled() {
-                    s.message(&format!(
-                        "취소 요청 — embedding {}/{} 후 종료합니다",
-                        i, total
-                    ))
-                    .await;
-                    return Ok(IngestStats {
-                        ingested,
-                        skipped,
-                        errors,
-                        skipped_min_turns,
-                        hook_failures,
-                        new_session_ids,
-                        error_details,
-                    });
-                }
-            }
-            let short = &session.id[..8.min(session.id.len())];
-            eprintln!(
-                "  [{}/{total}] {short} ({} turns)",
-                i + 1,
-                session.turns.len()
-            );
-            if let Err(e) = engine.index_session_vectors(db, session, tz).await {
-                tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "vector embedding failed");
-                error_details.push(IngestError {
-                    path: String::new(),
-                    session_id: Some(session.id.clone()),
-                    phase: IngestPhase::Indexing,
-                    message: e.to_string(),
-                });
-                errors += 1;
-            }
+        let cancelled = embed_vector_tasks(
+            config,
+            db,
+            engine,
+            &vector_tasks,
+            &mut error_details,
+            &mut errors,
+            sink,
+        )
+        .await;
+        if cancelled {
+            return Ok(IngestStats {
+                ingested,
+                skipped,
+                errors,
+                skipped_min_turns,
+                hook_failures,
+                new_session_ids,
+                error_details,
+            });
         }
-    }
-
-    // P47 — embed 단계 끝나면 Ollama embedding 모델을 즉시 unload
-    if !no_embed && !vector_tasks.is_empty() {
+        // P47 — embed 단계 끝나면 Ollama embedding 모델을 즉시 unload
         unload_ollama_embed_model(config).await;
     }
 
@@ -640,59 +472,17 @@ pub async fn ingest_sessions(
     if semantic_enabled {
         // 임베딩 모델 unload — P37 Task 01: helper 로 분리하여 graph::run_rebuild 와 공유
         unload_embedding_model_if_needed(config).await;
-        eprintln!(
-            "Extracting semantic edges for {} session(s)...",
-            new_session_ids.len()
-        );
-        let total_sem = new_session_ids.len();
-        // P37 rework — graph rebuild 와 동일하게 sub-loop 진입 시 timestamp 한 번 계산.
-        // 성공한 세션마다 같은 값으로 `semantic_extracted_at` 갱신 → 새 세션도
-        // `--retry-failed` 후속 실행 시 NULL 로 잡히지 않도록 한다.
-        let semantic_now_secs = chrono::Utc::now().timestamp();
-        for (sem_idx, session_id) in new_session_ids.iter().enumerate() {
-            // P36 — cancel check at top of semantic loop (before LLM-ish call)
-            if let Some(s) = sink {
-                if s.is_cancelled() {
-                    s.message(&format!(
-                        "취소 요청 — semantic {}/{} 후 종료합니다",
-                        sem_idx, total_sem
-                    ))
-                    .await;
-                    return Ok(IngestStats {
-                        ingested,
-                        skipped,
-                        errors,
-                        skipped_min_turns,
-                        hook_failures,
-                        new_session_ids: new_session_ids.clone(),
-                        error_details,
-                    });
-                }
-            }
-            let short = &session_id[..8.min(session_id.len())];
-            // P37 Task 01: 단일 세션 helper 로 추출 (rebuild 경로와 동일 helper).
-            // 동작 변경 없음 — 기존 tracing::warn/debug 메시지 그대로 보존.
-            match extract_one_session_semantic(db, config, session_id).await {
-                ExtractOneResult::Extracted(n) => {
-                    tracing::debug!(session = short, edges = n, "semantic edges extracted");
-                    // P37 rework — 추출 성공 세션은 timestamp 갱신.
-                    // graph rebuild 경로(graph.rs:280) 와 동일 동작 → ingest 후 NULL 로 남지 않음.
-                    // 갱신 실패는 자가 치유 (다음 retry-failed 가 다시 처리) — warn 만 남김.
-                    if let Err(e) = db.update_semantic_extracted_at(session_id, semantic_now_secs) {
-                        tracing::warn!(
-                            session = short,
-                            error = %e,
-                            "failed to update semantic_extracted_at"
-                        );
-                    }
-                }
-                ExtractOneResult::Skipped(reason) => {
-                    tracing::debug!(session = short, "semantic extraction skipped: {}", reason)
-                }
-                ExtractOneResult::Failed(e) => {
-                    tracing::warn!(session = short, "semantic extraction skipped: {}", e)
-                }
-            }
+        let cancelled = extract_semantic_edges_batch(config, db, &new_session_ids, sink).await;
+        if cancelled {
+            return Ok(IngestStats {
+                ingested,
+                skipped,
+                errors,
+                skipped_min_turns,
+                hook_failures,
+                new_session_ids,
+                error_details,
+            });
         }
     }
 
@@ -705,6 +495,307 @@ pub async fn ingest_sessions(
         new_session_ids,
         error_details,
     })
+}
+
+/// 분류 규칙(`config.ingest.classification.rules`)을 한 번만 컴파일.
+///
+/// regex 패턴 컴파일 실패 또는 `pattern`/`project` 둘 다 없는 룰은 fast-fail.
+fn compile_classification_rules(config: &Config) -> Result<Vec<CompiledRule>> {
+    let classification = &config.ingest.classification;
+    classification
+        .rules
+        .iter()
+        .map(|rule| {
+            if let Some(pattern) = &rule.pattern {
+                regex::Regex::new(pattern)
+                    .map(|re| CompiledRule::Pattern(re, rule.session_type.clone()))
+                    .map_err(|e| anyhow!("invalid regex pattern {:?}: {}", pattern, e))
+            } else if let Some(project) = &rule.project {
+                Ok(CompiledRule::Project(project.clone(), rule.session_type.clone()))
+            } else {
+                Err(anyhow!(
+                    "classification rule missing both 'pattern' and 'project' fields (session_type: {:?})",
+                    rule.session_type
+                ))
+            }
+        })
+        .collect()
+}
+
+/// 단일 경로의 detect/parse/ingest_single_session 처리.
+///
+/// ClaudeAi/ChatGpt 는 `parse_all()` 1:N 경로, 그 외는 filename-stem 힌트로
+/// 중복 체크 후 `parse()` 1:1 경로. 카운터/에러 누적 모두 `&mut` 로 받음.
+#[allow(clippy::too_many_arguments)]
+fn ingest_path(
+    config: &Config,
+    compiled_rules: &[CompiledRule],
+    db: &Database,
+    engine: &SearchEngine,
+    vault: &Vault,
+    session_path: &Path,
+    format: &OutputFormat,
+    min_turns: usize,
+    force: bool,
+    ingested: &mut usize,
+    skipped: &mut usize,
+    errors: &mut usize,
+    skipped_min_turns: &mut usize,
+    new_session_ids: &mut Vec<String>,
+    vector_tasks: &mut Vec<secall_core::ingest::Session>,
+    error_details: &mut Vec<IngestError>,
+    hook_failures: &mut usize,
+) {
+    // detect_parser()를 한 번 호출 — 포맷 탐지와 라우팅을 동시에 결정
+    let parser = match detect_parser(session_path) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(path = %session_path.display(), error = %e, "failed to detect session format");
+            error_details.push(IngestError {
+                path: session_path.display().to_string(),
+                session_id: None,
+                phase: IngestPhase::Detection,
+                message: e.to_string(),
+            });
+            *errors += 1;
+            return;
+        }
+    };
+
+    // ClaudeAiParser는 항상 parse_all() 경로 (1:N)
+    // agent_kind()로 판단하여 포맷·인코딩 방식과 무관하게 정확히 라우팅
+    if parser.agent_kind() == AgentKind::ClaudeAi || parser.agent_kind() == AgentKind::ChatGpt {
+        match parser.parse_all(session_path) {
+            Ok(sessions) => {
+                eprintln!(
+                    "Parsed {} conversations from {}",
+                    sessions.len(),
+                    session_path.display()
+                );
+                for session in sessions {
+                    ingest_single_session(
+                        config,
+                        compiled_rules,
+                        db,
+                        engine,
+                        vault,
+                        session,
+                        format,
+                        min_turns,
+                        force,
+                        ingested,
+                        skipped,
+                        errors,
+                        skipped_min_turns,
+                        new_session_ids,
+                        vector_tasks,
+                        error_details,
+                        hook_failures,
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(path = %session_path.display(), error = %e, "failed to parse multi-session file");
+                error_details.push(IngestError {
+                    path: session_path.display().to_string(),
+                    session_id: None,
+                    phase: IngestPhase::Parsing,
+                    message: e.to_string(),
+                });
+                *errors += 1;
+            }
+        }
+        return;
+    }
+
+    // 1:1 파서: filename-stem 힌트로 빠른 중복 체크 (--force 시 스킵)
+    if !force {
+        let session_id_hint = session_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        match db.session_exists(session_id_hint) {
+            Ok(true) => {
+                // 오픈 세션(end_time IS NULL)이면 파일이 변경됐을 수 있으므로 재인제스트
+                match db.is_session_open(session_id_hint) {
+                    Ok(true) => {
+                        // 기존 레코드 삭제 후 재인제스트
+                        if let Err(e) = db.delete_session_full(session_id_hint) {
+                            tracing::warn!(
+                                session = session_id_hint,
+                                "failed to delete open session: {}",
+                                e
+                            );
+                            *skipped += 1;
+                            return;
+                        }
+                        tracing::debug!(session = session_id_hint, "re-ingesting open session");
+                    }
+                    Ok(false) => {
+                        *skipped += 1;
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(session = session_id_hint, "open check failed: {}", e);
+                        *skipped += 1;
+                        return;
+                    }
+                }
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(path = %session_path.display(), error = %e, "DB check failed, skipping");
+                error_details.push(IngestError {
+                    path: session_path.display().to_string(),
+                    session_id: None,
+                    phase: IngestPhase::DuplicateCheck,
+                    message: e.to_string(),
+                });
+                *errors += 1;
+                return;
+            }
+        }
+    }
+
+    match parser.parse(session_path) {
+        Ok(session) => {
+            ingest_single_session(
+                config,
+                compiled_rules,
+                db,
+                engine,
+                vault,
+                session,
+                format,
+                min_turns,
+                force,
+                ingested,
+                skipped,
+                errors,
+                skipped_min_turns,
+                new_session_ids,
+                vector_tasks,
+                error_details,
+                hook_failures,
+            );
+        }
+        Err(e) => {
+            tracing::warn!(path = %session_path.display(), error = %e, "failed to parse session file");
+            error_details.push(IngestError {
+                path: session_path.display().to_string(),
+                session_id: None,
+                phase: IngestPhase::Parsing,
+                message: e.to_string(),
+            });
+            *errors += 1;
+        }
+    }
+}
+
+/// 수집된 벡터 task 를 일괄 임베딩. 취소 시 `true` 반환 (caller 가 early return).
+///
+/// P36 — sub-loop 진입 시점에 cancel 폴링. 기존 메시지/카운터 의미 동일.
+async fn embed_vector_tasks(
+    config: &Config,
+    db: &Database,
+    engine: &SearchEngine,
+    vector_tasks: &[secall_core::ingest::Session],
+    error_details: &mut Vec<IngestError>,
+    errors: &mut usize,
+    sink: Option<&dyn ProgressSink>,
+) -> bool {
+    let total = vector_tasks.len();
+    eprintln!("Embedding {total} session(s)...");
+    let tz = config.timezone();
+    for (i, session) in vector_tasks.iter().enumerate() {
+        // P36 — cancel check at top of embedding sub-loop
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message(&format!(
+                    "취소 요청 — embedding {}/{} 후 종료합니다",
+                    i, total
+                ))
+                .await;
+                return true;
+            }
+        }
+        let short = &session.id[..8.min(session.id.len())];
+        eprintln!(
+            "  [{}/{total}] {short} ({} turns)",
+            i + 1,
+            session.turns.len()
+        );
+        if let Err(e) = engine.index_session_vectors(db, session, tz).await {
+            tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "vector embedding failed");
+            error_details.push(IngestError {
+                path: String::new(),
+                session_id: Some(session.id.clone()),
+                phase: IngestPhase::Indexing,
+                message: e.to_string(),
+            });
+            *errors += 1;
+        }
+    }
+    false
+}
+
+/// 신규 세션들의 시맨틱 엣지 일괄 추출. 취소 시 `true` 반환.
+///
+/// 호출 전 caller 가 semantic_enabled 가드와 embedding 모델 unload 수행.
+async fn extract_semantic_edges_batch(
+    config: &Config,
+    db: &Database,
+    new_session_ids: &[String],
+    sink: Option<&dyn ProgressSink>,
+) -> bool {
+    eprintln!(
+        "Extracting semantic edges for {} session(s)...",
+        new_session_ids.len()
+    );
+    let total_sem = new_session_ids.len();
+    // P37 rework — graph rebuild 와 동일하게 sub-loop 진입 시 timestamp 한 번 계산.
+    // 성공한 세션마다 같은 값으로 `semantic_extracted_at` 갱신 → 새 세션도
+    // `--retry-failed` 후속 실행 시 NULL 로 잡히지 않도록 한다.
+    let semantic_now_secs = chrono::Utc::now().timestamp();
+    for (sem_idx, session_id) in new_session_ids.iter().enumerate() {
+        // P36 — cancel check at top of semantic loop (before LLM-ish call)
+        if let Some(s) = sink {
+            if s.is_cancelled() {
+                s.message(&format!(
+                    "취소 요청 — semantic {}/{} 후 종료합니다",
+                    sem_idx, total_sem
+                ))
+                .await;
+                return true;
+            }
+        }
+        let short = &session_id[..8.min(session_id.len())];
+        // P37 Task 01: 단일 세션 helper 로 추출 (rebuild 경로와 동일 helper).
+        // 동작 변경 없음 — 기존 tracing::warn/debug 메시지 그대로 보존.
+        match extract_one_session_semantic(db, config, session_id).await {
+            ExtractOneResult::Extracted(n) => {
+                tracing::debug!(session = short, edges = n, "semantic edges extracted");
+                // P37 rework — 추출 성공 세션은 timestamp 갱신.
+                // graph rebuild 경로(graph.rs:280) 와 동일 동작 → ingest 후 NULL 로 남지 않음.
+                // 갱신 실패는 자가 치유 (다음 retry-failed 가 다시 처리) — warn 만 남김.
+                if let Err(e) = db.update_semantic_extracted_at(session_id, semantic_now_secs) {
+                    tracing::warn!(
+                        session = short,
+                        error = %e,
+                        "failed to update semantic_extracted_at"
+                    );
+                }
+            }
+            ExtractOneResult::Skipped(reason) => {
+                tracing::debug!(session = short, "semantic extraction skipped: {}", reason)
+            }
+            ExtractOneResult::Failed(e) => {
+                tracing::warn!(session = short, "semantic extraction skipped: {}", e)
+            }
+        }
+    }
+    false
 }
 
 /// P37 Task 01 — 단일 세션 시맨틱 엣지 추출 결과.
