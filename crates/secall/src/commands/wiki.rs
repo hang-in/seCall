@@ -633,23 +633,27 @@ fn build_wiki_backend(
             }))
         }
         // P55 Gemini #64: build_reviewer 와 일관되게 ollama_cloud 도 지원.
-        // `default_backend = "ollama_cloud"` 시 build_wiki_backend / build_reviewer
-        // 양쪽이 동일 backend 인식.
+        // P56: wiki backend config 의 cloud_api_key / cloud_host 우선 (graph/log
+        // 와 분리해 wiki 전용 키 / 엔드포인트 가능, Gemini PR #64 MEDIUM 반영).
         "ollama_cloud" => {
             let cfg = config.wiki_backend_config("ollama_cloud");
-            let api_key = std::env::var("OLLAMA_CLOUD_API_KEY")
-                .ok()
+            let api_key = cfg
+                .cloud_api_key
+                .clone()
+                .or_else(|| std::env::var("OLLAMA_CLOUD_API_KEY").ok())
                 .or_else(|| config.graph.cloud_api_key.clone())
                 .or_else(|| config.log.cloud_api_key.clone())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "ollama cloud api key not set \
-                         (set OLLAMA_CLOUD_API_KEY env or [graph].cloud_api_key in config.toml)"
+                         (set [wiki.backends.ollama_cloud].cloud_api_key, \
+                         OLLAMA_CLOUD_API_KEY env, or [graph].cloud_api_key in config.toml)"
                     )
                 })?;
             Ok(Box::new(secall_core::wiki::OllamaBackend {
                 api_url: cfg
                     .api_url
+                    .or(cfg.cloud_host)
                     .or_else(|| config.graph.cloud_host.clone())
                     .unwrap_or_else(|| "https://ollama.com".to_string()),
                 model: cfg.model.unwrap_or_else(|| {
@@ -1239,23 +1243,26 @@ fn build_reviewer(
             model: model.to_string(),
             api_key: None,
         })),
-        // P55: Ollama Cloud backend for wiki review. OLLAMA_CLOUD_API_KEY 또는
-        // config 의 cloud_api_key 필요. graph 의 cloud_host 와 같은 endpoint 사용.
+        // P55: Ollama Cloud backend for wiki review.
+        // P56: wiki backend config 의 cloud_api_key / cloud_host 우선 (Gemini PR #64 MEDIUM).
         "ollama_cloud" => {
-            let api_key = std::env::var("OLLAMA_CLOUD_API_KEY")
-                .ok()
+            let cfg = config.wiki_backend_config("ollama_cloud");
+            let api_key = cfg
+                .cloud_api_key
+                .clone()
+                .or_else(|| std::env::var("OLLAMA_CLOUD_API_KEY").ok())
                 .or_else(|| config.graph.cloud_api_key.clone())
                 .or_else(|| config.log.cloud_api_key.clone())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "ollama cloud api key not set \
-                         (set OLLAMA_CLOUD_API_KEY env or [graph].cloud_api_key in config.toml)"
+                         (set [wiki.backends.ollama_cloud].cloud_api_key, \
+                         OLLAMA_CLOUD_API_KEY env, or [graph].cloud_api_key in config.toml)"
                     )
                 })?;
-            let api_url = config
-                .graph
+            let api_url = cfg
                 .cloud_host
-                .clone()
+                .or_else(|| config.graph.cloud_host.clone())
                 .unwrap_or_else(|| "https://ollama.com".to_string());
             Ok(Box::new(secall_core::wiki::OllamaReviewer {
                 api_url,
