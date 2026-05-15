@@ -638,6 +638,33 @@ fn build_wiki_backend(
                 api_key: None,
             }))
         }
+        // P55 Gemini #64: build_reviewer 와 일관되게 ollama_cloud 도 지원.
+        // `default_backend = "ollama_cloud"` 시 build_wiki_backend / build_reviewer
+        // 양쪽이 동일 backend 인식.
+        "ollama_cloud" => {
+            let cfg = config.wiki_backend_config("ollama_cloud");
+            let api_key = std::env::var("OLLAMA_CLOUD_API_KEY")
+                .ok()
+                .or_else(|| config.graph.cloud_api_key.clone())
+                .or_else(|| config.log.cloud_api_key.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
+                         (set OLLAMA_CLOUD_API_KEY env or [graph].cloud_api_key in config.toml)"
+                    )
+                })?;
+            Ok(Box::new(secall_core::wiki::OllamaBackend {
+                api_url: cfg
+                    .api_url
+                    .or_else(|| config.graph.cloud_host.clone())
+                    .unwrap_or_else(|| "https://ollama.com".to_string()),
+                model: cfg.model.unwrap_or_else(|| {
+                    secall_core::llm::defaults::WIKI_REVIEW_OLLAMA_CLOUD_DEFAULT.to_string()
+                }),
+                max_tokens: cfg.max_tokens,
+                api_key: Some(api_key),
+            }))
+        }
         "lmstudio" => {
             let cfg = config.wiki_backend_config("lmstudio");
             Ok(Box::new(secall_core::wiki::LmStudioBackend {
@@ -657,7 +684,7 @@ fn build_wiki_backend(
             vault_path: config.vault.path.clone(),
         })),
         _ => anyhow::bail!(
-            "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, lmstudio",
+            "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, ollama_cloud, lmstudio",
             backend_name
         ),
     }
