@@ -321,7 +321,13 @@ mod tests {
 
     #[test]
     fn test_config_load_or_default() {
-        // No config file → returns default without panic
+        // No config file → returns default without panic.
+        // SECALL_CONFIG_PATH 를 set/remove 하는 동안 vault::config::tests 의
+        // ENV_MUTEX 와 race 가 발생하면 다른 테스트가 엉뚱한 path 를 보게 된다.
+        // 같은 mutex 를 잡아 직렬화한다.
+        let _guard = super::config::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("SECALL_CONFIG_PATH", "/nonexistent/path/config.toml");
         let config = Config::load_or_default();
         assert!(config.ingest.tool_output_max_chars > 0);

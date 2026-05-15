@@ -583,12 +583,17 @@ pub fn default_graph_anthropic_model() -> &'static str {
     GRAPH_ANTHROPIC_DEFAULT
 }
 
+/// 환경변수(`SECALL_CONFIG_PATH`, `OLLAMA_CLOUD_API_KEY` 등)를 변경하는 테스트들이
+/// 같은 lib binary 내에서 병렬 실행될 때 서로 간섭하지 않도록 직렬화한다.
+///
+/// `vault::config::tests` 외 `vault::tests::test_config_load_or_default` 처럼 다른
+/// 모듈에서도 동일 env 를 건드리므로 `pub(crate)` 로 노출해 공유한다.
+#[cfg(test)]
+pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 환경변수를 변경하는 테스트들이 병렬 실행될 때 서로 간섭하지 않도록 직렬화
-    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_timezone_default_is_utc() {
