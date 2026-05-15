@@ -55,13 +55,7 @@ pub async fn run_with_progress(
         .backend
         .clone()
         .unwrap_or_else(|| "(default)".to_string());
-    let target_label = if let Some(sid) = args.session.as_deref() {
-        format!("session:{}", &sid[..sid.len().min(8)])
-    } else if let Some(s) = args.since.as_deref() {
-        format!("sessions since {s}")
-    } else {
-        "all sessions".to_string()
-    };
+    let target_label = build_target_label(args.session.as_deref(), args.since.as_deref());
 
     sink.phase_start("prompt_build").await;
     sink.message(&format!(
@@ -213,13 +207,7 @@ async fn run_update_with_sink(
 
     // P53: --since 옵션을 target 표시에도 반영 (이전: session 만 보고, since 는
     // 무조건 "all sessions" 로 표시되어 사용자 혼란).
-    let target = if let Some(sid) = session {
-        format!("session {}", &sid[..sid.len().min(8)])
-    } else if let Some(s) = since {
-        format!("sessions since {s}")
-    } else {
-        "all sessions".to_string()
-    };
+    let target = build_target_label(session, since);
     eprintln!("Wiki update: {} (backend: {})", target, backend_name);
 
     // 5. WikiBackend 인스턴스 생성
@@ -1025,6 +1013,19 @@ fn resolve_session_id(db: &Database, prefix: &str) -> Result<String> {
             prefix,
             n
         ),
+    }
+}
+
+/// P53 + Gemini: wiki update 의 target 표시 라벨. session > since > "all sessions"
+/// 우선순위. `run_with_progress` (REST/job sink 측) 과 `run_update_with_sink`
+/// (CLI stderr 측) 양쪽에서 사용 — 중복 제거 + format 통일 (모두 `session {}`).
+fn build_target_label(session: Option<&str>, since: Option<&str>) -> String {
+    if let Some(sid) = session {
+        format!("session {}", &sid[..sid.len().min(8)])
+    } else if let Some(s) = since {
+        format!("sessions since {s}")
+    } else {
+        "all sessions".to_string()
     }
 }
 
