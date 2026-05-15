@@ -632,6 +632,33 @@ fn build_wiki_backend(
                 api_key: None,
             }))
         }
+        // P55 Gemini #64: build_reviewer 와 일관되게 ollama_cloud 도 지원.
+        // `default_backend = "ollama_cloud"` 시 build_wiki_backend / build_reviewer
+        // 양쪽이 동일 backend 인식.
+        "ollama_cloud" => {
+            let cfg = config.wiki_backend_config("ollama_cloud");
+            let api_key = std::env::var("OLLAMA_CLOUD_API_KEY")
+                .ok()
+                .or_else(|| config.graph.cloud_api_key.clone())
+                .or_else(|| config.log.cloud_api_key.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
+                         (set OLLAMA_CLOUD_API_KEY env or [graph].cloud_api_key in config.toml)"
+                    )
+                })?;
+            Ok(Box::new(secall_core::wiki::OllamaBackend {
+                api_url: cfg
+                    .api_url
+                    .or_else(|| config.graph.cloud_host.clone())
+                    .unwrap_or_else(|| "https://ollama.com".to_string()),
+                model: cfg.model.unwrap_or_else(|| {
+                    secall_core::llm::defaults::WIKI_REVIEW_OLLAMA_CLOUD_DEFAULT.to_string()
+                }),
+                max_tokens: cfg.max_tokens,
+                api_key: Some(api_key),
+            }))
+        }
         "lmstudio" => {
             let cfg = config.wiki_backend_config("lmstudio");
             Ok(Box::new(secall_core::wiki::LmStudioBackend {
@@ -651,7 +678,7 @@ fn build_wiki_backend(
             vault_path: config.vault.path.clone(),
         })),
         _ => anyhow::bail!(
-            "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, lmstudio",
+            "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, ollama_cloud, lmstudio",
             backend_name
         ),
     }
@@ -1133,6 +1160,14 @@ pub fn resolve_review_model(cli: Option<&str>, config: &Config, backend_name: &s
             .ollama_model
             .clone()
             .unwrap_or_else(|| "gemma4:e4b".to_string()),
+        // P55: ollama_cloud review default 는 kimi-k2.6:cloud (long context + JSON).
+        "ollama_cloud" => config.graph.cloud_model.clone().unwrap_or_else(|| {
+            warn_using_default(
+                "wiki.review_model",
+                secall_core::llm::defaults::WIKI_REVIEW_OLLAMA_CLOUD_DEFAULT,
+            );
+            secall_core::llm::defaults::WIKI_REVIEW_OLLAMA_CLOUD_DEFAULT.to_string()
+        }),
         _ => {
             warn_using_default("wiki.review_model", WIKI_REVIEW_DEFAULT);
             WIKI_REVIEW_DEFAULT.to_string()
@@ -1150,7 +1185,7 @@ pub fn resolve_review_backend(cli: Option<&str>, config: &Config) -> String {
     }
     if matches!(
         config.wiki.default_backend.as_str(),
-        "claude" | "codex" | "haiku" | "ollama" | "lmstudio"
+        "claude" | "codex" | "haiku" | "ollama" | "ollama_cloud" | "lmstudio"
     ) {
         return config.wiki.default_backend.clone();
     }
@@ -1202,7 +1237,32 @@ fn build_reviewer(
                 .or_else(|| config.graph.ollama_url.clone())
                 .unwrap_or_else(|| "http://localhost:11434".to_string()),
             model: model.to_string(),
+            api_key: None,
         })),
+        // P55: Ollama Cloud backend for wiki review. OLLAMA_CLOUD_API_KEY 또는
+        // config 의 cloud_api_key 필요. graph 의 cloud_host 와 같은 endpoint 사용.
+        "ollama_cloud" => {
+            let api_key = std::env::var("OLLAMA_CLOUD_API_KEY")
+                .ok()
+                .or_else(|| config.graph.cloud_api_key.clone())
+                .or_else(|| config.log.cloud_api_key.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "ollama cloud api key not set \
+                         (set OLLAMA_CLOUD_API_KEY env or [graph].cloud_api_key in config.toml)"
+                    )
+                })?;
+            let api_url = config
+                .graph
+                .cloud_host
+                .clone()
+                .unwrap_or_else(|| "https://ollama.com".to_string());
+            Ok(Box::new(secall_core::wiki::OllamaReviewer {
+                api_url,
+                model: model.to_string(),
+                api_key: Some(api_key),
+            }))
+        }
         "lmstudio" => Ok(Box::new(secall_core::wiki::LmStudioReviewer {
             api_url: config
                 .wiki

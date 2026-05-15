@@ -18,6 +18,7 @@ async fn ollama_reviewer_parses_valid_response() {
     let result = OllamaReviewer {
         api_url: server.url(),
         model: "gemma4".into(),
+        api_key: None,
     }
     .review("page", "summary")
     .await
@@ -56,6 +57,7 @@ async fn ollama_reviewer_retries_on_parse_failure() {
     let result = OllamaReviewer {
         api_url: server.url(),
         model: "gemma4".into(),
+        api_key: None,
     }
     .review("page", "summary")
     .await
@@ -115,6 +117,7 @@ async fn ollama_reviewer_fails_after_two_parse_failures() {
     let err = OllamaReviewer {
         api_url: server.url(),
         model: "gemma4".into(),
+        api_key: None,
     }
     .review("page", "summary")
     .await

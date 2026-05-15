@@ -9,6 +9,9 @@ pub const WIKI_CLAUDE_DEFAULT: &str = "sonnet";
 pub const WIKI_CODEX_DEFAULT: &str = "gpt-5.4";
 // P51: review 는 짧은 issue 분류 작업이라 sonnet → haiku 로 강등 (속도/비용↓).
 pub const WIKI_REVIEW_DEFAULT: &str = "haiku";
+// P55: ollama_cloud backend 사용 시 review 디폴트 모델 (kimi-k2.6 의 long context +
+// JSON 출력 안정성). ANTHROPIC_API_KEY 가 없는 환경에서 cloud 키로 대체 가능.
+pub const WIKI_REVIEW_OLLAMA_CLOUD_DEFAULT: &str = "kimi-k2.6:cloud";
 pub const LOG_OLLAMA_DEFAULT: &str = GRAPH_OLLAMA_DEFAULT;
 pub const LOG_OLLAMA_CLOUD_DEFAULT: &str = "kimi-k2.6:cloud";
 pub const LOG_CONTEXT_CHAR_LIMIT: usize = 400_000;
