@@ -55,11 +55,13 @@ pub async fn run_with_progress(
         .backend
         .clone()
         .unwrap_or_else(|| "(default)".to_string());
-    let target_label = args
-        .session
-        .as_deref()
-        .map(|s| format!("session:{}", &s[..s.len().min(8)]))
-        .unwrap_or_else(|| "all sessions".to_string());
+    let target_label = if let Some(sid) = args.session.as_deref() {
+        format!("session:{}", &sid[..sid.len().min(8)])
+    } else if let Some(s) = args.since.as_deref() {
+        format!("sessions since {s}")
+    } else {
+        "all sessions".to_string()
+    };
 
     sink.phase_start("prompt_build").await;
     sink.message(&format!(
@@ -209,8 +211,12 @@ async fn run_update_with_sink(
         return Ok(pages_written);
     }
 
+    // P53: --since 옵션을 target 표시에도 반영 (이전: session 만 보고, since 는
+    // 무조건 "all sessions" 로 표시되어 사용자 혼란).
     let target = if let Some(sid) = session {
         format!("session {}", &sid[..sid.len().min(8)])
+    } else if let Some(s) = since {
+        format!("sessions since {s}")
     } else {
         "all sessions".to_string()
     };
