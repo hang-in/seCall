@@ -65,7 +65,10 @@ impl WikiBackend for ClaudeBackend {
             .ok_or_else(|| anyhow::anyhow!("claude stdout pipe missing"))?;
         let mut reader = BufReader::new(stdout);
 
-        // P52: 300s timeout 유지. kill_on_drop=true 라 timeout 시 자동 SIGKILL.
+        // P52/P59: 1800s timeout. wiki prompt 가 수천 세션 분석을 요청하면
+        // claude CLI 가 정상적으로도 10~20분 걸린다 (sync-monitor 2026-05-15 에서
+        // 5분 300s timeout 으로 정상 케이스도 SIGKILL 당하는 회귀 관측).
+        // kill_on_drop=true 라 timeout 시 자동 SIGKILL.
         let stream_and_wait = async {
             let mut buf = String::new();
             let mut line_buf = String::new();
@@ -86,9 +89,9 @@ impl WikiBackend for ClaudeBackend {
         };
 
         let (status, buffer) =
-            tokio::time::timeout(std::time::Duration::from_secs(300), stream_and_wait)
+            tokio::time::timeout(std::time::Duration::from_secs(1800), stream_and_wait)
                 .await
-                .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 300s"))??;
+                .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 1800s"))??;
 
         if !status.success() {
             anyhow::bail!("claude exited with code {:?}", status.code());
