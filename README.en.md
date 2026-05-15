@@ -792,11 +792,11 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 ## Updates
 
-> NOTE: git tag (v0.x.x) is the SSOT. P34~P44 in the table below are internal phases of the v0.4.0 release, and P49~P55 are phases of v0.5.0.
+> NOTE: git tag (v0.x.x) is the SSOT. P34~P44 in the table below are internal phases of the v0.4.0 release, and P49~P56 are phases of v0.5.0.
 
 | Date | Version/Phase | Changes |
 |------|---------|---------|
-| 2026-05-15 | **v0.5.0** | Cumulative release (P49~P55) — TMPDIR/secall-prompt noise ingest filter (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian auto-hidden, breaking), `LlmBackend` trait + 4-backend unification (P50-B), wiki/ingest large-function decomposition (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4-backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target label fix (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` fields + claude CLI `haiku` alias (P56) |
+| 2026-05-15 | **v0.5.0** | Cumulative release (P49~P56) — TMPDIR/secall-prompt noise ingest filter (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian auto-hidden, breaking), `LlmBackend` trait + 4-backend unification (P50-B), wiki/ingest large-function decomposition (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4-backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target label fix (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` fields + claude CLI `haiku` alias (P56) |
 | 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` now auto-runs `auto_commit + pull` at startup, regenerates conflicted `wiki/*.md` pages from the union of both sides' `sources`, adds `--no-pull`, and removes body concatenation from `merge_with_existing()` |
 | 2026-05-09 | P43 (v0.4.0+) | Wiki review backend expansion: `wiki update --review` now supports `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic`, adds `[wiki].review_backend` + `--review-backend`, preserves user comments with `toml_edit` config saves, and adds `docs/reference/llm-config.md` |
 | 2026-05-09 | P41 (v0.4.0+) | LLM config integration: `secall log --backend/--model`, new `[log]` section, centralized default-model constants + warnings, `GET /api/config` / `PATCH /api/config/{section}`, web `/settings`, `secall config llm show\|set\|where` |

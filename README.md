@@ -771,11 +771,11 @@ Claude Code 설정 (`~/.claude/settings.json`)에 추가:
 
 ## 업데이트 이력
 
-> NOTE: git tag (v0.x.x) 가 SSOT. 아래 표의 P34~P44 는 v0.4.0 release 의 내부 phase, P49~P55 는 v0.5.0 release 의 phase.
+> NOTE: git tag (v0.x.x) 가 SSOT. 아래 표의 P34~P44 는 v0.4.0 release 의 내부 phase, P49~P56 는 v0.5.0 release 의 phase.
 
 | 날짜 | 버전/Phase | 변경사항 |
 |------|------|---------|
-| 2026-05-15 | **v0.5.0** | 누적 release (P49~P55) — TMPDIR/secall-prompt 노이즈 ingest 차단 (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian 자동 hidden, breaking), `LlmBackend` trait + 4 백엔드 통합 (P50-B), wiki/ingest 거대 함수 분해 (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4 backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target 표시 정확화 (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` 필드 + claude CLI `haiku` alias (P56) |
+| 2026-05-15 | **v0.5.0** | 누적 release (P49~P56) — TMPDIR/secall-prompt 노이즈 ingest 차단 (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian 자동 hidden, breaking), `LlmBackend` trait + 4 백엔드 통합 (P50-B), wiki/ingest 거대 함수 분해 (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4 backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target 표시 정확화 (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` 필드 + claude CLI `haiku` alias (P56) |
 | 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` 시작 시 자동 `auto_commit + pull`, `wiki/*.md` 충돌 시 양쪽 `sources` 합집합 기반 자동 재생성, `--no-pull` 추가, `merge_with_existing()` 본문 누적 제거 |
 | 2026-05-09 | P43 (v0.4.0+) | Wiki review backend 확장: `wiki update --review` 가 `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic` backend 를 지원, `[wiki].review_backend` + `--review-backend` 추가, `toml_edit` 기반 config 저장으로 사용자 주석 보존, `docs/reference/llm-config.md` 추가 |
 | 2026-05-09 | P41 (v0.4.0+) | LLM 설정 통합: `secall log --backend/--model`, 신규 `[log]` 섹션, hard-coded default model 상수화 + warning, `GET /api/config` / `PATCH /api/config/{section}`, Web `/settings`, `secall config llm show\|set\|where` |
