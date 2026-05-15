@@ -74,9 +74,10 @@ pub fn run(json: bool, errors_only: bool, fix: bool, fix_orphan_vault: bool) -> 
         run_fix_orphan_vault(&config, &report)?;
     }
 
-    // Exit with code 1 if there are errors (after fix, re-count)
-    let remaining_errors = if fix || fix_orphan_vault {
-        // Re-run lint to get updated count
+    // Exit with code 1 if there are errors (after fix, re-count).
+    // Gemini PR #63: fix_orphan_vault 만 사용 시 L002(Warn) 처리라
+    // errors 카운트에 영향 없음 → 불필요한 rerun 회피.
+    let remaining_errors = if fix {
         let updated = run_lint(&db, &config)?;
         updated.summary.errors
     } else {
@@ -142,7 +143,12 @@ fn run_fix_orphan_vault(
         return Ok(());
     }
 
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    // Gemini PR #63: archive 디렉토리 날짜를 system UTC 가 아닌 config.output.timezone
+    // 기준으로 — 다른 vault 출력 (raw md frontmatter date 등) 과 일관.
+    let today = chrono::Utc::now()
+        .with_timezone(&config.timezone())
+        .format("%Y-%m-%d")
+        .to_string();
     let archive_root = config
         .vault
         .path

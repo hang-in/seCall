@@ -166,7 +166,7 @@ enum Commands {
         #[arg(long)]
         fix: bool,
 
-        /// Auto-fix orphan vault files (L002) — vault md 가 DB 에 없으면 archive 로 이동
+        /// Auto-fix orphan vault files (L002) — move vault md to archive if not in DB
         #[arg(long)]
         fix_orphan_vault: bool,
     },
