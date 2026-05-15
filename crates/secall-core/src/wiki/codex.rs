@@ -47,7 +47,10 @@ impl WikiBackend for CodexBackend {
             stdin.shutdown().await?;
         }
 
-        let status = child.wait().await?;
+        // P52: codex CLI 가 hang 하는 사례 회피. 300s 한도, kill_on_drop=true.
+        let status = tokio::time::timeout(std::time::Duration::from_secs(300), child.wait())
+            .await
+            .map_err(|_| anyhow::anyhow!("codex wiki generation timed out after 300s"))??;
         if !status.success() {
             anyhow::bail!("codex exited with code {:?}", status.code());
         }

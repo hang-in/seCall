@@ -46,7 +46,15 @@ impl WikiBackend for ClaudeBackend {
             stdin.shutdown().await?;
         }
 
-        let output = child.wait_with_output().await?;
+        // P52: claude CLI 가 stream / internal lock 으로 hang 하는 사례 회피.
+        // wiki 생성은 review 보다 출력이 길어 300s 한도. kill_on_drop=true 라
+        // timeout 시 자동 SIGKILL.
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            child.wait_with_output(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 300s"))??;
         if !output.status.success() {
             anyhow::bail!("claude exited with code {:?}", output.status.code());
         }

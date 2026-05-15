@@ -16,7 +16,10 @@ impl WikiBackend for OllamaBackend {
     }
 
     async fn generate(&self, prompt: &str) -> anyhow::Result<String> {
-        let client = reqwest::Client::new();
+        // P52: ollama server hang 회피. wiki 생성은 출력이 길어 300s 한도.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()?;
         let mut req =
             client
                 .post(format!("{}/api/generate", self.api_url))
