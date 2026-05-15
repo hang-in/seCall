@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
 use super::WikiBackend;
 
@@ -50,20 +50,49 @@ impl WikiBackend for ClaudeBackend {
             stdin.shutdown().await?;
         }
 
-        // P52: claude CLI 가 stream / internal lock 으로 hang 하는 사례 회피.
-        // wiki 생성은 review 보다 출력이 길어 300s 한도. kill_on_drop=true 라
-        // timeout 시 자동 SIGKILL.
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
-            child.wait_with_output(),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 300s"))??;
-        if !output.status.success() {
-            anyhow::bail!("claude exited with code {:?}", output.status.code());
-        }
+        // P58: claude stdout 을 line stream 으로 stderr 에 echo + buffer 누적.
+        // 이전 (P52) 의 wait_with_output 은 모든 출력이 모이고 나서야 사용자가
+        // 봤음 → 5분 timeout 동안 사용자는 "아무 반응 없음" 으로 인식 + Ctrl+C
+        // 유혹. 이제 매 line 받는 즉시 `[claude]` prefix 로 stderr 에 echo,
+        // 동시에 buffer 에 원본 line 그대로 누적해 wiki page 본문으로 반환.
+        //
+        // Gemini PR #68: `Lines::next_line()` 은 매 line 마다 새 String 할당 +
+        // 줄바꿈 (`\r\n` vs `\n`) 손실. `read_line` 으로 buffer 재사용 + 원본
+        // 보존 (Windows CRLF 환경 호환).
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("claude stdout pipe missing"))?;
+        let mut reader = BufReader::new(stdout);
 
-        String::from_utf8(output.stdout)
-            .map_err(|e| anyhow::anyhow!("claude stdout was not UTF-8: {e}"))
+        // P52: 300s timeout 유지. kill_on_drop=true 라 timeout 시 자동 SIGKILL.
+        let stream_and_wait = async {
+            let mut buf = String::new();
+            let mut line_buf = String::new();
+            loop {
+                line_buf.clear();
+                let n = reader.read_line(&mut line_buf).await?;
+                if n == 0 {
+                    break;
+                }
+                // stderr echo 는 trailing newline 제거한 형태 (eprintln 이 추가).
+                let trimmed = line_buf.trim_end_matches(['\r', '\n']);
+                eprintln!("  [claude] {}", trimmed);
+                // buffer 는 원본 line ending 보존.
+                buf.push_str(&line_buf);
+            }
+            let status = child.wait().await?;
+            Ok::<_, anyhow::Error>((status, buf))
+        };
+
+        let (status, buffer) =
+            tokio::time::timeout(std::time::Duration::from_secs(300), stream_and_wait)
+                .await
+                .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 300s"))??;
+
+        if !status.success() {
+            anyhow::bail!("claude exited with code {:?}", status.code());
+        }
+        Ok(buffer)
     }
 }
