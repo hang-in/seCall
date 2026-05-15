@@ -115,6 +115,11 @@ pub struct WikiBackendConfig {
     /// 최대 생성 토큰 수
     #[serde(default = "default_wiki_max_tokens")]
     pub max_tokens: u32,
+    /// P56: ollama_cloud backend 의 bearer auth 키. 없으면 OLLAMA_CLOUD_API_KEY env
+    /// 또는 graph/log 의 cloud_api_key 로 fallback.
+    pub cloud_api_key: Option<String>,
+    /// P56: ollama_cloud backend 의 base URL (default `https://ollama.com`).
+    pub cloud_host: Option<String>,
 }
 
 fn default_wiki_max_tokens() -> u32 {
@@ -127,6 +132,8 @@ impl Default for WikiBackendConfig {
             api_url: None,
             model: None,
             max_tokens: default_wiki_max_tokens(),
+            cloud_api_key: None,
+            cloud_host: None,
         }
     }
 }

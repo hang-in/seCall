@@ -25,8 +25,12 @@ impl WikiBackend for ClaudeBackend {
             );
         }
 
+        // P56: review default (WIKI_REVIEW_DEFAULT="haiku") 가 claude CLI 에서
+        // 의도대로 동작하도록 alias 추가. 이전엔 "haiku" → fallback sonnet 으로
+        // 매핑되어 review default 효과 없었음.
         let model_id = match self.model.as_str() {
             "opus" => "claude-opus-4-6",
+            "haiku" => "claude-haiku-4-5",
             _ => "claude-sonnet-4-6",
         };
 
