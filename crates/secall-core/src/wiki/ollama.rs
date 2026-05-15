@@ -74,18 +74,15 @@ async fn consume_ndjson_stream(resp: reqwest::Response) -> anyhow::Result<String
             if line.trim().is_empty() {
                 continue;
             }
-            let value: serde_json::Value = serde_json::from_str(&line)
-                .map_err(|e| anyhow::anyhow!("Ollama NDJSON parse error: {} (line: {})", e, line))?;
+            let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
+                anyhow::anyhow!("Ollama NDJSON parse error: {} (line: {})", e, line)
+            })?;
             if let Some(piece) = value.get("response").and_then(|v| v.as_str()) {
                 full.push_str(piece);
                 echo_pending.push_str(piece);
                 flush_echo(&mut echo_pending, false);
             }
-            if value
-                .get("done")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            if value.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
                 flush_echo(&mut echo_pending, true);
                 return Ok(full);
             }

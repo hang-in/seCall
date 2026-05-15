@@ -146,7 +146,11 @@ mod tests {
         };
 
         let result = backend.generate("test prompt").await;
-        assert!(result.is_ok(), "generate should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "generate should succeed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), "wiki content");
         mock.assert_async().await;
     }
