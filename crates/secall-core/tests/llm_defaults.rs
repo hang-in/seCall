@@ -12,7 +12,7 @@ fn llm_default_constants_match_expected_values() {
     assert_eq!(GRAPH_OLLAMA_CLOUD_DEFAULT, "gemma4:31b-cloud");
     assert_eq!(WIKI_CLAUDE_DEFAULT, "sonnet");
     assert_eq!(WIKI_CODEX_DEFAULT, "gpt-5.4");
-    assert_eq!(WIKI_REVIEW_DEFAULT, "sonnet");
+    assert_eq!(WIKI_REVIEW_DEFAULT, "haiku");
     assert_eq!(LOG_OLLAMA_DEFAULT, GRAPH_OLLAMA_DEFAULT);
     assert_eq!(LOG_OLLAMA_CLOUD_DEFAULT, "kimi-k2.6:cloud");
 }
