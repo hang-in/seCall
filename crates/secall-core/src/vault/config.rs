@@ -188,7 +188,10 @@ impl Default for GraphConfig {
     fn default() -> Self {
         GraphConfig {
             semantic: true,
-            semantic_backend: "ollama".to_string(),
+            // P51: cloud 우선 (`OLLAMA_CLOUD_API_KEY` 또는 `[graph].cloud_api_key`
+            // 가 설정돼 있어야 동작). 키 없으면 호출 시 명시 에러로 실패한다.
+            // local 강제 시 config 에 `semantic_backend = "ollama"` 명시.
+            semantic_backend: "ollama_cloud".to_string(),
             ollama_url: None,
             ollama_model: None,
             anthropic_model: None,
@@ -199,10 +202,14 @@ impl Default for GraphConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LogConfig {
-    /// Daily log backend (None이면 graph.semantic_backend → "ollama" 폴백)
+    /// Daily log backend.
+    ///
+    /// P51: 디폴트는 `Some("ollama_cloud")` — cloud 우선. None 이면 호출자가
+    /// `graph.semantic_backend` 로 폴백한다. config 에 명시한 값이 있으면 그것을
+    /// 사용한다.
     pub backend: Option<String>,
     /// Model override for the selected log backend
     pub model: Option<String>,
@@ -216,6 +223,21 @@ pub struct LogConfig {
     pub cloud_model: Option<String>,
     /// Ollama Cloud API key (config field; env OLLAMA_CLOUD_API_KEY 우선)
     pub cloud_api_key: Option<String>,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        LogConfig {
+            // P51: cloud 우선. `OLLAMA_CLOUD_API_KEY` 가 설정돼 있어야 실 동작.
+            backend: Some("ollama_cloud".to_string()),
+            model: None,
+            api_url: None,
+            max_tokens: None,
+            cloud_host: None,
+            cloud_model: None,
+            cloud_api_key: None,
+        }
+    }
 }
 
 /// 단일 세션 분류 규칙

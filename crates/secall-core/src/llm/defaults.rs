@@ -7,7 +7,8 @@ pub const GRAPH_ANTHROPIC_DEFAULT: &str = "claude-haiku-4-5-20251001";
 pub const GRAPH_OLLAMA_CLOUD_DEFAULT: &str = "gemma4:31b-cloud";
 pub const WIKI_CLAUDE_DEFAULT: &str = "sonnet";
 pub const WIKI_CODEX_DEFAULT: &str = "gpt-5.4";
-pub const WIKI_REVIEW_DEFAULT: &str = "sonnet";
+// P51: review 는 짧은 issue 분류 작업이라 sonnet → haiku 로 강등 (속도/비용↓).
+pub const WIKI_REVIEW_DEFAULT: &str = "haiku";
 pub const LOG_OLLAMA_DEFAULT: &str = GRAPH_OLLAMA_DEFAULT;
 pub const LOG_OLLAMA_CLOUD_DEFAULT: &str = "kimi-k2.6:cloud";
 pub const LOG_CONTEXT_CHAR_LIMIT: usize = 400_000;
