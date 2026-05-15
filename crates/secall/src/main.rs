@@ -165,6 +165,10 @@ enum Commands {
         /// Auto-fix: delete stale DB records for missing vault files (L001)
         #[arg(long)]
         fix: bool,
+
+        /// Auto-fix orphan vault files (L002) — vault md 가 DB 에 없으면 archive 로 이동
+        #[arg(long)]
+        fix_orphan_vault: bool,
     },
 
     /// Start MCP server
@@ -547,8 +551,9 @@ async fn main() -> anyhow::Result<()> {
             json,
             errors_only,
             fix,
+            fix_orphan_vault,
         } => {
-            commands::lint::run(json, errors_only, fix)?;
+            commands::lint::run(json, errors_only, fix, fix_orphan_vault)?;
         }
         Commands::Mcp { http } => {
             commands::mcp::run(http).await?;
