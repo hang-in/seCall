@@ -96,8 +96,15 @@ async fn ollama_cloud_api_key_env_sets_both_graph_and_log() {
 
 // ─── P48: generate_log_body ollama_cloud arm 통합 회귀 테스트 ────────────────
 
+/// P60: ollama 백엔드가 stream=true 로 전환되어 응답이 NDJSON 라인 스트림.
 fn ollama_generate_response() -> String {
-    serde_json::json!({ "response": "생성된 일기 내용" }).to_string()
+    [
+        r#"{"response":"생성된 ","done":false}"#,
+        r#"{"response":"일기 내용","done":false}"#,
+        r#"{"response":"","done":true}"#,
+    ]
+    .join("\n")
+        + "\n"
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
