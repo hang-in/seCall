@@ -101,7 +101,7 @@ Obsidian-compatible markdown vault with two layers:
 
 ```
 vault/
-├── raw/sessions/    # Immutable session transcripts
+├── raw/.sessions/   # Immutable session transcripts (dot-prefix → obsidian auto-hidden, v0.5.0+)
 │   └── YYYY-MM-DD/  # Organized by date
 ├── wiki/            # AI-generated knowledge pages
 │   ├── projects/    # Per-project summaries

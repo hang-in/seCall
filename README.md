@@ -100,7 +100,7 @@ Obsidian 호환 마크다운 볼트 (2계층 구조):
 
 ```
 vault/
-├── raw/sessions/    # 불변 세션 원본
+├── raw/.sessions/   # 불변 세션 원본 (dot-prefix → obsidian 자동 hidden, v0.5.0+)
 │   └── YYYY-MM-DD/  # 날짜별 정리
 ├── wiki/            # AI 생성 지식 페이지
 │   ├── projects/    # 프로젝트별 요약

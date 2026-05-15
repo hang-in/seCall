@@ -1,5 +1,46 @@
 # Changelog
 
+> NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
+
+## v0.5.0 (2026-05-15)
+
+P49 ~ P55 누적 — 데이터 품질 / 클라우드 LLM 통합 / 거대 함수 분해 / wiki hang 차단.
+
+### ⚠️ Breaking changes
+
+- **vault 디렉토리 rename**: `raw/sessions/` → `raw/.sessions/` (#57, P49). obsidian 의 core 인덱서 + dataview / graph 가 dot-prefix 디렉토리를 자동 hidden 처리 → vault freeze (1259+ 새 md 한번에 들어올 때) 회피. 기존 vault 사용자는 `mv raw/sessions raw/.sessions` + `UPDATE sessions SET vault_path = REPLACE(vault_path, 'raw/sessions/', 'raw/.sessions/')` 마이그레이션 필요.
+- **`[graph] semantic_backend` / `[log] backend` default cloud** (#60, P51): 디폴트가 `"ollama_cloud"`. `OLLAMA_CLOUD_API_KEY` 없는 환경은 config 에 `backend = "ollama"` 명시 필요.
+- **`OllamaReviewer` 시그니처 변경** (#64, P55): `api_key: Option<String>` 필드 추가. 외부 사용처는 `api_key: None` 필요.
+
+### ✨ Features
+
+- **TMPDIR/secall-prompt 노이즈 ingest 차단** (#57, P49): cwd 가 `$TMPDIR` 또는 첫 user turn 이 secall summary prompt prefix 면 skip. 자기참조 ingest 루프 회피.
+- **vault 렌더링 헤더 강등** (#57, P49): 같은 role 의 연속 turn 헤더 h2 → h3 (role 명 생략). 한 LLM 응답이 tool_use 별로 쪼개져 `## Turn N — Assistant` 가 도배되던 노이즈 제거.
+- **`LlmBackend` trait + 4 백엔드 통합** (#58, P50-B): graph semantic 추출의 Anthropic / Ollama / Ollama-Cloud / OpenAI-compat 직접 HTTP 호출이 trait 한 곳으로 통합. wiki/mod.rs 의 WikiBackend 패턴 차용.
+- **wiki/ingest 거대 함수 분해** (#59, P50-C/D/E): `run_update_with_sink` (405L) / `ingest_sessions` (369L) 를 dispatcher + 4-5 helper 로 분리. `write_wiki_page` / `maybe_review_with_regen` 중복 제거.
+- **graph/log 디폴트 cloud + wiki review haiku** (#60, P51): config 미설정 시 cloud 사용 (`gemma4:31b-cloud` / `kimi-k2.6:cloud`). review default sonnet → haiku.
+- **`--fix-orphan-vault` 옵션** (#63, P54): `secall lint --fix-orphan-vault` 가 L002 finding (vault md ↔ DB session 불일치) 의 md 를 `<vault>/archive/orphan-<YYYY-MM-DD>/` 로 이동 (삭제가 아닌 archive).
+- **`ollama_cloud` wiki review/generation backend** (#64, P55): Anthropic 키 없는 환경에서도 cloud 로 review/wiki 가능. `OLLAMA_CLOUD_API_KEY` + bearer auth.
+
+### 🐛 Fixes
+
+- **wiki backend `generate()` 4종 모두 300s timeout** (#61, P52): claude / codex CLI 와 ollama / lmstudio HTTP 가 timeout 없이 무한 hang 가능했음. "sonnet 계속 로딩" 사용자 보고의 root cause 차단. `kill_on_drop` + tokio timeout 조합.
+- **`wiki update --since` 표시 정확화** (#62, P53): stderr 메시지가 `--since` 옵션을 반영 안 하고 무조건 `all sessions` 로 표기되던 이슈. `build_target_label` helper 로 통일.
+
+### 🧹 Refactor / Internal
+
+- `graph/llm.rs` 신규 (P50-B): trait + 4 backend impl, 단위 테스트 5건
+- `commands/wiki.rs` 모드별 dispatcher 분리 (P50-D): preflight_vault_git / process_haiku_batch / process_haiku_incremental / process_generic_backend
+- `commands/ingest.rs` 분해 (P50-E): compile_classification_rules / ingest_path / embed_vector_tasks / extract_semantic_edges_batch
+- secall-core unwrap audit (821건) — production 위험 0 확인
+
+### 🔍 검증 (sync-monitor 2026-05-15)
+
+- graph rebuild cloud: 1240 sessions 100% 성공 (3469 edges)
+- log diary cloud: kimi-k2.6:cloud 15s 한국어 일기 정상
+- wiki claude CLI 5분 hang → P52 timeout 정확히 300s 발동 + SIGKILL 차단
+- embed 1240/26946 chunks 정상 (local Ollama)
+
 ## v0.2.3 (2026-04-09)
 
 ### Added
