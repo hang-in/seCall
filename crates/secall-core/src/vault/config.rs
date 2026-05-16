@@ -436,6 +436,26 @@ impl Config {
         use anyhow::Context as _;
 
         let path = Self::config_path();
+
+        // P68: test 환경에서 SECALL_CONFIG_PATH 미설정 시 production config 를
+        // 덮어쓰는 사고 방지. 2026-05-16 cargo test 가 사용자 환경의
+        // `[vault].path` 를 `save_preserves_top_level_comments` 의 hardcoded
+        // 값 `/tmp/changed` 로 덮어쓴 사고 (P58 race fix 머지 전) 회복 후
+        // 도입. 단위 테스트 (#[cfg(test)] 적용 범위) 한정 — integration tests
+        // 의 경우는 core-backlog 후속 항목 (runtime guard 또는 helper 분리).
+        #[cfg(test)]
+        {
+            if std::env::var("SECALL_CONFIG_PATH").is_err() {
+                anyhow::bail!(
+                    "Config::save() called without SECALL_CONFIG_PATH in test \
+                     context — refusing to write production config at {:?}. \
+                     테스트는 SECALL_CONFIG_PATH 를 tempdir 로 set 한 후 \
+                     save() 를 호출해야 합니다.",
+                    path
+                );
+            }
+        }
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -879,5 +899,25 @@ path = "/tmp/test"
         assert!(saved.contains("[log]"));
         assert!(saved.contains(r#"backend = "ollama""#));
         assert!(saved.contains(r#"path = "/tmp/test""#));
+    }
+
+    /// P68: test 환경에서 `SECALL_CONFIG_PATH` 미설정 시 `Config::save()` 가
+    /// production config 를 덮어쓰지 못하도록 가드. 2026-05-16 사고 회귀 방지.
+    #[test]
+    fn save_refuses_in_test_context_without_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        // 다른 테스트의 잔여 set 이 있을 수 있어 명시적 unset.
+        std::env::remove_var("SECALL_CONFIG_PATH");
+        let config = Config::default();
+        let result = config.save();
+        assert!(
+            result.is_err(),
+            "save() must refuse without SECALL_CONFIG_PATH in test context"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("SECALL_CONFIG_PATH"),
+            "error must mention SECALL_CONFIG_PATH, got: {msg}"
+        );
     }
 }
