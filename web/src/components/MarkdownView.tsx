@@ -2,6 +2,7 @@ import { Fragment, type ReactNode, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
+import { remarkObsidianCallouts } from "@/lib/remarkObsidianCallouts";
 // remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
@@ -96,6 +97,12 @@ export function MarkdownView({ content, query, className }: Props) {
       // 위에 sources/tags 가 노출됐다.
       remarkFrontmatter,
       remarkGfm,
+      // remarkObsidianCallouts: vault session md 의 `> [!tool]- Title` 같은
+      // Obsidian callout 을 `<details class="callout callout-tool">` 로 변환.
+      // claude-code session md 의 thinking/tool 블록이 폴딩 가능한 박스로
+      // 표시되도록 한다. P49 의 `### Turn N` (같은 role 연속) 강등과 결합되어
+      // 본문이 turn 별 callout 묶음으로 자연스럽게 펼침/접힘.
+      remarkObsidianCallouts,
       [
         remarkWikiLink,
         {
@@ -123,9 +130,12 @@ export function MarkdownView({ content, query, className }: Props) {
         ...(defaultSchema.attributes ?? {}),
         // Gemini PR #77 리뷰: <details open> 의 open 속성 + 브라우저 토글 시
         // 추가되는 open 속성도 허용해야 함.
+        // P81: remarkObsidianCallouts 가 details 에 className="callout callout-<type>"
+        // 을 부여하므로 className 허용 (callout / callout-* 접두사 한정).
         details: [
           ...((defaultSchema.attributes ?? {}).details ?? []),
           "open",
+          ["className", "callout", /^callout-/],
         ],
         code: [
           ...((defaultSchema.attributes ?? {}).code ?? []),

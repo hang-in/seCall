@@ -231,3 +231,34 @@
     box-shadow: 0 1px 0 var(--border-soft);
   }
 }
+
+@layer utilities {
+  /* P81: Obsidian-style callout (remarkObsidianCallouts plugin 이 생성한
+     <details class="callout callout-<type>"> 노드에 적용). */
+  .callout {
+    border-left: 3px solid var(--border-soft);
+    background: var(--surface-2);
+    border-radius: var(--r-1, 6px);
+    padding: 6px 12px;
+    margin: 12px 0;
+  }
+  .callout > summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-2);
+    user-select: none;
+    padding: 2px 0;
+    list-style-position: inside;
+  }
+  .callout[open] > summary {
+    margin-bottom: 4px;
+  }
+  .callout-thinking { border-left-color: var(--info, #5b8def); }
+  .callout-tool { border-left-color: var(--warn, #d4a657); }
+  .callout-info, .callout-note { border-left-color: var(--info, #5b8def); }
+  .callout-tip, .callout-success { border-left-color: var(--success, #4caf7d); }
+  .callout-warning, .callout-warn { border-left-color: var(--warn, #d4a657); }
+  .callout-error, .callout-danger, .callout-bug, .callout-failure { border-left-color: var(--danger, #d96e6e); }
+  .callout-quote, .callout-cite { border-left-color: var(--text-3); }
+  .callout-example { border-left-color: var(--accent, #8b6fdb); }
+}
