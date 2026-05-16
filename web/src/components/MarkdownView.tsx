@@ -1,6 +1,18 @@
-import { Fragment, type ReactNode, useMemo } from "react";
+import {
+  Fragment,
+  type ReactNode,
+  useMemo,
+  useState,
+  type MouseEvent,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+// remark-wiki-link / rehype-raw / rehype-highlight: 외부 plugin, 일부는 자체 d.ts 가 부정확.
+import remarkWikiLink from "remark-wiki-link";
+import rehypeRaw from "rehype-raw";
+import rehypeHighlight from "rehype-highlight";
+import { NavLink } from "react-router";
+import "highlight.js/styles/github-dark.css";
 import { highlightTerms, tokenizeQuery } from "@/lib/highlight";
 
 interface Props {
@@ -15,7 +27,12 @@ interface Props {
 
 /**
  * 세션 본문 마크다운 렌더러. GFM (테이블/체크박스/취소선) 지원.
- * 코드블록 syntax highlighting은 P35+ (현재는 prose의 기본 pre/code 스타일).
+ *
+ * P66 — 확장:
+ * - rehype-raw: `<details><summary>` 등 raw HTML 통과 (폴딩 동작)
+ * - rehype-highlight: 코드블록 syntax highlighting (highlight.js github-dark)
+ * - remark-wiki-link: `[[Page Name]]` Obsidian 스타일 wikilink → /wiki/...
+ * - h2/h3 click → 직후 sibling 그룹 collapse 토글 (▶/▼ 마커)
  *
  * P34 Task 02 — query가 있으면 본문 안의 매칭 토큰에 `<mark>`를 적용.
  * react-markdown components override는 `p / li / code` 의 children에서만 동작.
@@ -23,16 +40,79 @@ interface Props {
  */
 export function MarkdownView({ content, query, className }: Props) {
   const terms = useMemo(() => tokenizeQuery(query ?? ""), [query]);
-  const components = useMemo<Components | undefined>(() => {
-    if (terms.length === 0) return undefined;
+
+  const components = useMemo<Components>(() => {
     return {
       p: ({ children }) => <p>{wrapChildren(children, terms)}</p>,
       li: ({ children }) => <li>{wrapChildren(children, terms)}</li>,
-      code: ({ children, ...rest }) => (
-        <code {...rest}>{wrapChildren(children, terms)}</code>
+      code: ({ children, className: cls, ...rest }) => {
+        // rehype-highlight 가 코드블록 (pre > code) 에 hljs / language-* 클래스를 부여.
+        // 검색 하이라이트는 inline code 만 적용 (코드블록은 highlight.js 가 점유).
+        const isBlock = typeof cls === "string" && cls.includes("language-");
+        if (isBlock) {
+          return (
+            <code className={cls} {...rest}>
+              {children}
+            </code>
+          );
+        }
+        return (
+          <code className={cls} {...rest}>
+            {wrapChildren(children, terms)}
+          </code>
+        );
+      },
+      h2: ({ children }) => (
+        <CollapsibleHeading level={2}>{children}</CollapsibleHeading>
       ),
+      h3: ({ children }) => (
+        <CollapsibleHeading level={3}>{children}</CollapsibleHeading>
+      ),
+      a: ({ href, children, ...rest }) => {
+        // remark-wiki-link 가 [[Page]] 를 a[href=/wiki/Page] 로 만들어줌 (hrefTemplate 으로 강제).
+        if (typeof href === "string" && href.startsWith("/wiki/")) {
+          return (
+            <NavLink to={href} className="text-brand hover:underline">
+              {children}
+            </NavLink>
+          );
+        }
+        if (typeof href === "string" && /^https?:\/\//.test(href)) {
+          return (
+            <a href={href} target="_blank" rel="noreferrer" {...rest}>
+              {children}
+            </a>
+          );
+        }
+        return (
+          <a href={href} {...rest}>
+            {children}
+          </a>
+        );
+      },
     };
   }, [terms]);
+
+  const remarkPlugins = useMemo(
+    () => [
+      remarkGfm,
+      [
+        remarkWikiLink,
+        {
+          pageResolver: (name: string) => [normalizeWikiName(name)],
+          hrefTemplate: (permalink: string) => `/wiki/${permalink}`,
+          aliasDivider: "|",
+        },
+      ],
+    ],
+    [],
+  );
+
+  const rehypePlugins = useMemo(
+    // rehype-raw 가 먼저 raw HTML 을 hast 노드로 변환 → rehype-highlight 가 코드블록 처리.
+    () => [rehypeRaw, rehypeHighlight],
+    [],
+  );
 
   return (
     <div
@@ -56,7 +136,12 @@ export function MarkdownView({ content, query, className }: Props) {
         className ?? "",
       ].join(" ")}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        // @ts-expect-error remark-wiki-link 의 plugin 시그니처가 unified 의 PluggableList 와 정확히 안 맞음
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={components}
+      >
         {content}
       </ReactMarkdown>
     </div>
@@ -64,10 +149,66 @@ export function MarkdownView({ content, query, className }: Props) {
 }
 
 /**
+ * heading 자체에 collapse 상태를 둠. 클릭 시 ▶/▼ 마커만 토글하고
+ * 직후 sibling 의 시각적 숨김은 CSS sibling selector + data attribute 로 처리.
+ * 단순화: heading 다음 형제 그룹 숨김은 CSS [data-collapsed=true] ~ * { display:none }
+ * 까지는 React tree 에서 어렵기 때문에, 본 구현은 details/summary 폴딩이
+ * 메인 폴딩 메커니즘. heading collapse 는 marker + aria 만 토글 (MVP).
+ *
+ * 다음 sibling 그룹 숨김은 후속 작업 (DOM 직접 조작 필요).
+ */
+function CollapsibleHeading({
+  level,
+  children,
+}: {
+  level: 2 | 3;
+  children: ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const onClick = (e: MouseEvent<HTMLElement>) => {
+    // a/code 등 inline element 클릭은 무시 (링크 동작 보전).
+    const target = e.target as HTMLElement;
+    if (target.closest("a") || target.closest("code")) return;
+    setCollapsed((v) => !v);
+    // 다음 sibling 그룹 토글: 같은 또는 더 높은 레벨 heading 나올 때까지 숨김.
+    const headingEl = e.currentTarget;
+    let next = headingEl.nextElementSibling as HTMLElement | null;
+    const stopTags = new Set(["H1", "H2"].concat(level === 2 ? [] : ["H3"]));
+    while (next && !stopTags.has(next.tagName)) {
+      next.style.display = collapsed ? "" : "none";
+      next = next.nextElementSibling as HTMLElement | null;
+    }
+  };
+  const marker = collapsed ? "▶" : "▼";
+  const props = {
+    onClick,
+    "aria-expanded": !collapsed,
+    role: "button",
+    tabIndex: 0,
+    style: { cursor: "pointer", userSelect: "none" as const },
+    children: (
+      <>
+        <span className="text-text-2 mr-2 select-none">{marker}</span>
+        {children}
+      </>
+    ),
+  };
+  if (level === 2) return <h2 {...props} />;
+  return <h3 {...props} />;
+}
+
+function normalizeWikiName(name: string): string {
+  // [[Some Page]] → "Some Page" → "Some_Page" (URL-safe, NavLink to=/wiki/Some_Page).
+  // WikiRoute 가 hash/path 어떤 형식을 받는지는 별개 — 현재는 raw permalink 만 전달.
+  return name.trim().replace(/\s+/g, "_");
+}
+
+/**
  * react-markdown children은 string | ReactElement | array 형태.
  * string 노드만 highlight 적용, 그 외 (em/strong/link 등 inline element) 는 그대로 둔다.
  */
 function wrapChildren(children: ReactNode, terms: string[]): ReactNode {
+  if (terms.length === 0) return children;
   if (typeof children === "string") {
     return <>{highlightTerms(children, terms)}</>;
   }
