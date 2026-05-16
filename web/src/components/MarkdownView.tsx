@@ -1,13 +1,7 @@
-import {
-  Fragment,
-  type ReactNode,
-  useMemo,
-  useState,
-  type MouseEvent,
-  type KeyboardEvent,
-} from "react";
+import { Fragment, type ReactNode, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkFrontmatter from "remark-frontmatter";
 // remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
@@ -45,9 +39,14 @@ export function MarkdownView({ content, query, className }: Props) {
 
   const components = useMemo<Components>(() => {
     return {
-      p: ({ children }) => <p>{wrapChildren(children, terms)}</p>,
-      li: ({ children }) => <li>{wrapChildren(children, terms)}</li>,
-      code: ({ children, className: cls, ...rest }) => {
+      // node prop 은 react-markdown 의 hast 노드 — DOM element 에 spread 하면
+      // `node="[object Object]"` 가 그대로 attribute 로 박힌다. 모든 override
+      // 에서 명시적으로 destructure.
+      p: ({ node: _n, children }) => <p>{wrapChildren(children, terms)}</p>,
+      li: ({ node: _n, children, ...rest }) => (
+        <li {...rest}>{wrapChildren(children, terms)}</li>
+      ),
+      code: ({ node: _n, children, className: cls, ...rest }) => {
         // rehype-highlight 가 코드블록 (pre > code) 에 hljs / language-* 클래스를 부여.
         // 검색 하이라이트는 inline code 만 적용 (코드블록은 highlight.js 가 점유).
         const isBlock = typeof cls === "string" && cls.includes("language-");
@@ -64,13 +63,7 @@ export function MarkdownView({ content, query, className }: Props) {
           </code>
         );
       },
-      h2: ({ children }) => (
-        <CollapsibleHeading level={2}>{children}</CollapsibleHeading>
-      ),
-      h3: ({ children }) => (
-        <CollapsibleHeading level={3}>{children}</CollapsibleHeading>
-      ),
-      a: ({ href, children, ...rest }) => {
+      a: ({ node: _n, href, children, ...rest }) => {
         // remark-wiki-link 가 [[Page]] 를 a[href=/wiki/Page] 로 만들어줌 (hrefTemplate 으로 강제).
         if (typeof href === "string" && href.startsWith("/wiki/")) {
           return (
@@ -97,6 +90,11 @@ export function MarkdownView({ content, query, className }: Props) {
 
   const remarkPlugins = useMemo(
     () => [
+      // remark-frontmatter: vault md 의 `---\nyaml\n---` 를 frontmatter 노드로
+      // 인식해 본문 렌더링에서 제외. 이전엔 닫는 `---` 가 setext H2 underline
+      // 으로 잘못 해석되어 frontmatter 전체가 거대한 H2 로 표시되고 본문 시작
+      // 위에 sources/tags 가 노출됐다.
+      remarkFrontmatter,
       remarkGfm,
       [
         remarkWikiLink,
@@ -178,69 +176,6 @@ export function MarkdownView({ content, query, className }: Props) {
       </ReactMarkdown>
     </div>
   );
-}
-
-/**
- * heading 자체에 collapse 상태를 둠. 클릭 시 ▶/▼ 마커만 토글하고
- * 직후 sibling 의 시각적 숨김은 CSS sibling selector + data attribute 로 처리.
- * 단순화: heading 다음 형제 그룹 숨김은 CSS [data-collapsed=true] ~ * { display:none }
- * 까지는 React tree 에서 어렵기 때문에, 본 구현은 details/summary 폴딩이
- * 메인 폴딩 메커니즘. heading collapse 는 marker + aria 만 토글 (MVP).
- *
- * 다음 sibling 그룹 숨김은 후속 작업 (DOM 직접 조작 필요).
- */
-function CollapsibleHeading({
-  level,
-  children,
-}: {
-  level: 2 | 3;
-  children: ReactNode;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const onClick = (e: MouseEvent<HTMLElement>) => {
-    // a/code 등 inline element 클릭은 무시 (링크 동작 보전).
-    const target = e.target as HTMLElement;
-    if (target.closest("a") || target.closest("code")) return;
-    setCollapsed((v) => !v);
-    // 다음 sibling 그룹 토글: 같은 또는 더 높은 레벨 heading 나올 때까지 숨김.
-    const headingEl = e.currentTarget;
-    let next = headingEl.nextElementSibling as HTMLElement | null;
-    const stopTags = new Set(["H1", "H2"].concat(level === 2 ? [] : ["H3"]));
-    while (next && !stopTags.has(next.tagName)) {
-      next.style.display = collapsed ? "" : "none";
-      next = next.nextElementSibling as HTMLElement | null;
-    }
-  };
-  // P66 follow-up (Gemini PR #75 a11y 리뷰):
-  // role="button" + tabIndex=0 만으론 키보드 사용자가 폴딩 못 함.
-  // Enter / Space 가 onClick 과 동일하게 작동하도록.
-  //
-  // Gemini PR #77 추가 리뷰: heading 내부 link (`<a>`) 의 Enter 키 동작 보전을
-  // 위해 onClick 과 동일하게 target 이 a/code 면 early return.
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    const target = e.target as HTMLElement;
-    if (target.closest("a") || target.closest("code")) return;
-    e.preventDefault();
-    onClick(e as unknown as MouseEvent<HTMLElement>);
-  };
-  const marker = collapsed ? "▶" : "▼";
-  const props = {
-    onClick,
-    onKeyDown,
-    "aria-expanded": !collapsed,
-    role: "button",
-    tabIndex: 0,
-    style: { cursor: "pointer", userSelect: "none" as const },
-    children: (
-      <>
-        <span className="text-text-2 mr-2 select-none">{marker}</span>
-        {children}
-      </>
-    ),
-  };
-  if (level === 2) return <h2 {...props} />;
-  return <h3 {...props} />;
 }
 
 function normalizeWikiName(name: string): string {
