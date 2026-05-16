@@ -434,10 +434,25 @@ impl SeCallMcpServer {
     /// 의미 있는 그래프 subset 한 번에 반환 (Stage 9).
     /// - project / topic / agent / tool 노드는 전부
     /// - session 노드는 degree 상위 `session_limit` 개만 (default 80)
-    /// - 위 노드 ID 집합 안의 엣지만 포함
+    /// - 위 노드 ID 집합 안의 엣지를 우선순위별 sort 후 `edge_limit` 까지
     ///
-    /// 응답: `{"nodes": [{"id","type","label"}], "edges": [{"source","target","relation"}], "node_count", "edge_count"}`
-    pub fn do_graph_snapshot(&self, session_limit: usize) -> anyhow::Result<serde_json::Value> {
+    /// P64: `edge_limit` 추가. 이전엔 모든 in-set edges 가 응답됨 → 사용자 환경
+    /// 에서 1246 edges / ~600KB 응답으로 web force-simulation 이 멈춤 화면.
+    /// 우선순위:
+    ///   0. session ↔ session 관계 (same_project / same_day / cluster_*) —
+    ///      그래프 구조 파악에 가장 valuable
+    ///   1. session → topic / tool (rich label)
+    ///   2. session → agent / project (cardinality 높아 중복적)
+    ///   3. 그 외
+    /// 같은 우선순위 내에선 입력 순서 유지 (DB rowid 기준 stable).
+    ///
+    /// 응답: `{"nodes": [...], "edges": [...], "node_count", "edge_count",
+    /// "session_limit", "edge_limit", "edges_truncated": bool}`
+    pub fn do_graph_snapshot(
+        &self,
+        session_limit: usize,
+        edge_limit: usize,
+    ) -> anyhow::Result<serde_json::Value> {
         let db = self
             .db
             .lock()
@@ -470,10 +485,16 @@ impl SeCallMcpServer {
         let id_set: std::collections::HashSet<String> =
             all_nodes.iter().map(|n| n.0.clone()).collect();
 
+        // node id → type 매핑: 우선순위 결정 시 endpoint type 빠르게 조회.
+        let type_of: std::collections::HashMap<String, String> = all_nodes
+            .iter()
+            .map(|(id, ty, _)| (id.clone(), ty.clone()))
+            .collect();
+
         let mut stmt = db
             .conn()
             .prepare("SELECT source, target, relation FROM graph_edges")?;
-        let edges: Vec<(String, String, String)> = stmt
+        let mut edges: Vec<(String, String, String)> = stmt
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -484,6 +505,33 @@ impl SeCallMcpServer {
             .filter_map(|r| r.ok())
             .filter(|(s, t, _)| id_set.contains(s) && id_set.contains(t))
             .collect();
+
+        let total_in_set = edges.len();
+
+        // 우선순위: session-session > session-(topic/tool) > session-(agent/project) > 그 외
+        let priority = |s: &str, t: &str| -> u8 {
+            let ts = type_of.get(s).map(String::as_str).unwrap_or("");
+            let tt = type_of.get(t).map(String::as_str).unwrap_or("");
+            let ss = ts == "session" && tt == "session";
+            if ss {
+                return 0;
+            }
+            let touches_session = ts == "session" || tt == "session";
+            if touches_session {
+                let other = if ts == "session" { tt } else { ts };
+                return match other {
+                    "topic" | "tool" => 1,
+                    "agent" | "project" => 2,
+                    _ => 3,
+                };
+            }
+            3
+        };
+
+        // stable sort_by_key: 같은 우선순위는 DB 원래 순서 유지
+        edges.sort_by_key(|(s, t, _)| priority(s, t));
+        let edges_truncated = edges.len() > edge_limit;
+        edges.truncate(edge_limit);
 
         Ok(serde_json::json!({
             "nodes": all_nodes
@@ -496,7 +544,10 @@ impl SeCallMcpServer {
                 .collect::<Vec<_>>(),
             "node_count": all_nodes.len(),
             "edge_count": edges.len(),
+            "total_edges_in_set": total_in_set,
             "session_limit": session_limit,
+            "edge_limit": edge_limit,
+            "edges_truncated": edges_truncated,
         }))
     }
 

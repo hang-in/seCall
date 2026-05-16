@@ -271,6 +271,8 @@ async fn api_wiki_get(
 #[derive(serde::Deserialize)]
 struct GraphSnapshotQuery {
     session_limit: Option<usize>,
+    /// P64: edge_limit. default 500, clamp(50, 5000). 미설정 시 default.
+    edge_limit: Option<usize>,
 }
 
 async fn api_graph_snapshot(
@@ -278,8 +280,10 @@ async fn api_graph_snapshot(
     axum::extract::Query(q): axum::extract::Query<GraphSnapshotQuery>,
 ) -> impl IntoResponse {
     let session_limit = q.session_limit.unwrap_or(80).clamp(10, 500);
+    let edge_limit = q.edge_limit.unwrap_or(500).clamp(50, 5000);
     // 동기 fs / SQLite I/O 라 spawn_blocking 으로 wrap.
-    match tokio::task::spawn_blocking(move || s.do_graph_snapshot(session_limit)).await {
+    match tokio::task::spawn_blocking(move || s.do_graph_snapshot(session_limit, edge_limit)).await
+    {
         Ok(Ok(json)) => (StatusCode::OK, Json(json)).into_response(),
         Ok(Err(e)) => error_response(e),
         Err(e) => error_response(anyhow::anyhow!("graph_snapshot task join: {e}")),

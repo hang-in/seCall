@@ -29,17 +29,27 @@ interface GraphSnapshot {
   edges: GraphEdge[];
   node_count: number;
   edge_count: number;
+  /** P64: filter 후 in-set 인 총 엣지 수 (truncate 전). */
+  total_edges_in_set?: number;
   session_limit: number;
+  /** P64: server 가 적용한 edge cap. */
+  edge_limit?: number;
+  /** P64: edges 가 cap 에 의해 잘렸는지. */
+  edges_truncated?: boolean;
 }
 
 export default function GraphRoute() {
   const navigate = useNavigate();
   const [sessionLimit] = useState(80);
+  // P64: edge_limit default 500 (server clamp 50~5000). 큰 그래프에서 force-
+  // simulation 멈춤 차단. 향후 사용자 조절 UI 가능.
+  const [edgeLimit] = useState(500);
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error } = useQuery<GraphSnapshot>({
-    queryKey: ["graph", "snapshot", sessionLimit],
-    queryFn: () => api.graphSnapshot(sessionLimit) as Promise<GraphSnapshot>,
+    queryKey: ["graph", "snapshot", sessionLimit, edgeLimit],
+    queryFn: () =>
+      api.graphSnapshot(sessionLimit, edgeLimit) as Promise<GraphSnapshot>,
     staleTime: 60_000,
   });
 
@@ -96,6 +106,9 @@ export default function GraphRoute() {
           })
         }
         sessionLimit={data.session_limit}
+        edgeLimit={data.edge_limit}
+        totalEdgesInSet={data.total_edges_in_set}
+        edgesTruncated={data.edges_truncated}
       />
     </div>
   );
@@ -107,6 +120,9 @@ interface SidebarProps {
   hiddenTypes: Set<string>;
   onToggleType: (t: string) => void;
   sessionLimit: number;
+  edgeLimit?: number;
+  totalEdgesInSet?: number;
+  edgesTruncated?: boolean;
 }
 
 const TYPE_DOT: Record<string, string> = {
@@ -123,6 +139,9 @@ function GraphSidebar({
   hiddenTypes,
   onToggleType,
   sessionLimit,
+  edgeLimit,
+  totalEdgesInSet,
+  edgesTruncated,
 }: SidebarProps) {
   // 타입별 카운트 (전체)
   const typeCounts = useMemo(() => {
@@ -200,6 +219,22 @@ function GraphSidebar({
                 {sessionLimit}
               </span>
             </div>
+            {edgeLimit !== undefined && (
+              <div className="flex items-center justify-between">
+                <span>Edge limit</span>
+                <span className="font-mono text-text-3 tabular-nums">
+                  {edgeLimit}
+                </span>
+              </div>
+            )}
+            {edgesTruncated && totalEdgesInSet !== undefined && (
+              <div className="flex items-center justify-between text-status-warn">
+                <span>Edges truncated</span>
+                <span className="font-mono tabular-nums">
+                  {totalEdgesInSet - edges.length} 숨김
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
@@ -207,6 +242,7 @@ function GraphSidebar({
           <div className="eyebrow mb-ds-2">Note</div>
           <div className="text-t-meta text-text-3 leading-relaxed">
             project / topic / agent / tool 은 전부, session 은 degree 상위 {sessionLimit} 만 표시.
+            엣지는 우선순위 (session↔session &gt; session↔topic/tool &gt; …) 로 정렬 후 상위 {edgeLimit ?? 500} 까지.
             그 외 인접 관계는 force-simulation 결과 위치에서 사라질 수 있습니다.
           </div>
         </section>

@@ -179,10 +179,11 @@ export const api = {
     jfetch<unknown>("/api/wiki", { method: "POST", body: JSON.stringify(q) }),
 
   /** 의미 있는 그래프 subset (project + topic + agent + tool + degree top sessions). */
-  graphSnapshot: (sessionLimit = 80) =>
-    jfetch<unknown>(`/api/graph/snapshot?session_limit=${sessionLimit}`, {
-      method: "GET",
-    }),
+  graphSnapshot: (sessionLimit = 80, edgeLimit = 500) =>
+    jfetch<unknown>(
+      `/api/graph/snapshot?session_limit=${sessionLimit}&edge_limit=${edgeLimit}`,
+      { method: "GET" },
+    ),
 
   /** vault/wiki/projects/*.md 실존 페이지 목록. (sessions DB 의 distinct project 와 별개) */
   wikiList: () => jfetch<unknown>("/api/wiki", { method: "GET" }),
