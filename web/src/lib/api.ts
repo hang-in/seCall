@@ -3,6 +3,7 @@ import type {
   IngestArgs,
   JobStartResponse,
   JobState,
+  ModelsResponse,
   RecallResponse,
   SessionDetail,
   SessionListPage,
@@ -238,4 +239,13 @@ export const api = {
     jfetch<unknown>(`/api/jobs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
     }),
+
+  /**
+   * P65 — backend 별 모델 dynamic discovery.
+   * `force=true` 면 서버 캐시 무시.
+   */
+  listModels: (backend: string, force?: boolean) =>
+    jfetch<ModelsResponse>(
+      `/api/models?backend=${encodeURIComponent(backend)}${force ? "&force=true" : ""}`,
+    ),
 };

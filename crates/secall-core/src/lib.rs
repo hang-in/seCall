@@ -6,6 +6,7 @@ pub mod ingest;
 pub mod jobs;
 pub mod llm {
     pub mod defaults;
+    pub mod model_discovery;
 }
 pub mod mcp;
 pub mod search;

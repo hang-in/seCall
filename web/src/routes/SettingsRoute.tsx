@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MaskedKeyInfoModal } from "@/components/settings/MaskedKeyInfoModal";
+import { ModelInput } from "@/components/settings/ModelInput";
 import { useConfig, useConfigPatch } from "@/hooks/useConfig";
 import type { AppConfig, ConfigBackendConfig } from "@/lib/api";
 import { validateHttpUrl, validateModelName } from "@/lib/validators";
@@ -271,13 +272,15 @@ export default function SettingsRoute() {
                     label="Review model"
                     error={fieldError(validateModelName(wikiForm.review_model ?? ""))}
                   >
-                    <Input
+                    <ModelInput
+                      backend="claude"
                       value={wikiForm.review_model ?? ""}
-                      onChange={(e) =>
-                        setWikiForm((prev) => (prev ? { ...prev, review_model: e.target.value } : prev))
+                      onChange={(next) =>
+                        setWikiForm((prev) => (prev ? { ...prev, review_model: next } : prev))
                       }
                       disabled={readOnly}
                       placeholder="sonnet"
+                      ariaLabel="Wiki review model"
                     />
                   </Field>
                   {["claude", "codex", "haiku", "ollama", "lmstudio"].map((backend) => {
@@ -362,24 +365,28 @@ export default function SettingsRoute() {
                       label="Ollama model"
                       error={fieldError(validateModelName(graphForm.ollama_model ?? ""))}
                     >
-                      <Input
+                      <ModelInput
+                        backend="ollama"
                         value={graphForm.ollama_model ?? ""}
-                        onChange={(e) =>
-                          setGraphForm((prev) => (prev ? { ...prev, ollama_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setGraphForm((prev) => (prev ? { ...prev, ollama_model: next } : prev))
                         }
                         disabled={readOnly}
+                        ariaLabel="Graph ollama model"
                       />
                     </Field>
                     <Field
                       label="Anthropic model"
                       error={fieldError(validateModelName(graphForm.anthropic_model ?? ""))}
                     >
-                      <Input
+                      <ModelInput
+                        backend="anthropic"
                         value={graphForm.anthropic_model ?? ""}
-                        onChange={(e) =>
-                          setGraphForm((prev) => (prev ? { ...prev, anthropic_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setGraphForm((prev) => (prev ? { ...prev, anthropic_model: next } : prev))
                         }
                         disabled={readOnly}
+                        ariaLabel="Graph anthropic model"
                       />
                     </Field>
                     <Field
@@ -400,14 +407,15 @@ export default function SettingsRoute() {
                       label="Cloud model"
                       error={fieldError(validateModelName(graphForm.cloud_model ?? ""))}
                     >
-                      <Input
-                        aria-label="Cloud model"
+                      <ModelInput
+                        backend="ollama_cloud"
                         value={graphForm.cloud_model ?? ""}
-                        onChange={(e) =>
-                          setGraphForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setGraphForm((prev) => (prev ? { ...prev, cloud_model: next } : prev))
                         }
                         disabled={readOnly}
                         placeholder="gemma4:31b-cloud"
+                        ariaLabel="Cloud model"
                       />
                     </Field>
                   </SettingsGrid>
@@ -461,12 +469,14 @@ export default function SettingsRoute() {
                   </Field>
                   <SettingsGrid>
                     <Field label="Model" error={fieldError(validateModelName(logForm.model ?? ""))}>
-                      <Input
+                      <ModelInput
+                        backend={logForm.backend ?? null}
                         value={logForm.model ?? ""}
-                        onChange={(e) =>
-                          setLogForm((prev) => (prev ? { ...prev, model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setLogForm((prev) => (prev ? { ...prev, model: next } : prev))
                         }
                         disabled={readOnly}
+                        ariaLabel="Log model"
                       />
                     </Field>
                     <Field label="API URL" error={fieldError(validateHttpUrl(logForm.api_url ?? ""))}>
@@ -509,14 +519,15 @@ export default function SettingsRoute() {
                       label="Cloud model"
                       error={fieldError(validateModelName(logForm.cloud_model ?? ""))}
                     >
-                      <Input
-                        aria-label="Log cloud model"
+                      <ModelInput
+                        backend="ollama_cloud"
                         value={logForm.cloud_model ?? ""}
-                        onChange={(e) =>
-                          setLogForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setLogForm((prev) => (prev ? { ...prev, cloud_model: next } : prev))
                         }
                         disabled={readOnly}
                         placeholder="kimi-k2.6:cloud"
+                        ariaLabel="Log cloud model"
                       />
                     </Field>
                   </SettingsGrid>
@@ -567,24 +578,32 @@ export default function SettingsRoute() {
                       label="Ollama model"
                       error={fieldError(validateModelName(embeddingForm.ollama_model ?? ""))}
                     >
-                      <Input
+                      <ModelInput
+                        backend="ollama"
                         value={embeddingForm.ollama_model ?? ""}
-                        onChange={(e) =>
-                          setEmbeddingForm((prev) => (prev ? { ...prev, ollama_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setEmbeddingForm((prev) =>
+                            prev ? { ...prev, ollama_model: next } : prev,
+                          )
                         }
                         disabled={readOnly}
+                        ariaLabel="Embedding ollama model"
                       />
                     </Field>
                     <Field
                       label="OpenAI model"
                       error={fieldError(validateModelName(embeddingForm.openai_model ?? ""))}
                     >
-                      <Input
+                      <ModelInput
+                        backend="openai"
                         value={embeddingForm.openai_model ?? ""}
-                        onChange={(e) =>
-                          setEmbeddingForm((prev) => (prev ? { ...prev, openai_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setEmbeddingForm((prev) =>
+                            prev ? { ...prev, openai_model: next } : prev,
+                          )
                         }
                         disabled={readOnly}
+                        ariaLabel="Embedding openai model"
                       />
                     </Field>
                     <Field label="OpenVINO device">
@@ -634,13 +653,16 @@ export default function SettingsRoute() {
                       label="Embedding cloud model"
                       error={fieldError(validateModelName(embeddingForm.cloud_model ?? ""))}
                     >
-                      <Input
-                        aria-label="Embedding cloud model"
+                      <ModelInput
+                        backend="ollama_cloud"
                         value={embeddingForm.cloud_model ?? ""}
-                        onChange={(e) =>
-                          setEmbeddingForm((prev) => (prev ? { ...prev, cloud_model: e.target.value } : prev))
+                        onChange={(next) =>
+                          setEmbeddingForm((prev) =>
+                            prev ? { ...prev, cloud_model: next } : prev,
+                          )
                         }
                         disabled={readOnly}
+                        ariaLabel="Embedding cloud model"
                       />
                     </Field>
                     <Field label="Ollama Cloud API key">
@@ -683,10 +705,12 @@ function BackendCard({
       <div className="mb-ds-3 text-t-h2 font-medium">{backend}</div>
       <div className="grid grid-cols-1 gap-ds-3 md:grid-cols-3">
         <Field label="Model" error={fieldError(validateModelName(config.model ?? ""))}>
-          <Input
+          <ModelInput
+            backend={backend}
             value={config.model ?? ""}
-            onChange={(e) => onChange({ ...config, model: e.target.value })}
+            onChange={(next) => onChange({ ...config, model: next })}
             disabled={readOnly}
+            ariaLabel={`${backend} model`}
           />
         </Field>
         <Field label="API URL" error={fieldError(validateHttpUrl(config.api_url ?? ""))}>

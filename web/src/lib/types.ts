@@ -262,3 +262,18 @@ export interface SessionsListParams extends SessionFilterState {
   page?: number;
   page_size?: number;
 }
+
+/**
+ * `/api/models?backend=<name>&force=<bool>` 응답 (P65).
+ *
+ * - `dynamic`: 실 backend 에서 fetch 성공
+ * - `fallback`: dynamic 실패 → hardcoded fallback list
+ * - `cached`: 이전 호출 결과 재사용 (TTL 3600s)
+ */
+export type ModelDiscoverySource = "dynamic" | "fallback" | "cached";
+
+export interface ModelsResponse {
+  backend: string;
+  models: string[];
+  source: ModelDiscoverySource;
+}

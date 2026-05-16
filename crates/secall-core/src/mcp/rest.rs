@@ -162,6 +162,8 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/jobs/{id}", get(api_get_job))
         .route("/api/jobs/{id}/stream", get(api_job_stream))
         .route("/api/jobs/{id}/cancel", post(api_cancel_job))
+        // P65 — backend 별 모델 dynamic discovery
+        .route("/api/models", get(api_list_models))
         .layer(cors)
         .with_state(state);
 
@@ -347,6 +349,38 @@ async fn api_config_patch(
                 error_response(e)
             }
         }
+    }
+}
+
+/// P65 — `GET /api/models?backend=<name>&force=<bool>`.
+///
+/// 응답: `{ "backend": "...", "models": [...], "source": "dynamic"|"fallback"|"cached" }`.
+#[derive(Debug, Deserialize)]
+struct ListModelsQuery {
+    backend: Option<String>,
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+async fn api_list_models(
+    axum::extract::Query(q): axum::extract::Query<ListModelsQuery>,
+) -> impl IntoResponse {
+    let Some(backend) = q
+        .backend
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "backend query param required"})),
+        )
+            .into_response();
+    };
+    let force = q.force.unwrap_or(false);
+    match crate::llm::model_discovery::discover_models(backend, force).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => error_response(e),
     }
 }
 
