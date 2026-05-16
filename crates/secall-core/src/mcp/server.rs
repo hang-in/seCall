@@ -432,18 +432,22 @@ impl SeCallMcpServer {
     /// — secall-web 의 좌측 wiki 리스트가 sessions DB 의 distinct project 가 아닌
     ///   실제 wiki 페이지 기준으로 표시되도록 분리된 endpoint.
     /// 의미 있는 그래프 subset 한 번에 반환 (Stage 9).
+    ///
     /// - project / topic / agent / tool 노드는 전부
     /// - session 노드는 degree 상위 `session_limit` 개만 (default 80)
     /// - 위 노드 ID 집합 안의 엣지를 우선순위별 sort 후 `edge_limit` 까지
     ///
     /// P64: `edge_limit` 추가. 이전엔 모든 in-set edges 가 응답됨 → 사용자 환경
     /// 에서 1246 edges / ~600KB 응답으로 web force-simulation 이 멈춤 화면.
-    /// 우선순위:
-    ///   0. session ↔ session 관계 (same_project / same_day / cluster_*) —
-    ///      그래프 구조 파악에 가장 valuable
-    ///   1. session → topic / tool (rich label)
-    ///   2. session → agent / project (cardinality 높아 중복적)
-    ///   3. 그 외
+    ///
+    /// 우선순위 (priority 0 = 최상위):
+    ///
+    /// - 0: session ↔ session 관계 (same_project / same_day / cluster_*) —
+    ///   그래프 구조 파악에 가장 valuable
+    /// - 1: session → topic / tool (rich label)
+    /// - 2: session → agent / project (cardinality 높아 중복적)
+    /// - 3: 그 외
+    ///
     /// 같은 우선순위 내에선 입력 순서 유지 (DB rowid 기준 stable).
     ///
     /// 응답: `{"nodes": [...], "edges": [...], "node_count", "edge_count",
@@ -482,10 +486,9 @@ impl SeCallMcpServer {
             .collect();
         all_nodes.extend(session_rows);
 
-        let id_set: std::collections::HashSet<String> =
-            all_nodes.iter().map(|n| n.0.clone()).collect();
-
-        // node id → type 매핑: 우선순위 결정 시 endpoint type 빠르게 조회.
+        // node id → type 매핑: 우선순위 결정 + in-set 존재 여부 동시 처리 (Gemini PR #76 리뷰 반영).
+        // `HashMap<&str, &str>` 는 stable Rust 에서 `get(&str)` 의 trait resolution
+        // (issue #130366) 으로 어색하므로 K=String 유지, 별도 id_set 만 제거.
         let type_of: std::collections::HashMap<String, String> = all_nodes
             .iter()
             .map(|(id, ty, _)| (id.clone(), ty.clone()))
@@ -503,7 +506,7 @@ impl SeCallMcpServer {
                 ))
             })?
             .filter_map(|r| r.ok())
-            .filter(|(s, t, _)| id_set.contains(s) && id_set.contains(t))
+            .filter(|(s, t, _)| type_of.contains_key(s) && type_of.contains_key(t))
             .collect();
 
         let total_in_set = edges.len();
