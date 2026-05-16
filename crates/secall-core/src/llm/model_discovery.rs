@@ -66,6 +66,18 @@ fn cache() -> &'static RwLock<HashMap<String, CacheEntry>> {
     CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+/// 공유 reqwest::Client — connection pool 재사용 (Gemini PR #78 리뷰 반영).
+/// builder 매 호출마다 만들면 keep-alive / TLS handshake 마다 새로 — 비효율.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .build()
+            .expect("reqwest client build should not fail with default config")
+    })
+}
+
 /// 단일 backend 또는 전체 cache 를 비운다.
 pub async fn invalidate_cache(backend: Option<&str>) {
     let mut guard = cache().write().await;
@@ -83,15 +95,20 @@ pub async fn invalidate_cache(backend: Option<&str>) {
 pub async fn discover_models(backend: &str, force: bool) -> anyhow::Result<DiscoveryResult> {
     // 1. cache lookup (force=false 일 때만)
     if !force {
-        let guard = cache().read().await;
-        if let Some(entry) = guard.get(backend) {
+        // entry 를 clone 으로 받아 read lock 빨리 해제 + 이후 async I/O 가능.
+        let cached_entry: Option<CacheEntry> = {
+            let guard = cache().read().await;
+            guard.get(backend).cloned()
+        };
+        if let Some(entry) = cached_entry {
             let ttl_ok = entry.at.elapsed() < CACHE_TTL;
+            // P78 follow-up: 동기 fs::metadata 차단 → tokio::fs::metadata 비동기.
             let stamp_fresh = match &entry.binary_stamp {
                 None => true,
-                Some((path, stamp)) => std::fs::metadata(path)
-                    .and_then(|m| m.modified())
-                    .map(|now| now == *stamp)
-                    .unwrap_or(false),
+                Some((path, stamp)) => match tokio::fs::metadata(path).await {
+                    Ok(m) => m.modified().map(|now| now == *stamp).unwrap_or(false),
+                    Err(_) => false,
+                },
             };
             if ttl_ok && stamp_fresh {
                 return Ok(DiscoveryResult {
@@ -112,11 +129,11 @@ pub async fn discover_models(backend: &str, force: bool) -> anyhow::Result<Disco
                 None,
             ),
             "lmstudio" => (discover_lmstudio(None).await, None),
-            "anthropic" => match discover_anthropic_with_stamp() {
+            "anthropic" => match discover_anthropic_with_stamp().await {
                 Some((m, p, t)) => (Some(m), Some((p, t))),
                 None => (None, None),
             },
-            "codex" => (discover_codex(), None),
+            "codex" => (discover_codex().await, None),
             // OpenAI: discovery 생략 (API 호출 비용). 항상 fallback.
             "openai" => (None, None),
             // wiki claude alias backend ("haiku") — static, dynamic 무의미.
@@ -223,11 +240,8 @@ fn env_cloud_api_key() -> Option<String> {
 async fn discover_ollama(base: Option<&str>, bearer: Option<&str>) -> Option<Vec<String>> {
     let base = base.unwrap_or("http://localhost:11434");
     let url = format!("{}/api/tags", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .ok()?;
-    let mut req = client.get(&url);
+    // P78 follow-up: 공유 client 사용 (connection pool 재사용).
+    let mut req = http_client().get(&url);
     if let Some(token) = bearer {
         req = req.bearer_auth(token);
     }
@@ -255,11 +269,8 @@ async fn discover_ollama(base: Option<&str>, bearer: Option<&str>) -> Option<Vec
 async fn discover_lmstudio(base: Option<&str>) -> Option<Vec<String>> {
     let base = base.unwrap_or("http://localhost:1234");
     let url = format!("{}/v1/models", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
+    // P78 follow-up: 공유 client 사용.
+    let resp = http_client().get(&url).send().await.ok()?;
     if !resp.status().is_success() {
         tracing::debug!(target: "secall::model_discovery", "lmstudio {} → {}", url, resp.status());
         return None;
@@ -280,12 +291,12 @@ async fn discover_lmstudio(base: Option<&str>) -> Option<Vec<String>> {
 }
 
 /// Codex: `~/.codex/models_cache.json` read.
-fn discover_codex() -> Option<Vec<String>> {
+///
+/// P78 follow-up: async + tokio::fs (Tokio worker 블로킹 회피), sort+dedup
+/// (다른 discover 함수와 일관성).
+async fn discover_codex() -> Option<Vec<String>> {
     let path = dirs::home_dir()?.join(".codex").join("models_cache.json");
-    if !path.exists() {
-        return None;
-    }
-    let text = std::fs::read_to_string(&path).ok()?;
+    let text = tokio::fs::read_to_string(&path).await.ok()?;
     let data: serde_json::Value = serde_json::from_str(&text).ok()?;
     let arr = data.get("models")?.as_array()?;
     let mut models = Vec::new();
@@ -296,6 +307,8 @@ fn discover_codex() -> Option<Vec<String>> {
             models.push(slug.to_string());
         }
     }
+    models.sort();
+    models.dedup();
     if models.is_empty() {
         None
     } else {
@@ -361,9 +374,12 @@ pub(crate) fn extract_claude_model_ids(bytes: &[u8]) -> std::collections::BTreeS
 }
 
 /// claude binary 를 스캔하여 모델 ID + 바이너리 mtime 반환.
-fn discover_anthropic_with_stamp() -> Option<(Vec<String>, PathBuf, SystemTime)> {
+///
+/// P78 follow-up: async + tokio::fs — claude binary 가 최대 300MB 라
+/// 동기 read 시 Tokio worker 가 길게 차단됨.
+async fn discover_anthropic_with_stamp() -> Option<(Vec<String>, PathBuf, SystemTime)> {
     let path = resolve_anthropic_binary()?;
-    let meta = std::fs::metadata(&path).ok()?;
+    let meta = tokio::fs::metadata(&path).await.ok()?;
     let mtime = meta.modified().ok()?;
     // 300MB guard (tunaFlow 동일)
     const MAX_BIN_SIZE: u64 = 300 * 1024 * 1024;
@@ -375,7 +391,7 @@ fn discover_anthropic_with_stamp() -> Option<(Vec<String>, PathBuf, SystemTime)>
         );
         return None;
     }
-    let bytes = std::fs::read(&path).ok()?;
+    let bytes = tokio::fs::read(&path).await.ok()?;
     let ids = extract_claude_model_ids(&bytes);
     if ids.is_empty() {
         return None;
