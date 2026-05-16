@@ -67,6 +67,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # P80: cargo-audit / cargo-nextest 를 pre-built binary 로 install — 매
+      # run 마다 cargo install 의 컴파일 (~1~2분) 회피.
+      - name: Install cargo binaries (audit + nextest)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-nextest
+
       - name: Download web/dist
         uses: actions/download-artifact@v4
         with:
@@ -76,14 +83,19 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
+      # P80: `--all-features` 제거. openvino / coreml feature 는 platform-
+      # specific SDK 필요 + 빌드 시간 큼. default (web-ui) 만 검사로 충분.
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --workspace --all-targets
 
-      - name: cargo test
-        run: cargo test --all
+      # P80: cargo-nextest 사용 — parallel test runner, 전통 cargo test 대비
+      # ~30% 빠름. doctest 는 별도 step (nextest 미지원).
+      - name: cargo nextest run
+        run: cargo nextest run --workspace --no-fail-fast
+
+      - name: cargo test --doc
+        run: cargo test --doc --workspace
 
       - name: cargo audit
-        run: |
-          cargo install cargo-audit --locked || true
-          cargo audit
+        run: cargo audit
         continue-on-error: true
