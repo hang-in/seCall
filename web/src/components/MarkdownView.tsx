@@ -4,13 +4,15 @@ import {
   useMemo,
   useState,
   type MouseEvent,
+  type KeyboardEvent,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-// remark-wiki-link / rehype-raw / rehype-highlight: 외부 plugin, 일부는 자체 d.ts 가 부정확.
+// remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { NavLink } from "react-router";
 import "highlight.js/styles/github-dark.css";
 import { highlightTerms, tokenizeQuery } from "@/lib/highlight";
@@ -108,11 +110,41 @@ export function MarkdownView({ content, query, className }: Props) {
     [],
   );
 
-  const rehypePlugins = useMemo(
-    // rehype-raw 가 먼저 raw HTML 을 hast 노드로 변환 → rehype-highlight 가 코드블록 처리.
-    () => [rehypeRaw, rehypeHighlight],
-    [],
-  );
+  const rehypePlugins = useMemo(() => {
+    // P66 follow-up (Gemini PR #75 보안 리뷰):
+    // rehype-raw 가 raw HTML 을 hast 노드로 변환 → rehype-sanitize 가 XSS
+    // 위험 태그/속성 제거 (rehypeRaw 직후, highlight 전에 sanitize 해야 함) →
+    // rehype-highlight 가 코드블록 syntax 처리.
+    //
+    // sanitize schema: defaultSchema (script/style/event handler 차단) 에
+    // <details>/<summary> 와 highlight.js 의 class 속성 허용 추가.
+    const schema = {
+      ...defaultSchema,
+      tagNames: [...(defaultSchema.tagNames ?? []), "details", "summary"],
+      attributes: {
+        ...(defaultSchema.attributes ?? {}),
+        // Gemini PR #77 리뷰: <details open> 의 open 속성 + 브라우저 토글 시
+        // 추가되는 open 속성도 허용해야 함.
+        details: [
+          ...((defaultSchema.attributes ?? {}).details ?? []),
+          "open",
+        ],
+        code: [
+          ...((defaultSchema.attributes ?? {}).code ?? []),
+          ["className", /^language-/, /^hljs/],
+        ],
+        span: [
+          ...((defaultSchema.attributes ?? {}).span ?? []),
+          ["className", /^hljs-/],
+        ],
+      },
+    };
+    // unified 의 PluggableList 타입이 tuple form ([plugin, options]) 을 정확히
+    // 매칭하지 못해 cast. plugin/option 호환성은 rehype-sanitize 의 런타임 시그
+    // 니처와 일치.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return [rehypeRaw, [rehypeSanitize, schema], rehypeHighlight] as any;
+  }, []);
 
   return (
     <div
@@ -179,9 +211,23 @@ function CollapsibleHeading({
       next = next.nextElementSibling as HTMLElement | null;
     }
   };
+  // P66 follow-up (Gemini PR #75 a11y 리뷰):
+  // role="button" + tabIndex=0 만으론 키보드 사용자가 폴딩 못 함.
+  // Enter / Space 가 onClick 과 동일하게 작동하도록.
+  //
+  // Gemini PR #77 추가 리뷰: heading 내부 link (`<a>`) 의 Enter 키 동작 보전을
+  // 위해 onClick 과 동일하게 target 이 a/code 면 early return.
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("a") || target.closest("code")) return;
+    e.preventDefault();
+    onClick(e as unknown as MouseEvent<HTMLElement>);
+  };
   const marker = collapsed ? "▶" : "▼";
   const props = {
     onClick,
+    onKeyDown,
     "aria-expanded": !collapsed,
     role: "button",
     tabIndex: 0,
