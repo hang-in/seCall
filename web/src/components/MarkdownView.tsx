@@ -123,6 +123,12 @@ export function MarkdownView({ content, query, className }: Props) {
       tagNames: [...(defaultSchema.tagNames ?? []), "details", "summary"],
       attributes: {
         ...(defaultSchema.attributes ?? {}),
+        // Gemini PR #77 리뷰: <details open> 의 open 속성 + 브라우저 토글 시
+        // 추가되는 open 속성도 허용해야 함.
+        details: [
+          ...((defaultSchema.attributes ?? {}).details ?? []),
+          "open",
+        ],
         code: [
           ...((defaultSchema.attributes ?? {}).code ?? []),
           ["className", /^language-/, /^hljs/],
@@ -208,11 +214,15 @@ function CollapsibleHeading({
   // P66 follow-up (Gemini PR #75 a11y 리뷰):
   // role="button" + tabIndex=0 만으론 키보드 사용자가 폴딩 못 함.
   // Enter / Space 가 onClick 과 동일하게 작동하도록.
+  //
+  // Gemini PR #77 추가 리뷰: heading 내부 link (`<a>`) 의 Enter 키 동작 보전을
+  // 위해 onClick 과 동일하게 target 이 a/code 면 early return.
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onClick(e as unknown as MouseEvent<HTMLElement>);
-    }
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("a") || target.closest("code")) return;
+    e.preventDefault();
+    onClick(e as unknown as MouseEvent<HTMLElement>);
   };
   const marker = collapsed ? "▶" : "▼";
   const props = {
