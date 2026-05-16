@@ -291,6 +291,11 @@ impl SeCallMcpServer {
             .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
         let stats = db.get_stats()?;
         Ok(serde_json::json!({
+            // P62: web TopNav 의 version 표시를 server 의 빌드 시점 버전으로
+            // 통합 (이전엔 web 측 hardcode 가 v0.4.2 로 고정돼 있었음).
+            // env!() 는 secall-core 의 CARGO_PKG_VERSION — workspace.package
+            // 버전과 동일하게 따라간다.
+            "version": env!("CARGO_PKG_VERSION"),
             "sessions": stats.session_count,
             "turns": stats.turn_count,
             "vectors": stats.vector_count,

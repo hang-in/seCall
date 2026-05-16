@@ -1,8 +1,10 @@
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { Keyboard, Moon, Settings, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTheme } from "@/lib/useTheme";
 import { useUi } from "@/lib/store";
 import { HeaderSearch } from "@/components/HeaderSearch";
+import { api } from "@/lib/api";
 
 /**
  * 상단 네비게이션 — Calm/Editorial top nav (height = --nav-h, 48px).
@@ -20,13 +22,28 @@ const NAV_ITEMS = [
   { to: "/commands", label: "Commands", hint: "g c" },
 ] as const;
 
-const APP_VERSION = "v0.4.2";
-
 export function TopNav() {
   const { dark, toggle } = useTheme();
   const setHelpOpen = useUi((s) => s.setHelpDialogOpen);
   const location = useLocation();
   const navigate = useNavigate();
+  // P62: server 의 빌드 시점 버전 (CARGO_PKG_VERSION) 을 SSOT 로 사용.
+  // 이전에는 APP_VERSION 이 컴포넌트에 hardcoded 되어 있어 release 마다 잊혀졌다.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .status()
+      .then((s) => {
+        if (!cancelled) setAppVersion(`v${s.version}`);
+      })
+      .catch(() => {
+        if (!cancelled) setAppVersion(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // sessions / wiki 라우트에서만 헤더 검색 노출. mode 후보는 라우트별로 다름.
   const path = location.pathname;
@@ -46,9 +63,14 @@ export function TopNav() {
             <span className="size-1.5 rounded-full bg-brand" aria-hidden />
             <span className="text-t-h2 font-medium tracking-tight">secall</span>
           </div>
-          <span className="font-mono text-t-mono text-text-3" aria-label={`Version ${APP_VERSION}`}>
-            {APP_VERSION}
-          </span>
+          {appVersion && (
+            <span
+              className="font-mono text-t-mono text-text-3"
+              aria-label={`Version ${appVersion}`}
+            >
+              {appVersion}
+            </span>
+          )}
         </div>
 
         {/* Primary nav */}

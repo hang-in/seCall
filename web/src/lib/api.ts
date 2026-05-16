@@ -18,6 +18,19 @@ export interface ConfigBackendConfig {
   max_tokens?: number;
 }
 
+/**
+ * `/api/status` 응답.
+ *
+ * `version` 은 P62 부터 추가 — 서버 빌드 시점의 `CARGO_PKG_VERSION` 이라 단일 SSOT.
+ */
+export interface StatusResponse {
+  version: string;
+  sessions: number;
+  turns: number;
+  vectors: number;
+  recent_ingests: number;
+}
+
 export interface AppConfig {
   wiki: {
     default_backend: string;
@@ -143,7 +156,7 @@ export const api = {
       { method: "PATCH", body: JSON.stringify({ notes }) },
     ),
 
-  status: () => jfetch<unknown>("/api/status"),
+  status: () => jfetch<StatusResponse>("/api/status"),
 
   daily: (date?: string) =>
     jfetch<unknown>("/api/daily", {
