@@ -126,3 +126,11 @@ Plan document index. Register new plans here.
 | [02](secall-p17-cli-git-branch-task-02.md) | secall config 서브커맨드 | B | 01 | draft |
 | [03](secall-p17-cli-git-branch-task-03.md) | 대화형 온보딩 (secall init 개선) | C | 01,02 | draft |
 | [04](secall-p17-cli-git-branch-task-04.md) | status 설정 요약 표시 | D | 02 | draft |
+
+---
+
+### seCall P82 — Config::save() integration test 가드 확장
+
+- [전체 계획서](p82-config-save-guard.md) — in_progress, 2026-05-19
+- 단일 Task: `Config::save()` 의 `#[cfg(test)]` 가드를 runtime env (`SECALL_TEST_MODE`) 로 확장해 integration test 까지 보호.
+- 관련: `docs/reference/core-backlog.md` hot 1건 해소 대상.
