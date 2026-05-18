@@ -73,7 +73,7 @@ seCall 의 `docs/` 는 다음 8개 서브디렉토리로 구성된다.
 ### Reference (`docs/reference/`)
 
 - **날짜 없는 안정 이름** 을 기본으로 한다 (예: `core-backlog.md`, `llm-config.md`).
-- 2~4 토큰의 camelCase 또는 kebab-case 가 가능하다. 기존 폴더가 kebab-case 중심이면 따른다.
+- 2~4 토큰의 camelCase를 기본으로 한다. (기존 kebab-case 파일들과의 일관성이 필요한 경우에만 예외적 허용)
 - 예외: 시간 흐름 자체가 중요한 핸드오프 문서는 `handoff_YYYY-MM-DD.md` 허용 (예: `handoff_2026-05-19.md`).
 
 ### Plan (`docs/plans/`)
@@ -106,11 +106,11 @@ seCall 의 `docs/` 는 다음 8개 서브디렉토리로 구성된다.
 
 ```yaml
 ---
-type: reference        # reference | plan | prompt | review | insight | baseline | community | agent
-status: in_progress    # 아래 §3.1 참고
+type: reference        # reference | plans | prompts | reviews | insight | baseline | community | agents
+status: done           # 아래 §3.1 참고
 updated_at: 2026-05-19 # YYYY-MM-DD
 canonical: true        # false 이면 SSOT 아님 (브레인스토밍/비교 문서)
-superseded_by: path    # 대체된 경우만
+superseded_by: docs/reference/new_file.md # 대체된 경우만
 ---
 ```
 
@@ -132,6 +132,8 @@ superseded_by: path    # 대체된 경우만
 - `supersedes: docs/reference/oldFoo.md` — 이 문서가 대체한 과거 문서
 - `superseded_by: docs/reference/newFoo.md` — 이 문서를 대체한 신규 문서
 - `read_before: [path]` — 이 문서를 읽기 전에 먼저 봐야 할 문서
+
+> 경로는 프로젝트 루트 기준 (`docs/...`)으로 통일한다.
 
 관계 메타가 있어야 에이전트가 낡은 문서를 덜 읽는다.
 
