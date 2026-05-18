@@ -43,6 +43,7 @@ fn make_router(dir: &tempfile::TempDir, allow_config_edit: bool) -> axum::Router
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_config_masks_secret_and_reports_env_indicators() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -72,6 +73,7 @@ cloud_api_key = "secret-key"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_updates_section_when_enabled() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -104,6 +106,7 @@ path = "/tmp/test-vault"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_returns_403_when_disabled() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -140,6 +143,7 @@ path = "/tmp/test-vault"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_config_unknown_section_returns_404() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -176,6 +180,7 @@ path = "/tmp/test-vault"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_graph_section_ignores_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -215,6 +220,7 @@ cloud_api_key = "original-secret"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_log_section_ignores_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -254,6 +260,7 @@ cloud_api_key = "original-log-secret"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_preserves_other_sections_in_toml() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -316,6 +323,7 @@ backend = "ort"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_invalid_json_body_returns_400() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -352,6 +360,7 @@ path = "/tmp/test-vault"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_embedding_section_ignores_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -391,6 +400,7 @@ cloud_api_key = "original-embed-secret"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_config_masks_embedding_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -419,6 +429,7 @@ cloud_api_key = "secret-embed-key"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_patch_embedding_section_updates_non_secret_fields() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -475,6 +486,7 @@ backend = "ollama"
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_config_returns_pool_size_field() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(
@@ -504,6 +516,7 @@ pool_size = 4
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_get_config_env_indicators_includes_ollama_cloud_api_key() {
     let _guard = ENV_MUTEX.lock().await;
+    common::ensure_test_mode();
     let dir = tempfile::tempdir().expect("tempdir");
     let config_path = dir.path().join("config").join("config.toml");
     write_config(

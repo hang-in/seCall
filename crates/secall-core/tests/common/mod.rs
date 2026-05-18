@@ -55,6 +55,10 @@ pub struct TestEnv {
 /// `JobExecutor::with_adapters` 가 sync API 이지만, REST 라우터의 일부 핸들러
 /// (status 등) 는 async tokio 컨텍스트를 요구하므로 본 함수도 async 로 둔다.
 pub async fn make_test_env() -> TestEnv {
+    // P82 follow-up (Gemini 리뷰): 공통 진입점에서 자동 호출하여 명시 호출
+    // 누락 위험 차단.
+    ensure_test_mode();
+
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("test.db");
     let db = Database::open(&db_path).expect("open db (v8 migration)");
@@ -178,6 +182,23 @@ pub fn make_fake_adapters(delay_ms: u64) -> CommandAdapters {
             })
         }),
     }
+}
+
+/// P82: integration test 진입 시 `SECALL_TEST_MODE=1` 을 set 한다.
+///
+/// `Config::save()` 의 runtime 가드 (`cfg!(test) || SECALL_TEST_MODE`) 가
+/// integration test 컨텍스트에서도 trigger 되어, `SECALL_CONFIG_PATH` 미설정
+/// 시 production config (`~/Library/Application Support/secall/config.toml`)
+/// 를 덮어쓰는 사고를 차단한다. 2026-05-16 사고 재발 방지.
+///
+/// `Once` 로 1회 set 후 process 종료까지 유지된다 (test 격리 단위가 process
+/// 이므로 누수 안전).
+pub fn ensure_test_mode() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        std::env::set_var("SECALL_TEST_MODE", "1");
+    });
 }
 
 /// P32~P37 호환 minimal session row. 다른 통합 테스트의 `make_session` 패턴

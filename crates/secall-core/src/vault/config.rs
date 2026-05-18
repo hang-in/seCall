@@ -437,23 +437,21 @@ impl Config {
 
         let path = Self::config_path();
 
-        // P68: test 환경에서 SECALL_CONFIG_PATH 미설정 시 production config 를
-        // 덮어쓰는 사고 방지. 2026-05-16 cargo test 가 사용자 환경의
-        // `[vault].path` 를 `save_preserves_top_level_comments` 의 hardcoded
-        // 값 `/tmp/changed` 로 덮어쓴 사고 (P58 race fix 머지 전) 회복 후
-        // 도입. 단위 테스트 (#[cfg(test)] 적용 범위) 한정 — integration tests
-        // 의 경우는 core-backlog 후속 항목 (runtime guard 또는 helper 분리).
-        #[cfg(test)]
-        {
-            if std::env::var("SECALL_CONFIG_PATH").is_err() {
-                anyhow::bail!(
-                    "Config::save() called without SECALL_CONFIG_PATH in test \
-                     context — refusing to write production config at {:?}. \
-                     테스트는 SECALL_CONFIG_PATH 를 tempdir 로 set 한 후 \
-                     save() 를 호출해야 합니다.",
-                    path
-                );
-            }
+        // P68 + P82: test 환경에서 SECALL_CONFIG_PATH 미설정 시 production
+        // config 를 덮어쓰는 사고 방지. P68 은 unit test 만 (#[cfg(test)]),
+        // P82 에서 runtime env (`SECALL_TEST_MODE=1`) 로 integration test 까지
+        // 확장. integration test 는 `tests/common::ensure_test_mode()` 호출로
+        // SECALL_TEST_MODE 를 set 한다.
+        let in_test = cfg!(test) || std::env::var("SECALL_TEST_MODE").is_ok();
+        if in_test && std::env::var("SECALL_CONFIG_PATH").is_err() {
+            anyhow::bail!(
+                "Config::save() called without SECALL_CONFIG_PATH in test \
+                 context (cfg!(test) 또는 SECALL_TEST_MODE 감지) — refusing \
+                 to write production config at {:?}. 테스트는 \
+                 SECALL_CONFIG_PATH 를 tempdir 로 set 한 후 save() 를 \
+                 호출해야 합니다.",
+                path
+            );
         }
 
         if let Some(parent) = path.parent() {
