@@ -42,8 +42,13 @@ impl WikiBackend for CodexBackend {
             .kill_on_drop(true)
             .spawn()?;
 
+        // P83 (issue #82): prompt 앞에 secall wiki marker 를 prefix 로 추가해
+        // codex CLI 가 생성한 세션 파일을 ingest 가 self-ingest 루프로 인식해
+        // skip 하도록 한다. 무한 wiki 재생성 차단.
+        let marked_prompt = format!("{}\n\n{}", crate::wiki::WIKI_INVOCATION_MARKER, prompt);
+
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes()).await?;
+            stdin.write_all(marked_prompt.as_bytes()).await?;
             stdin.shutdown().await?;
         }
 

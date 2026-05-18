@@ -36,13 +36,16 @@ pub trait SessionParser: Send + Sync {
     }
 }
 
-/// P49: 노이즈 세션을 감지한다.
+/// P49 + P83: 노이즈 세션을 감지한다.
 ///
-/// secall 자체가 Claude Code 를 invoke 해 요약을 생성하는 흐름이 `~/.claude/projects/`
-/// 에 또 jsonl 로 남으면서 자기참조 ingest 가 발생해 vault 가 거의 동일한 짧은 세션으로
-/// 오염됐다. 두 가지 패턴을 차단한다:
+/// secall 자체가 Claude Code 또는 codex 를 invoke 해 요약/위키를 생성하는 흐름이
+/// `~/.claude/projects/` 또는 `~/.codex/sessions/` 에 또 jsonl 로 남으면서 자기참조
+/// ingest 가 발생해 vault 가 거의 동일한 짧은 세션으로 오염됐다. 차단 패턴:
 ///   1. cwd 가 OS 임시 디렉토리 (`/private/var/folders`, `/var/folders`, `/tmp`)
 ///   2. 첫 user turn 본문이 secall 의 알려진 summary 프롬프트 prefix 로 시작
+///   3. (P83) 첫 user turn 본문이 `wiki::WIKI_INVOCATION_MARKER` 를 포함
+///      — `secall wiki update` 가 codex/claude 백엔드 subprocess 호출 시 prompt
+///      앞에 prefix 로 추가하는 marker. Issue #82 fix.
 ///
 /// 매치 시 사유 문자열을 반환, 정상 세션은 `None`.
 pub fn is_noise_session(session: &Session) -> Option<&'static str> {
@@ -56,12 +59,15 @@ pub fn is_noise_session(session: &Session) -> Option<&'static str> {
     }
 
     if let Some(first_user) = session.turns.iter().find(|t| t.role == Role::User) {
-        if first_user
-            .content
-            .trim_start()
-            .starts_with(SECALL_SUMMARY_PROMPT_PREFIX)
-        {
+        let content_trimmed = first_user.content.trim_start();
+        if content_trimmed.starts_with(SECALL_SUMMARY_PROMPT_PREFIX) {
             return Some("secall summary prompt");
+        }
+        // P83 marker 는 `contains` — codex/claude 가 system prompt 를 앞에 prepend
+        // 하는 경우에도 robust. 변수는 일관성 위해 `content_trimmed` 재사용
+        // (trim 결과 marker 자체는 변하지 않음).
+        if content_trimmed.contains(crate::wiki::WIKI_INVOCATION_MARKER) {
+            return Some("secall wiki invocation");
         }
     }
 
@@ -151,6 +157,39 @@ mod tests {
     #[test]
     fn is_not_noise_when_no_cwd_no_user_turn() {
         let s = dummy_session(None, None);
+        assert_eq!(is_noise_session(&s), None);
+    }
+
+    /// P83 (issue #82): codex/claude wiki 호출이 marker prefix 한 prompt 로
+    /// 생성한 세션은 self-ingest 루프 차단을 위해 skip.
+    #[test]
+    fn is_noise_wiki_invocation_marker_at_start() {
+        let prompt = format!(
+            "{}\n\nUpdate the wiki for the following sessions...",
+            crate::wiki::WIKI_INVOCATION_MARKER
+        );
+        let s = dummy_session(Some("/Users/me/projects/seCall"), Some(&prompt));
+        assert_eq!(is_noise_session(&s), Some("secall wiki invocation"));
+    }
+
+    #[test]
+    fn is_noise_wiki_invocation_marker_in_middle() {
+        // marker 가 어디에 있든 검출되어야 함 (codex/claude 의 system prompt 가
+        // 앞에 붙는 경우에도 robust).
+        let prompt = format!(
+            "Some preamble...\n{}\nMore content",
+            crate::wiki::WIKI_INVOCATION_MARKER
+        );
+        let s = dummy_session(Some("/Users/me/projects/seCall"), Some(&prompt));
+        assert_eq!(is_noise_session(&s), Some("secall wiki invocation"));
+    }
+
+    #[test]
+    fn is_not_noise_without_wiki_marker() {
+        let s = dummy_session(
+            Some("/Users/me/projects/seCall"),
+            Some("Just a normal user prompt without any markers"),
+        );
         assert_eq!(is_noise_session(&s), None);
     }
 }

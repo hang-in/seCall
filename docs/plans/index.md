@@ -134,3 +134,11 @@ Plan document index. Register new plans here.
 - [전체 계획서](p82-config-save-guard.md) — in_progress, 2026-05-19
 - 단일 Task: `Config::save()` 의 `#[cfg(test)]` 가드를 runtime env (`SECALL_TEST_MODE`) 로 확장해 integration test 까지 보호.
 - 관련: `docs/reference/core-backlog.md` hot 1건 해소 대상.
+
+---
+
+### seCall P83 — Wiki self-ingest 루프 차단 (issue #82)
+
+- [전체 계획서](p83-wiki-self-ingest-loop.md) — in_progress, 2026-05-19
+- 단일 Task: `wiki/{codex,claude}.rs` 의 generate() 가 prompt 앞에 `WIKI_INVOCATION_MARKER` prefix → `is_noise_session()` 이 marker 검출 시 skip → wiki 호출이 생성한 codex/claude 세션의 self-ingest 루프 차단.
+- 관련: issue #82 (dicebattle).
