@@ -55,6 +55,10 @@ pub struct TestEnv {
 /// `JobExecutor::with_adapters` 가 sync API 이지만, REST 라우터의 일부 핸들러
 /// (status 등) 는 async tokio 컨텍스트를 요구하므로 본 함수도 async 로 둔다.
 pub async fn make_test_env() -> TestEnv {
+    // P82 follow-up (Gemini 리뷰): 공통 진입점에서 자동 호출하여 명시 호출
+    // 누락 위험 차단.
+    ensure_test_mode();
+
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("test.db");
     let db = Database::open(&db_path).expect("open db (v8 migration)");

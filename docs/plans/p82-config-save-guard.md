@@ -62,12 +62,14 @@ canonical: true
 
 | 파일 | 변경 종류 |
 |---|---|
-| `crates/secall-core/src/vault/config.rs` | save() 가드 통합 + 신규 unit test 1건 |
-| `crates/secall-core/tests/common/mod.rs` | `ensure_test_mode()` 추가 |
-| `crates/secall-core/tests/rest_config.rs` | setup 에 `common::ensure_test_mode()` 호출 (각 test fn 또는 모듈 상단 1회) |
-| `crates/secall-core/tests/vault_auto_commit.rs` | Config 사용 시 동일 |
+| `crates/secall-core/src/vault/config.rs` | save() 가드 통합 |
+| `crates/secall-core/tests/common/mod.rs` | `ensure_test_mode()` 추가 + `make_test_env()` 내부에서 자동 호출 (Gemini 리뷰 반영) |
+| `crates/secall-core/tests/config_save_guard.rs` (신규) | runtime 가드 동작 검증 2건 |
+| `crates/secall-core/tests/rest_config.rs` | 각 test fn 에 `common::ensure_test_mode()` 호출 (Gemini 리뷰 반영 — 미래 누락 방지 안전 마진) |
 | `docs/reference/core-backlog.md` | hot 항목 해소 표기 |
 | `docs/plans/index.md` | P82 plan 등록 |
+
+> **참고**: 초안 plan 에는 `vault_auto_commit.rs` 도 변경 대상이었으나, 해당 파일은 `secall_core::vault::Config` 를 사용하지 않고 (`VaultGit` 만 사용) `mod common;` 도 import 하지 않음. 가드 trigger 경로가 없어 변경 제외.
 
 ## 검증
 
