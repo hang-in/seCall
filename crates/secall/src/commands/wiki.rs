@@ -190,6 +190,27 @@ async fn run_update_with_sink(
         .unwrap_or_else(|| config.wiki.default_backend.clone());
     let resolved_model = resolve_backend_model(&config, &backend_name, model);
 
+    // P86 (issue #88): ollama / lmstudio 백엔드는 wiki update 의 prompt 가
+    // 가정하는 MCP 도구 호출 (`secall recall/get/status` + `wiki/` 파일 쓰기) 을
+    // 수행할 능력이 없다. batch / incremental / --since 모든 모드에서 모델이
+    // "임무 이해" 응답만 출력하고 종료 → 사용자가 silent wait (timeout 까지)
+    // 후 빈손으로 깨닫는 사고. 명시적 fail-fast + 가이드.
+    if matches!(backend_name.as_str(), "ollama" | "lmstudio") {
+        anyhow::bail!(
+            "wiki backend `{backend_name}` 는 wiki update 와 호환되지 않습니다.\n\
+             도구 호출 (`secall recall`/`get`/`status` + `wiki/` 파일 쓰기) 능력이 없어\n\
+             prompt 가 가정하는 작업을 수행할 수 없습니다.\n\
+             \n\
+             해결책 (편한 것 사용):\n\
+               • `--backend claude`  (Claude Code CLI + MCP 통합)\n\
+               • `--backend codex`   (Codex CLI)\n\
+               • `--backend haiku`   (Anthropic API, 세션 데이터를 prompt 에 inline,\n\
+                                      `ANTHROPIC_API_KEY` 필요)\n\
+             \n\
+             참고: issue #88, docs/plans/p86-ollama-batch-fail-fast.md"
+        );
+    }
+
     // 2. Load prompt — haiku 백엔드는 세션 데이터를 직접 주입
     let prompt = if backend_name == "haiku" {
         build_haiku_prompt(&config, &wiki_dir, session, since)?

@@ -150,3 +150,11 @@ Plan document index. Register new plans here.
 - [전체 계획서](p84-lint-fix-wiki-invocations.md) — in_progress, 2026-05-19
 - 단일 Task: `check_wiki_invocations()` (L011 신규) — cwd 가 vault path 인 codex/claude 세션 검출 + `secall lint --fix-wiki-invocations` 옵션으로 일괄 archive. P83 marker 가 없는 legacy 데이터 사후 정리.
 - 관련: issue #82 fast-follow.
+
+---
+
+### seCall P86 — Wiki update + ollama/lmstudio 백엔드 fail-fast (issue #88)
+
+- [전체 계획서](p86-ollama-batch-fail-fast.md) — in_progress, 2026-05-19
+- 단일 Task: `commands/wiki.rs` 의 backend 선택 직후 ollama/lmstudio 차단 + 가이드 메시지. silent 30분 wait 사고 차단.
+- 관련: issue #88 (cakel).
