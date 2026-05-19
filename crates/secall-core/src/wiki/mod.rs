@@ -22,6 +22,13 @@ pub use reviewers::{
     ClaudeReviewer, CodexReviewer, HaikuReviewer, LmStudioReviewer, OllamaReviewer,
 };
 
+/// P83: codex/claude wiki 호출이 만든 subprocess 세션을 ingest 가 식별하기 위한
+/// prompt prefix marker. `wiki::{codex,claude}::generate()` 가 prompt 앞에
+/// 이 marker 를 prepend 하고, `ingest::is_noise_session` 이 첫 user turn 에서
+/// 검출하면 self-ingest 루프 차단을 위해 해당 세션을 skip 한다.
+/// Issue #82 fix.
+pub const WIKI_INVOCATION_MARKER: &str = "<!-- secall:wiki-update -->";
+
 /// wiki 생성 프롬프트를 LLM에 전달하고 결과를 반환하는 추상 인터페이스
 #[async_trait::async_trait]
 pub trait WikiBackend: Send + Sync {
