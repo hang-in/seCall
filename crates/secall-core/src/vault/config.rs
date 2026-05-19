@@ -165,8 +165,12 @@ fn default_wiki_backend() -> String {
     "claude".to_string()
 }
 
+/// Gemini PR #90 리뷰: compile-time const 로 정의하여 명확성/유지보수성 향상.
+/// serde default 속성용 함수도 같은 const 를 반환한다 (단일 source of truth).
+const DEFAULT_WIKI_GENERATION_TIMEOUT_SECS: u64 = 1800;
+
 fn default_wiki_generation_timeout_secs() -> u64 {
-    1800
+    DEFAULT_WIKI_GENERATION_TIMEOUT_SECS
 }
 
 impl Default for WikiConfig {
@@ -176,7 +180,7 @@ impl Default for WikiConfig {
             backends: std::collections::HashMap::new(),
             review_backend: None,
             review_model: None,
-            generation_timeout_secs: default_wiki_generation_timeout_secs(),
+            generation_timeout_secs: DEFAULT_WIKI_GENERATION_TIMEOUT_SECS,
         }
     }
 }
