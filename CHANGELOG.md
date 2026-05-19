@@ -2,6 +2,48 @@
 
 > NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
 
+## v0.6.0 (2026-05-19)
+
+P56 ~ P86 누적 — wiki self-ingest 루프 차단 (issue #82), wiki backend timeout config (issue #87), ollama/lmstudio fail-fast (issue #88), web 디자인 / model discovery / graph snapshot 개선, CI 시간 단축, 문서 룰 정리.
+
+### ⚠️ Behavior changes (non-breaking)
+
+- **`wiki update --backend ollama` / `--backend lmstudio` 명시적 에러** (#89, P86): 이전엔 silent fail (모델이 "임무 이해" 응답 후 종료, 사용자가 timeout 까지 wait). 이제 즉시 가이드 메시지 출력 (issue #88). 기본 동작 변경이지만 작동하지 않던 조합이라 사용자 일반 사용 영향 없음.
+- **wiki 호출 codex/claude 세션 자동 skip** (#85, P83): `wiki/{codex,claude}` 가 prompt 앞에 `WIKI_INVOCATION_MARKER` prefix → `is_noise_session()` 이 검출 시 skip → wiki self-ingest 루프 차단 (issue #82). 정상 사용자 세션 영향 없음.
+
+### ✨ Features
+
+- **wiki cloud (`ollama_cloud`) backend + claude haiku alias** (#66, P56): `WikiBackendConfig` 에 `cloud_api_key`/`cloud_host` 필드. graph/log 와 분리된 wiki 전용 키 / 엔드포인트 가능.
+- **claude stdout line-stream 실시간 표시** (#68, P58 follow-up): wiki update 시 claude CLI 출력을 매 line `[claude]` prefix 로 stderr 에 echo. 5분 timeout 동안 "아무 반응 없음" 으로 보이던 사용자 인식 개선. Windows CRLF 호환.
+- **ollama / lmstudio HTTP response streaming** (#70, P60): `/api/generate` (NDJSON) + LM Studio SSE 스트림 파싱. ollama 도 `[ollama]` prefix line-by-line stderr echo.
+- **TopNav version SSOT** (#72, P62): web 의 version 표시를 `/api/status` 가 server-side 단일 출처로 통합. `web-backlog.md` 신설.
+- **MarkdownView 폴딩 / highlight / wikilink 확장** (#75, P66): `rehype-raw` + `rehype-highlight` + `remark-wiki-link` 통합. session/wiki 페이지가 Obsidian 호환 markdown 풀 렌더.
+- **`/api/graph/snapshot` edge_limit + 우선순위 sampling** (#76, P64): 대용량 graph 응답 멈춤 회피. edge 우선순위 (degree + path importance) sampling.
+- **backend 별 model discovery + cache + REST endpoint** (#78, P65): `/api/models?backend=...` — wiki 설정 화면이 사용 가능 모델 list 자동 표시. 캐시 TTL 적용.
+- **Obsidian callout (`> [!type]-`) → `<details class="callout callout-<type>">`** (#81, P81): 자체 remark plugin. note/warning/info 등 callout 타입별 시각 구분.
+- **`secall lint --fix-wiki-invocations`** (#86, P84, issue #82 fast-follow): L011 신규 — cwd 가 vault path 인 codex/claude 세션 (legacy wiki invocation) 을 일괄 archive. P83 marker 가 없는 머지 전 데이터 사후 정리.
+- **`[wiki].generation_timeout_secs` config** (#90, P85, issue #87): claude/codex/ollama/lmstudio backend timeout 사용자 override. 기본값 1800 (hardcoded 와 동일, backward-compat).
+
+### 🐛 Fixes
+
+- **wiki backend timeout 300s → 1800s** (#69, P59): 5분 timeout 동안 정상 케이스도 SIGKILL 회귀 (sync-monitor 2026-05-15 관측). 30분으로 상향 + `kill_on_drop` 유지.
+- **`Config::save()` production config 덮어쓰기 차단 가드 (unit test)** (#74, P68): `#[cfg(test)]` 가드 — `SECALL_CONFIG_PATH` 미설정 시 production 경로 거부. cargo test flaky 시도 중 사용자 vault path 덮인 사고 (2026-05-16) 재발 차단.
+- **`Config::save()` 가드 integration test 확장** (#84, P82): runtime env (`SECALL_TEST_MODE`) 로 확장 — `#[cfg(test)]` 가 false 인 integration test 컨텍스트까지 보호. `tests/common::ensure_test_mode()` + `make_test_env()` 자동 호출.
+- **Wiki self-ingest 루프 차단** (#85, P83, Closes #82): `wiki/{codex,claude}` 가 prompt 앞에 marker prefix + `is_noise_session()` 이 검출 시 skip. 무한 wiki 재생성 / 중복 항목 차단.
+- **`wiki update + ollama/lmstudio` 명시적 fail-fast** (#89, P86, Closes #88): MCP 도구 호출 능력이 없는 백엔드 + batch/incremental prompt 조합을 silent fail 대신 즉시 가이드 메시지.
+- **Gemini P66 리뷰: security/a11y** (#77): `rehype-sanitize` 적용 + onKeyDown 키보드 접근성 + `<details open>` 허용.
+- **Gemini P66 follow-up: wiki frontmatter strip + ModelInput dropdown** (#79): heading collapse 폐기 + 자체 dropdown (chevron + 키보드 nav + click outside).
+
+### 🧹 Refactor / Internal
+
+- **README history table 정리** (#67, P57): git tag SSOT 로 정리.
+- **ja/zh README full sync** (#71, P61): 한국어 README 를 SSOT 으로 일본어 / 중국어 README 전체 동기화.
+- **core-backlog 신설 + web-backlog 전수 조사** (#73, P63): 도메인별 backlog 분리.
+- **CI 시간 단축** (#80, P80): `cargo-audit` / `cargo-nextest` binary install (`taiki-e/install-action`) + `--all-features` 제거. ubuntu/windows 워크플로우 단축.
+- **문서 룰 정리 + index 보강 + web-backlog 청소 + handoff** (#83): `docConventions.md` 신설 (tunaflow versioning + navigation 정책 압축) + `reference/index.md` 누락 10개 파일 등록 + `handoff_2026-05-19.md` cold-start 인수인계.
+
+---
+
 ## v0.5.0 (2026-05-15)
 
 P49 ~ P55 누적 — 데이터 품질 / 클라우드 LLM 통합 / 거대 함수 분해 / wiki hang 차단.
