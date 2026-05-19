@@ -8,8 +8,8 @@ P56 ~ P86 누적 — wiki self-ingest 루프 차단 (issue #82), wiki backend ti
 
 ### ⚠️ Behavior changes (non-breaking)
 
-- **`wiki update --backend ollama` / `--backend lmstudio` 명시적 에러** (#89, P86): 이전엔 silent fail (모델이 "임무 이해" 응답 후 종료, 사용자가 timeout 까지 wait). 이제 즉시 가이드 메시지 출력 (issue #88). 기본 동작 변경이지만 작동하지 않던 조합이라 사용자 일반 사용 영향 없음.
-- **wiki 호출 codex/claude 세션 자동 skip** (#85, P83): `wiki/{codex,claude}` 가 prompt 앞에 `WIKI_INVOCATION_MARKER` prefix → `is_noise_session()` 이 검출 시 skip → wiki self-ingest 루프 차단 (issue #82). 정상 사용자 세션 영향 없음.
+- **`wiki update --backend ollama` / `--backend lmstudio` 명시적 에러** (#89, P86, Closes #88): 이전엔 silent fail (모델이 "임무 이해" 응답 후 종료, 사용자가 timeout 까지 wait). 이제 즉시 가이드 메시지 출력. 기본 동작 변경이지만 작동하지 않던 조합이라 사용자 일반 사용 영향 없음. (MCP 도구 호출 능력이 없는 백엔드 + batch/incremental prompt 조합을 silent fail 대신 즉시 차단.)
+- **wiki 호출 codex/claude 세션 자동 skip** (#85, P83, Closes #82): `wiki/{codex,claude}` 가 prompt 앞에 `WIKI_INVOCATION_MARKER` prefix → `is_noise_session()` 이 검출 시 skip → wiki self-ingest 루프 차단. 무한 wiki 재생성 / 중복 항목 차단. 정상 사용자 세션 영향 없음.
 
 ### ✨ Features
 
@@ -29,8 +29,6 @@ P56 ~ P86 누적 — wiki self-ingest 루프 차단 (issue #82), wiki backend ti
 - **wiki backend timeout 300s → 1800s** (#69, P59): 5분 timeout 동안 정상 케이스도 SIGKILL 회귀 (sync-monitor 2026-05-15 관측). 30분으로 상향 + `kill_on_drop` 유지.
 - **`Config::save()` production config 덮어쓰기 차단 가드 (unit test)** (#74, P68): `#[cfg(test)]` 가드 — `SECALL_CONFIG_PATH` 미설정 시 production 경로 거부. cargo test flaky 시도 중 사용자 vault path 덮인 사고 (2026-05-16) 재발 차단.
 - **`Config::save()` 가드 integration test 확장** (#84, P82): runtime env (`SECALL_TEST_MODE`) 로 확장 — `#[cfg(test)]` 가 false 인 integration test 컨텍스트까지 보호. `tests/common::ensure_test_mode()` + `make_test_env()` 자동 호출.
-- **Wiki self-ingest 루프 차단** (#85, P83, Closes #82): `wiki/{codex,claude}` 가 prompt 앞에 marker prefix + `is_noise_session()` 이 검출 시 skip. 무한 wiki 재생성 / 중복 항목 차단.
-- **`wiki update + ollama/lmstudio` 명시적 fail-fast** (#89, P86, Closes #88): MCP 도구 호출 능력이 없는 백엔드 + batch/incremental prompt 조합을 silent fail 대신 즉시 가이드 메시지.
 - **Gemini P66 리뷰: security/a11y** (#77): `rehype-sanitize` 적용 + onKeyDown 키보드 접근성 + `<details open>` 허용.
 - **Gemini P66 follow-up: wiki frontmatter strip + ModelInput dropdown** (#79): heading collapse 폐기 + 자체 dropdown (chevron + 키보드 nav + click outside).
 
