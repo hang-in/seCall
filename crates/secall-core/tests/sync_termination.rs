@@ -49,6 +49,7 @@ async fn test_claude_backend_fails_fast_when_not_found() {
     let backend = ClaudeBackend {
         model: "sonnet".to_string(),
         vault_path: std::env::temp_dir(),
+        timeout_secs: 10,
     };
 
     let result = tokio::time::timeout(Duration::from_secs(5), backend.generate("test")).await;
@@ -76,6 +77,7 @@ async fn test_codex_backend_fails_fast_when_not_found() {
     let backend = CodexBackend {
         model: "gpt-5.4".to_string(),
         vault_path: std::env::temp_dir(),
+        timeout_secs: 10,
     };
 
     let result = tokio::time::timeout(Duration::from_secs(5), backend.generate("test")).await;

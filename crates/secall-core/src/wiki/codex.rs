@@ -9,6 +9,8 @@ use super::WikiBackend;
 pub struct CodexBackend {
     pub model: String,
     pub vault_path: PathBuf,
+    /// P85 (issue #87): config.wiki.generation_timeout_secs.
+    pub timeout_secs: u64,
 }
 
 #[async_trait]
@@ -54,9 +56,17 @@ impl WikiBackend for CodexBackend {
 
         // P52/P59: codex CLI hang 회피. 1800s 한도 (정상 wiki 생성도 10~20분
         // 걸리는 경우가 있어 P59 에서 5분 → 30분 상향). kill_on_drop=true.
-        let status = tokio::time::timeout(std::time::Duration::from_secs(1800), child.wait())
-            .await
-            .map_err(|_| anyhow::anyhow!("codex wiki generation timed out after 1800s"))??;
+        let status = tokio::time::timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            child.wait(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "codex wiki generation timed out after {}s",
+                self.timeout_secs
+            )
+        })??;
         if !status.success() {
             anyhow::bail!("codex exited with code {:?}", status.code());
         }

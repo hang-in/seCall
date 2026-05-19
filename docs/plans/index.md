@@ -153,6 +153,14 @@ Plan document index. Register new plans here.
 
 ---
 
+### seCall P85 — Wiki generation timeout config option (issue #87)
+
+- [전체 계획서](p85-wiki-timeout-config.md) — in_progress, 2026-05-19
+- 단일 Task: `[wiki].generation_timeout_secs` config (default 1800) — claude/codex/ollama/lmstudio backend 의 hardcoded 1800s 를 사용자 override 가능하게 함.
+- 관련: issue #87 (cakel).
+
+---
+
 ### seCall P86 — Wiki update + ollama/lmstudio 백엔드 fail-fast (issue #88)
 
 - [전체 계획서](p86-ollama-batch-fail-fast.md) — in_progress, 2026-05-19

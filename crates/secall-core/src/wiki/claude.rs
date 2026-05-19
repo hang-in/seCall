@@ -9,6 +9,8 @@ use super::WikiBackend;
 pub struct ClaudeBackend {
     pub model: String,
     pub vault_path: PathBuf,
+    /// P85 (issue #87): config.wiki.generation_timeout_secs.
+    pub timeout_secs: u64,
 }
 
 #[async_trait]
@@ -93,10 +95,17 @@ impl WikiBackend for ClaudeBackend {
             Ok::<_, anyhow::Error>((status, buf))
         };
 
-        let (status, buffer) =
-            tokio::time::timeout(std::time::Duration::from_secs(1800), stream_and_wait)
-                .await
-                .map_err(|_| anyhow::anyhow!("claude wiki generation timed out after 1800s"))??;
+        let (status, buffer) = tokio::time::timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            stream_and_wait,
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "claude wiki generation timed out after {}s",
+                self.timeout_secs
+            )
+        })??;
 
         if !status.success() {
             anyhow::bail!("claude exited with code {:?}", status.code());

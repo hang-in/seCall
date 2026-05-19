@@ -7,6 +7,8 @@ pub struct LmStudioBackend {
     pub api_url: String,
     pub model: String,
     pub max_tokens: u32,
+    /// P85 (issue #87): config.wiki.generation_timeout_secs.
+    pub timeout_secs: u64,
 }
 
 #[async_trait]
@@ -20,7 +22,7 @@ impl WikiBackend for LmStudioBackend {
         // 한도 (P59 에서 5분 → 30분 상향).
         // P60: stream=true (OpenAI-compatible SSE) 로 전환. delta.content 누적.
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(1800))
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()?;
         let resp = client
             .post(format!("{}/v1/chat/completions", self.api_url))
@@ -143,6 +145,7 @@ mod tests {
             api_url: server.url(),
             model: "qwen3-coder-32b".to_string(),
             max_tokens: 4096,
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await;
@@ -169,6 +172,7 @@ mod tests {
             api_url: server.url(),
             model: "qwen3-coder-32b".to_string(),
             max_tokens: 4096,
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await;
@@ -199,6 +203,7 @@ mod tests {
             api_url: server.url(),
             model: "qwen3-coder-32b".to_string(),
             max_tokens: 4096,
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await.unwrap();
