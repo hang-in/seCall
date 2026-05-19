@@ -8,6 +8,8 @@ pub struct OllamaBackend {
     pub model: String,
     pub max_tokens: u32,
     pub api_key: Option<String>,
+    /// P85 (issue #87): config.wiki.generation_timeout_secs.
+    pub timeout_secs: u64,
 }
 
 #[async_trait]
@@ -23,7 +25,7 @@ impl WikiBackend for OllamaBackend {
         // claude.rs 의 line-stream 과 동일 톤으로 stderr 에 `[ollama] ...` echo
         // 하여 사용자가 진행 상황을 본다.
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(1800))
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()?;
         let mut req =
             client
@@ -168,6 +170,7 @@ mod tests {
             model: "gemma4:31b-cloud".to_string(),
             max_tokens: 4096,
             api_key: Some("cloud-key".to_string()),
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await;
@@ -196,6 +199,7 @@ mod tests {
             model: "local-model".to_string(),
             max_tokens: 4096,
             api_key: None,
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await;
@@ -222,6 +226,7 @@ mod tests {
             model: "gemma4:31b-cloud".to_string(),
             max_tokens: 4096,
             api_key: Some("bad-key".to_string()),
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await;
@@ -253,6 +258,7 @@ mod tests {
             model: "local-model".to_string(),
             max_tokens: 4096,
             api_key: None,
+            timeout_secs: 60,
         };
 
         let result = backend.generate("test prompt").await.unwrap();

@@ -651,6 +651,7 @@ fn build_wiki_backend(
                 model: cfg.model.unwrap_or_else(|| "llama3".to_string()),
                 max_tokens: cfg.max_tokens,
                 api_key: None,
+                timeout_secs: config.wiki.generation_timeout_secs,
             }))
         }
         // P55 Gemini #64: build_reviewer 와 일관되게 ollama_cloud 도 지원.
@@ -682,6 +683,7 @@ fn build_wiki_backend(
                 }),
                 max_tokens: cfg.max_tokens,
                 api_key: Some(api_key),
+                timeout_secs: config.wiki.generation_timeout_secs,
             }))
         }
         "lmstudio" => {
@@ -692,15 +694,18 @@ fn build_wiki_backend(
                     .unwrap_or_else(|| "http://localhost:1234".to_string()),
                 model: cfg.model.unwrap_or_else(|| "local-model".to_string()),
                 max_tokens: cfg.max_tokens,
+                timeout_secs: config.wiki.generation_timeout_secs,
             }))
         }
         "codex" => Ok(Box::new(secall_core::wiki::CodexBackend {
             model: resolved_model.to_string(),
             vault_path: config.vault.path.clone(),
+            timeout_secs: config.wiki.generation_timeout_secs,
         })),
         "claude" => Ok(Box::new(secall_core::wiki::ClaudeBackend {
             model: resolved_model.to_string(),
             vault_path: config.vault.path.clone(),
+            timeout_secs: config.wiki.generation_timeout_secs,
         })),
         _ => anyhow::bail!(
             "Unknown backend '{}'. Supported: claude, codex, haiku, ollama, ollama_cloud, lmstudio",

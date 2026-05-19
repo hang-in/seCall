@@ -276,6 +276,7 @@ pub async fn generate_log_body(
             let backend = ClaudeBackend {
                 model,
                 vault_path: config.vault.path.clone(),
+                timeout_secs: config.wiki.generation_timeout_secs,
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
@@ -289,6 +290,7 @@ pub async fn generate_log_body(
             let backend = CodexBackend {
                 model,
                 vault_path: config.vault.path.clone(),
+                timeout_secs: config.wiki.generation_timeout_secs,
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
@@ -310,6 +312,7 @@ pub async fn generate_log_body(
                 model: resolved_model.unwrap_or_else(|| LOG_OLLAMA_DEFAULT.to_string()),
                 max_tokens: resolve_log_max_tokens(config),
                 api_key: None,
+                timeout_secs: config.wiki.generation_timeout_secs,
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
@@ -337,6 +340,7 @@ pub async fn generate_log_body(
                 model,
                 max_tokens: resolve_log_max_tokens(config),
                 api_key: Some(api_key),
+                timeout_secs: config.wiki.generation_timeout_secs,
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))
@@ -352,6 +356,7 @@ pub async fn generate_log_body(
                     GRAPH_LMSTUDIO_DEFAULT.to_string()
                 }),
                 max_tokens: resolve_log_max_tokens(config),
+                timeout_secs: config.wiki.generation_timeout_secs,
             };
             backend
                 .generate(&build_backend_prompt(system_prompt, user_prompt))

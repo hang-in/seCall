@@ -153,10 +153,20 @@ pub struct WikiConfig {
     /// --review 시 사용할 모델: "sonnet" | "opus" (기본: sonnet)
     #[serde(default)]
     pub review_model: Option<String>,
+    /// P85 (issue #87): wiki generation backend timeout in seconds.
+    /// claude/codex/ollama/lmstudio backend 의 generate() 가 사용한다.
+    /// 기본값 1800 (30분) — P59 에서 5분 → 30분 상향한 hardcoded 값과 동일.
+    /// 수만 세션 vault 또는 느린 모델 사용 시 사용자가 더 큰 값으로 override 가능.
+    #[serde(default = "default_wiki_generation_timeout_secs")]
+    pub generation_timeout_secs: u64,
 }
 
 fn default_wiki_backend() -> String {
     "claude".to_string()
+}
+
+fn default_wiki_generation_timeout_secs() -> u64 {
+    1800
 }
 
 impl Default for WikiConfig {
@@ -166,6 +176,7 @@ impl Default for WikiConfig {
             backends: std::collections::HashMap::new(),
             review_backend: None,
             review_model: None,
+            generation_timeout_secs: default_wiki_generation_timeout_secs(),
         }
     }
 }
