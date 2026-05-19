@@ -408,14 +408,16 @@ fn check_wiki_invocations(
 ) -> Result<()> {
     let vault_str = config.vault.path.to_string_lossy().to_string();
 
+    // Gemini PR #86 리뷰: cwd 비교를 SQL 에서 직접 — DB level 필터링으로
+    // 불필요한 row 전송/순회 회피.
     let conn = db.conn();
     let mut stmt = conn.prepare(
         "SELECT id, cwd, agent FROM sessions \
          WHERE is_archived = 0 \
-           AND cwd IS NOT NULL \
+           AND cwd = ?1 \
            AND agent IN ('codex', 'claude-code')",
     )?;
-    let rows = stmt.query_map([], |r| {
+    let rows = stmt.query_map([&vault_str], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
@@ -424,17 +426,15 @@ fn check_wiki_invocations(
     })?;
     for row in rows {
         let (id, cwd, agent) = row?;
-        if cwd == vault_str {
-            findings.push(LintFinding {
-                code: "L011".to_string(),
-                severity: Severity::Info,
-                message: format!(
-                    "{agent} session at vault path (likely wiki self-invocation): cwd={cwd}"
-                ),
-                session_id: Some(id),
-                path: None,
-            });
-        }
+        findings.push(LintFinding {
+            code: "L011".to_string(),
+            severity: Severity::Info,
+            message: format!(
+                "{agent} session at vault path (likely wiki self-invocation): cwd={cwd}"
+            ),
+            session_id: Some(id),
+            path: None,
+        });
     }
     Ok(())
 }
