@@ -61,6 +61,7 @@ pub fn run_lint(db: &Database, config: &Config) -> Result<LintReport> {
     check_missing_embeddings(db, &mut findings)?;
     check_fts_integrity(db, &mut findings)?;
     check_orphan_vectors(db, &mut findings)?;
+    check_wiki_invocations(db, config, &mut findings)?;
     check_wiki_frontmatter(config, &mut findings)?;
     check_wiki_source_links(db, config, &mut findings)?;
     check_orphan_sessions(db, config, &mut findings)?;
@@ -390,6 +391,54 @@ fn check_orphan_sessions(
     Ok(())
 }
 
+// ─── L011: wiki invocation suspects (P84 / issue #82) ───────────────────────
+
+/// codex/claude wiki 백엔드는 `cwd = vault_path` 으로 subprocess 를 spawn 한다.
+/// P83 이전에 ingest 된 데이터에는 `WIKI_INVOCATION_MARKER` 가 없으므로 marker
+/// 검사로는 잡히지 않는다. 대신 cwd 가 정확히 vault path 와 일치하는 codex/claude
+/// 세션을 사후 정리 후보로 식별한다.
+///
+/// 사용자가 vault 디렉토리에서 직접 일반 작업한 세션은 false positive 가능성
+/// 있으나, vault 는 secall 의 wiki 저장소라 일반 작업이 거의 없다. 또 archive
+/// 는 reversible (`secall unarchive`) 이므로 보수적 정리에 적합.
+fn check_wiki_invocations(
+    db: &Database,
+    config: &Config,
+    findings: &mut Vec<LintFinding>,
+) -> Result<()> {
+    let vault_str = config.vault.path.to_string_lossy().to_string();
+
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, cwd, agent FROM sessions \
+         WHERE is_archived = 0 \
+           AND cwd IS NOT NULL \
+           AND agent IN ('codex', 'claude-code')",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, cwd, agent) = row?;
+        if cwd == vault_str {
+            findings.push(LintFinding {
+                code: "L011".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "{agent} session at vault path (likely wiki self-invocation): cwd={cwd}"
+                ),
+                session_id: Some(id),
+                path: None,
+            });
+        }
+    }
+    Ok(())
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 /// vault 마크다운 파일에서 frontmatter의 session_id 필드를 추출
@@ -712,5 +761,123 @@ mod tests {
         let l010 = report.findings.iter().find(|f| f.code == "L010");
         assert!(l010.is_some(), "expected L010 finding for orphan session");
         assert!(matches!(l010.unwrap().severity, Severity::Info));
+    }
+
+    // ─── L011: wiki invocation suspects (P84 / issue #82) ───────────────────
+
+    #[test]
+    fn test_lint_l011_detects_codex_session_at_vault() {
+        let db = Database::open_memory().unwrap();
+        let (config, _tmp) = make_config_tmp();
+        let vault_str = config.vault.path.to_string_lossy().to_string();
+        db.conn()
+            .execute(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at, cwd) \
+                 VALUES('wiki-codex-1','codex','2026-01-01','2026-01-01', ?1)",
+                rusqlite::params![vault_str],
+            )
+            .unwrap();
+        let report = run_lint(&db, &config).unwrap();
+        let l011: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L011")
+            .collect();
+        assert_eq!(l011.len(), 1, "L011 should detect codex session at vault");
+        assert_eq!(l011[0].session_id.as_deref(), Some("wiki-codex-1"));
+        assert!(matches!(l011[0].severity, Severity::Info));
+    }
+
+    #[test]
+    fn test_lint_l011_detects_claude_session_at_vault() {
+        let db = Database::open_memory().unwrap();
+        let (config, _tmp) = make_config_tmp();
+        let vault_str = config.vault.path.to_string_lossy().to_string();
+        db.conn()
+            .execute(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at, cwd) \
+                 VALUES('wiki-claude-1','claude-code','2026-01-01','2026-01-01', ?1)",
+                rusqlite::params![vault_str],
+            )
+            .unwrap();
+        let report = run_lint(&db, &config).unwrap();
+        let l011: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L011")
+            .collect();
+        assert_eq!(
+            l011.len(),
+            1,
+            "L011 should detect claude-code session at vault"
+        );
+    }
+
+    #[test]
+    fn test_lint_l011_ignores_archived() {
+        let db = Database::open_memory().unwrap();
+        let (config, _tmp) = make_config_tmp();
+        let vault_str = config.vault.path.to_string_lossy().to_string();
+        db.conn()
+            .execute(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at, cwd, is_archived) \
+                 VALUES('already-archived','codex','2026-01-01','2026-01-01', ?1, 1)",
+                rusqlite::params![vault_str],
+            )
+            .unwrap();
+        let report = run_lint(&db, &config).unwrap();
+        let l011: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L011")
+            .collect();
+        assert!(l011.is_empty(), "L011 must skip already-archived sessions");
+    }
+
+    #[test]
+    fn test_lint_l011_ignores_cwd_outside_vault() {
+        let db = Database::open_memory().unwrap();
+        let (config, _tmp) = make_config_tmp();
+        db.conn()
+            .execute_batch(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at, cwd) \
+                 VALUES('user-codex','codex','2026-01-01','2026-01-01','/Users/me/projects/foo')",
+            )
+            .unwrap();
+        let report = run_lint(&db, &config).unwrap();
+        let l011: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L011")
+            .collect();
+        assert!(
+            l011.is_empty(),
+            "L011 must not flag normal codex session outside vault"
+        );
+    }
+
+    #[test]
+    fn test_lint_l011_ignores_non_codex_claude_agents() {
+        let db = Database::open_memory().unwrap();
+        let (config, _tmp) = make_config_tmp();
+        let vault_str = config.vault.path.to_string_lossy().to_string();
+        // gemini-cli session at vault path — not a wiki backend, must be ignored
+        db.conn()
+            .execute(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at, cwd) \
+                 VALUES('gemini-at-vault','gemini-cli','2026-01-01','2026-01-01', ?1)",
+                rusqlite::params![vault_str],
+            )
+            .unwrap();
+        let report = run_lint(&db, &config).unwrap();
+        let l011: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "L011")
+            .collect();
+        assert!(
+            l011.is_empty(),
+            "L011 must only flag codex/claude-code sessions"
+        );
     }
 }

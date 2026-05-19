@@ -169,6 +169,12 @@ enum Commands {
         /// Auto-fix orphan vault files (L002) — move vault md to archive if not in DB
         #[arg(long)]
         fix_orphan_vault: bool,
+
+        /// P84 (issue #82): Auto-archive wiki invocation sessions (L011) — codex/claude
+        /// sessions whose cwd matches the vault path are wiki self-invocations, archived
+        /// to prevent self-ingest loops in legacy data (pre-P83 ingest).
+        #[arg(long)]
+        fix_wiki_invocations: bool,
     },
 
     /// Start MCP server
@@ -552,8 +558,15 @@ async fn main() -> anyhow::Result<()> {
             errors_only,
             fix,
             fix_orphan_vault,
+            fix_wiki_invocations,
         } => {
-            commands::lint::run(json, errors_only, fix, fix_orphan_vault)?;
+            commands::lint::run(
+                json,
+                errors_only,
+                fix,
+                fix_orphan_vault,
+                fix_wiki_invocations,
+            )?;
         }
         Commands::Mcp { http } => {
             commands::mcp::run(http).await?;

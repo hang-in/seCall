@@ -142,3 +142,11 @@ Plan document index. Register new plans here.
 - [전체 계획서](p83-wiki-self-ingest-loop.md) — in_progress, 2026-05-19
 - 단일 Task: `wiki/{codex,claude}.rs` 의 generate() 가 prompt 앞에 `WIKI_INVOCATION_MARKER` prefix → `is_noise_session()` 이 marker 검출 시 skip → wiki 호출이 생성한 codex/claude 세션의 self-ingest 루프 차단.
 - 관련: issue #82 (dicebattle).
+
+---
+
+### seCall P84 — `lint --fix-wiki-invocations` (P83 fast-follow)
+
+- [전체 계획서](p84-lint-fix-wiki-invocations.md) — in_progress, 2026-05-19
+- 단일 Task: `check_wiki_invocations()` (L011 신규) — cwd 가 vault path 인 codex/claude 세션 검출 + `secall lint --fix-wiki-invocations` 옵션으로 일괄 archive. P83 marker 가 없는 legacy 데이터 사후 정리.
+- 관련: issue #82 fast-follow.

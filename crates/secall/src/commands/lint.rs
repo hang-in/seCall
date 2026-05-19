@@ -5,7 +5,13 @@ use secall_core::{
     vault::Config,
 };
 
-pub fn run(json: bool, errors_only: bool, fix: bool, fix_orphan_vault: bool) -> Result<()> {
+pub fn run(
+    json: bool,
+    errors_only: bool,
+    fix: bool,
+    fix_orphan_vault: bool,
+    fix_wiki_invocations: bool,
+) -> Result<()> {
     let config = Config::load_or_default();
     let db_path = get_default_db_path();
     let db = Database::open(&db_path)?;
@@ -19,6 +25,9 @@ pub fn run(json: bool, errors_only: bool, fix: bool, fix_orphan_vault: bool) -> 
         }
         if fix_orphan_vault {
             run_fix_orphan_vault(&config, &report)?;
+        }
+        if fix_wiki_invocations {
+            run_fix_wiki_invocations(&db, &config, &report)?;
         }
         return Ok(());
     }
@@ -74,6 +83,13 @@ pub fn run(json: bool, errors_only: bool, fix: bool, fix_orphan_vault: bool) -> 
         run_fix_orphan_vault(&config, &report)?;
     }
 
+    // P84 (issue #82) --fix-wiki-invocations: L011 (codex/claude wiki invocation
+    // 의심 세션 — cwd 가 vault path) 을 archived 로 마킹. P83 머지 전 ingest 된
+    // legacy 데이터의 self-ingest 잔재 정리.
+    if fix_wiki_invocations {
+        run_fix_wiki_invocations(&db, &config, &report)?;
+    }
+
     // Exit with code 1 if there are errors (after fix, re-count).
     // Gemini PR #63: fix_orphan_vault 만 사용 시 L002(Warn) 처리라
     // errors 카운트에 영향 없음 → 불필요한 rerun 회피.
@@ -88,6 +104,55 @@ pub fn run(json: bool, errors_only: bool, fix: bool, fix_orphan_vault: bool) -> 
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+/// P84 (issue #82): L011 finding 의 wiki invocation 의심 세션을 archive 로 마킹.
+///
+/// archive (DB `is_archived = 1`) 만 — vault md 파일은 그대로 둠. 사용자가 의도치
+/// 않게 archive 된 경우 `secall unarchive <id>` 또는 web UI 로 복원 가능.
+fn run_fix_wiki_invocations(
+    db: &Database,
+    config: &Config,
+    report: &secall_core::ingest::lint::LintReport,
+) -> Result<()> {
+    let suspects: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "L011" && f.session_id.is_some())
+        .filter_map(|f| f.session_id.as_deref())
+        .collect();
+
+    if suspects.is_empty() {
+        eprintln!("[fix-wiki-invocations] No wiki invocation suspects.");
+        return Ok(());
+    }
+
+    let vault = secall_core::vault::Vault::new(config.vault.path.clone());
+    let tz = config.timezone();
+
+    eprintln!(
+        "[fix-wiki-invocations] Archiving {} wiki invocation session(s)...",
+        suspects.len()
+    );
+    let mut archived = 0usize;
+    let mut failed = 0usize;
+    for session_id in &suspects {
+        match db.archive_session(session_id, &vault, tz) {
+            Ok(()) => {
+                eprintln!("  archived {}", &session_id[..session_id.len().min(8)]);
+                archived += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "  failed to archive {}: {e}",
+                    &session_id[..session_id.len().min(8)]
+                );
+                failed += 1;
+            }
+        }
+    }
+    eprintln!("[fix-wiki-invocations] Done. {archived} archived, {failed} failed.");
     Ok(())
 }
 
