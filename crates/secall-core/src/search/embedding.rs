@@ -159,7 +159,8 @@ impl OrtEmbedder {
 
         // Build first session and probe dimensions
         #[allow(unused_mut)]
-        let mut builder = ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
+        let mut builder =
+            ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
         #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
         {
             use ort::execution_providers::CoreMLExecutionProvider;
@@ -181,7 +182,8 @@ impl OrtEmbedder {
         // Build remaining sessions
         for _ in 1..pool_size {
             #[allow(unused_mut)]
-            let mut builder = ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
+            let mut builder =
+                ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
             #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
             {
                 use ort::execution_providers::CoreMLExecutionProvider;
@@ -1008,7 +1010,7 @@ mod tests {
         ];
 
         let embeddings = rt
-            .block_on(embedder.embed_batch(&texts.iter().map(|s| *s).collect::<Vec<_>>()))
+            .block_on(embedder.embed_batch(&texts))
             .expect("embed_batch");
 
         assert_eq!(embeddings.len(), 4);
@@ -1024,9 +1026,8 @@ mod tests {
         // Semantic sanity: context-question pairs should be more similar to each
         // other than to unrelated pairs (bge-m3 is a cross-lingual retrieval model)
         let sim_philosophy = cosine(&embeddings[0], &embeddings[1]); // context ↔ its question
-        let sim_noah = cosine(&embeddings[2], &embeddings[3]);       // context ↔ its question
-        let sim_cross = cosine(&embeddings[0], &embeddings[3]);      // philosophy ↔ noah question
-
+        let sim_noah = cosine(&embeddings[2], &embeddings[3]); // context ↔ its question
+        let sim_cross = cosine(&embeddings[0], &embeddings[3]); // philosophy ↔ noah question
 
         assert!(
             sim_philosophy > sim_cross,
