@@ -36,7 +36,7 @@ impl WikiBackend for ClaudeBackend {
             _ => "claude-sonnet-4-6",
         };
 
-        let mut child = tokio::process::Command::new("claude")
+        let mut child = tokio::process::Command::new(crate::resolve_program("claude"))
             .args(["-p", "--model", model_id])
             .arg("--allowedTools")
             .arg("mcp__secall__recall,mcp__secall__get,mcp__secall__status,mcp__secall__wiki_search,Read,Write,Edit,Glob,Grep")

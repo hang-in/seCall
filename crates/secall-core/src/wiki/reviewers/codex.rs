@@ -19,6 +19,9 @@ impl WikiReviewer for CodexReviewer {
             anyhow::bail!("codex CLI not found in PATH");
         }
 
+        // Gemini PR #96: PATH 탐색 (disk I/O) 은 루프 밖에서 1회만.
+        let program = crate::resolve_program("codex");
+
         for strict in [false, true] {
             let prompt = format!(
                 "{}\n\n{}",
@@ -29,7 +32,7 @@ impl WikiReviewer for CodexReviewer {
             let output_file = tempfile::NamedTempFile::new()?;
             let output_path = output_file.path().to_path_buf();
 
-            let mut child = tokio::process::Command::new("codex");
+            let mut child = tokio::process::Command::new(&program);
             child
                 .args([
                     "exec",

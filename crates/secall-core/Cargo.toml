@@ -23,6 +23,7 @@ async-trait.workspace = true
 ort.workspace = true
 ndarray.workspace = true
 tokenizers.workspace = true
+which.workspace = true
 sha2.workspace = true
 regex.workspace = true
 futures-util.workspace = true
