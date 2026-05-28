@@ -39,6 +39,9 @@ async fn run_review_cli(
         anyhow::bail!("{bin} CLI not found in PATH");
     }
 
+    // Gemini PR #96: PATH 탐색 (disk I/O) 은 루프 밖에서 1회만.
+    let program = crate::resolve_program(bin);
+
     for strict in [false, true] {
         let prompt = format!(
             "{}\n\n{}",
@@ -46,7 +49,7 @@ async fn run_review_cli(
             super::build_user_prompt(page_content, source_summary, strict)
         );
 
-        let mut child = tokio::process::Command::new(crate::resolve_program(bin));
+        let mut child = tokio::process::Command::new(&program);
         child
             .args(args)
             .stdin(Stdio::piped())
