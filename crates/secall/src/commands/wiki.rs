@@ -216,7 +216,10 @@ async fn run_update_with_sink(
     // 되묻는 경우가 잦다 (sonnet/opus 는 정상). 차단하진 않되 (haiku 도 도구
     // 호출 자체는 가능하고 review backend 로는 적합) 빈 결과로 끝나는 혼란을
     // 줄이기 위해 경고한다.
-    if backend_name == "claude" && resolved_model.trim().eq_ignore_ascii_case("haiku") {
+    // Gemini PR #98: claude.rs 의 model_id 매칭이 정확히 "haiku" 일 때만 haiku 를
+    // 쓰고 "Haiku"/"haiku " 는 sonnet 으로 보내므로, 경고 조건도 정확히 "haiku"
+    // 로 일치시킨다 (느슨한 비교 시 sonnet 실행인데 haiku 경고 뜨는 불일치).
+    if backend_name == "claude" && resolved_model == "haiku" {
         eprintln!(
             "⚠️  wiki generation 에 haiku 모델은 권장되지 않습니다 \
              (instruction-following 이 약해 작업을 건너뛸 수 있음). \
