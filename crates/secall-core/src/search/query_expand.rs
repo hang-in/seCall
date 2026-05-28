@@ -28,7 +28,7 @@ pub fn expand_query(query: &str, db: Option<&Database>) -> Result<String> {
          쿼리: {query}"
     );
 
-    let output = std::process::Command::new("claude")
+    let output = std::process::Command::new(crate::resolve_program("claude"))
         .args(["-p", &prompt, "--model", "claude-haiku-4-5-20251001"])
         .output()?;
 

@@ -29,7 +29,7 @@ impl WikiReviewer for CodexReviewer {
             let output_file = tempfile::NamedTempFile::new()?;
             let output_path = output_file.path().to_path_buf();
 
-            let mut child = tokio::process::Command::new("codex");
+            let mut child = tokio::process::Command::new(crate::resolve_program("codex"));
             child
                 .args([
                     "exec",

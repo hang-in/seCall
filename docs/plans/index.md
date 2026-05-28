@@ -166,3 +166,11 @@ Plan document index. Register new plans here.
 - [전체 계획서](p86-ollama-batch-fail-fast.md) — in_progress, 2026-05-19
 - 단일 Task: `commands/wiki.rs` 의 backend 선택 직후 ollama/lmstudio 차단 + 가이드 메시지. silent 30분 wait 사고 차단.
 - 관련: issue #88 (cakel).
+
+---
+
+### seCall P87 — Windows `.cmd` 래퍼 CLI spawn 실패 fix (issue #92)
+
+- [전체 계획서](p87-windows-cmd-spawn.md) — in_progress, 2026-05-29
+- 단일 Task: `which` crate 로 `resolve_program` 추가 — Windows PATHEXT 적용해 npm `.cmd` 래퍼 (codex/claude) 를 정상 spawn. spawn 5곳 + `command_exists` 통일.
+- 관련: issue #92 (cakel).

@@ -46,7 +46,7 @@ async fn run_review_cli(
             super::build_user_prompt(page_content, source_summary, strict)
         );
 
-        let mut child = tokio::process::Command::new(bin);
+        let mut child = tokio::process::Command::new(crate::resolve_program(bin));
         child
             .args(args)
             .stdin(Stdio::piped())
