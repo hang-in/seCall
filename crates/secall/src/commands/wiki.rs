@@ -211,6 +211,21 @@ async fn run_update_with_sink(
         );
     }
 
+    // P88 (issue #93): claude 백엔드 + haiku 모델은 wiki generation prompt 의
+    // instruction-following 이 약해 작업을 시작하지 않고 "뭘 원하나요?" 라고
+    // 되묻는 경우가 잦다 (sonnet/opus 는 정상). 차단하진 않되 (haiku 도 도구
+    // 호출 자체는 가능하고 review backend 로는 적합) 빈 결과로 끝나는 혼란을
+    // 줄이기 위해 경고한다.
+    if backend_name == "claude" && resolved_model.trim().eq_ignore_ascii_case("haiku") {
+        eprintln!(
+            "⚠️  wiki generation 에 haiku 모델은 권장되지 않습니다 \
+             (instruction-following 이 약해 작업을 건너뛸 수 있음). \
+             [wiki.backends.claude] model = \"sonnet\" 또는 \"opus\" 를 권장합니다. \
+             haiku 는 review backend (review_backend = \"haiku\") 용도로 적합합니다. \
+             참고: issue #93"
+        );
+    }
+
     // 2. Load prompt — haiku 백엔드는 세션 데이터를 직접 주입
     let prompt = if backend_name == "haiku" {
         build_haiku_prompt(&config, &wiki_dir, session, since)?

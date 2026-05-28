@@ -174,3 +174,11 @@ Plan document index. Register new plans here.
 - [전체 계획서](p87-windows-cmd-spawn.md) — in_progress, 2026-05-29
 - 단일 Task: `which` crate 로 `resolve_program` 추가 — Windows PATHEXT 적용해 npm `.cmd` 래퍼 (codex/claude) 를 정상 spawn. spawn 5곳 + `command_exists` 통일.
 - 관련: issue #92 (cakel).
+
+---
+
+### seCall P88 — claude+haiku wiki generation 경고 (issue #93)
+
+- [전체 계획서](p88-haiku-wiki-warn.md) — in_progress, 2026-05-29
+- 단일 Task: generation 경로에서 claude+haiku 조합 감지 시 경고 (sonnet/opus 권장). 코드 버그 아닌 모델 capability — 차단 대신 안내.
+- 관련: issue #93 (cakel).
