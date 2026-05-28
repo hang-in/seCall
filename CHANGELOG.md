@@ -2,6 +2,22 @@
 
 > NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
 
+## v0.6.1 (2026-05-29)
+
+사용자 보고 이슈 fix 패치 — ORT bge-m3 (#94), Windows codex spawn (#92), claude+haiku wiki 경고 (#93).
+
+### 🐛 Fixes
+
+- **ORT 백엔드 bge-m3 ONNX 지원** (#95, Closes #94, 외부 기여 @Hobeom): bge-m3 ONNX export 의 출력 키가 표준 BERT 의 `last_hidden_state` 가 아닌 `token_embeddings` 라 ORT 백엔드가 `no output named last_hidden_state` 로 항상 실패하던 문제. `token_embeddings` 우선 + `last_hidden_state` fallback 으로 두 형식 모두 지원. ort builder 에러 컨텍스트 개선.
+- **Windows `.cmd` 래퍼 CLI spawn** (#96, P87, Closes #92): npm 으로 설치된 codex/claude (`codex.cmd` 배치 래퍼) 가 `Command::new("codex")` 에서 PATHEXT 미적용으로 "program not found" 되던 문제. `which` crate 로 `resolve_program` 도입 — PATHEXT 적용 경로 resolve 후 spawn (Rust 1.77+ 가 `.cmd` 를 cmd.exe 경유 실행). `command_exists` 도 동일 규칙으로 통일.
+- **claude+haiku wiki generation 경고** (#98, P88, Closes #93): `[wiki.backends.claude] model = "haiku"` 로 wiki update 시 haiku 가 instruction-following 약해 작업을 건너뛰고 빈 결과로 끝나던 혼란. generation 경로에서 경고 출력 (sonnet/opus 권장, haiku 는 review backend 용 안내). 차단 아님.
+
+### 🧹 Internal
+
+- **CI hotfix** (#97): PR #95 가 fork PR 이라 CI 미실행으로 유입된 fmt/clippy 위반 (test 코드) 을 수습해 main CI 복구.
+
+---
+
 ## v0.6.0 (2026-05-19)
 
 P56 ~ P86 누적 — wiki self-ingest 루프 차단 (issue #82), wiki backend timeout config (issue #87), ollama/lmstudio fail-fast (issue #88), web 디자인 / model discovery / graph snapshot 개선, CI 시간 단축, 문서 룰 정리.
