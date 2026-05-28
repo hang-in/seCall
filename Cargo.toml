@@ -37,7 +37,7 @@ dotenvy = "0.15"
 tokio-util = { version = "0.7" }
 schemars = "1.0"
 async-trait = "0.1"
-ort = { version = "=2.0.0-rc.10", features = ["load-dynamic"] }
+ort = { version = "=2.0.0-rc.10", features = ["load-dynamic", "ndarray"] }
 ndarray = "0.16"
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 kiwi-rs = "0.1"
