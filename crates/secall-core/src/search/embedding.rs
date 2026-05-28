@@ -138,6 +138,7 @@ pub struct OrtEmbedder {
     /// Session pool — multiple ORT sessions for true parallel inference.
     /// Each session is independently lockable so concurrent embed_batch calls
     /// can run on different CPU cores simultaneously.
+    ///
     sessions: Vec<Arc<Mutex<ort::session::Session>>>,
     next_session: std::sync::atomic::AtomicUsize,
     tokenizer: Arc<tokenizers::Tokenizer>,
@@ -158,16 +159,19 @@ impl OrtEmbedder {
 
         // Build first session and probe dimensions
         #[allow(unused_mut)]
-        let mut builder = ort::session::Session::builder()?;
+        let mut builder = ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
         #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
         {
             use ort::execution_providers::CoreMLExecutionProvider;
-            builder =
-                builder.with_execution_providers([CoreMLExecutionProvider::default().build()])?;
+            builder = builder
+                .with_execution_providers([CoreMLExecutionProvider::default().build()])
+                .map_err(|e| anyhow!("coreml ep: {e}"))?;
         }
         let mut first_session = builder
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .commit_from_file(model_dir.join("model.onnx"))?;
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow!("opt level: {e}"))?
+            .commit_from_file(model_dir.join("model.onnx"))
+            .map_err(|e| anyhow!("load model: {e}"))?;
 
         let dim = Self::probe_dim(&mut first_session, &tokenizer).unwrap_or(1024);
 
@@ -177,16 +181,19 @@ impl OrtEmbedder {
         // Build remaining sessions
         for _ in 1..pool_size {
             #[allow(unused_mut)]
-            let mut builder = ort::session::Session::builder()?;
+            let mut builder = ort::session::Session::builder().map_err(|e| anyhow!("ort builder: {e}"))?;
             #[cfg(all(feature = "coreml", target_os = "macos", target_arch = "aarch64"))]
             {
                 use ort::execution_providers::CoreMLExecutionProvider;
                 builder = builder
-                    .with_execution_providers([CoreMLExecutionProvider::default().build()])?;
+                    .with_execution_providers([CoreMLExecutionProvider::default().build()])
+                    .map_err(|e| anyhow!("coreml ep: {e}"))?;
             }
             let sess = builder
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .commit_from_file(model_dir.join("model.onnx"))?;
+                .with_optimization_level(GraphOptimizationLevel::Level3)
+                .map_err(|e| anyhow!("opt level: {e}"))?
+                .commit_from_file(model_dir.join("model.onnx"))
+                .map_err(|e| anyhow!("load model: {e}"))?;
             sessions.push(Arc::new(Mutex::new(sess)));
         }
 
@@ -279,8 +286,14 @@ impl OrtEmbedder {
             "attention_mask" => mask_ref,
         ])?;
 
-        // last_hidden_state shape: [batch_size, max_len, dim]
-        let hidden_arr = outputs["last_hidden_state"].try_extract_array::<f32>()?;
+        // bge-m3 ONNX exports token-level embeddings as "token_embeddings";
+        // fall back to "last_hidden_state" for standard BERT-style models.
+        let out_key = if outputs.contains_key("token_embeddings") {
+            "token_embeddings"
+        } else {
+            "last_hidden_state"
+        };
+        let hidden_arr = outputs[out_key].try_extract_array::<f32>()?;
         let dim = hidden_arr.shape()[2];
 
         // attention_mask 기반 mean pooling + L2 normalize
@@ -351,8 +364,14 @@ impl OrtEmbedder {
             "attention_mask" => mask_ref,
         ])?;
 
-        // Extract last_hidden_state: shape [1, seq_len, dim]
-        let hidden_arr = outputs["last_hidden_state"].try_extract_array::<f32>()?;
+        // bge-m3 ONNX exports token-level embeddings as "token_embeddings";
+        // fall back to "last_hidden_state" for standard BERT-style models.
+        let out_key = if outputs.contains_key("token_embeddings") {
+            "token_embeddings"
+        } else {
+            "last_hidden_state"
+        };
+        let hidden_arr = outputs[out_key].try_extract_array::<f32>()?;
         let shape = hidden_arr.shape();
         let dim = shape[2];
 
@@ -942,25 +961,80 @@ mod tests {
         );
     }
 
-    #[test]
-    #[ignore]
-    fn test_ort_embed_basic() {
-        // Manual test: requires ~/.cache/secall/models/bge-m3-onnx/
-        let model_dir = dirs::home_dir()
+    fn ort_model_dir() -> std::path::PathBuf {
+        dirs::home_dir()
             .unwrap()
             .join(".cache")
             .join("secall")
             .join("models")
-            .join("bge-m3-onnx");
+            .join("bge-m3-onnx")
+    }
 
-        let embedder = OrtEmbedder::new(&model_dir).expect("OrtEmbedder::new");
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b).map(|(x, y)| x * y).sum()
+    }
+
+    #[test]
+    #[ignore]
+    fn test_ort_embed_basic() {
+        // Requires ~/.cache/secall/models/bge-m3-onnx/
+        let embedder = OrtEmbedder::new(&ort_model_dir()).expect("OrtEmbedder::new");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let embedding = rt.block_on(embedder.embed("hello world")).expect("embed");
-        assert!(!embedding.is_empty());
+        assert_eq!(embedding.len(), 1024, "bge-m3 dim should be 1024");
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!(
             (norm - 1.0).abs() < 0.01,
             "L2 norm should be ~1.0, got {norm}"
+        );
+    }
+
+    /// Verify that the output key fix works: bge-m3 ONNX uses "token_embeddings"
+    /// not "last_hidden_state". If the fix regresses, this test panics with the
+    /// original "no output named `last_hidden_state`" error.
+    #[test]
+    #[ignore]
+    fn test_ort_output_key_bge_m3() {
+        // Requires ~/.cache/secall/models/bge-m3-onnx/
+        let embedder = OrtEmbedder::new(&ort_model_dir()).expect("OrtEmbedder::new");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Sample texts from KorQuAD v1.0 dev set (public domain QA corpus)
+        let texts = [
+            "서양 철학은 서양에서 이루어진 철학적인 생각과 관련된 용어로, 동양 철학이나 다양한 지역에 존재하는 토착 철학들과 대비된다.",
+            "철학이라는 용어 자체는 어디에서 유래 되었는가?",
+            "노아는 하나님의 명령에 따라 배를 만들고 가족과 정결한 짐승을 싣고 홍수를 피하였다.",
+            "노아의 방주를 상징적 의미로 받아들이는 종교는 무엇인가?",
+        ];
+
+        let embeddings = rt
+            .block_on(embedder.embed_batch(&texts.iter().map(|s| *s).collect::<Vec<_>>()))
+            .expect("embed_batch");
+
+        assert_eq!(embeddings.len(), 4);
+        for (i, emb) in embeddings.iter().enumerate() {
+            assert_eq!(emb.len(), 1024, "text[{i}] dim should be 1024");
+            let norm: f32 = emb.iter().map(|x| x * x).sum::<f32>().sqrt();
+            assert!(
+                (norm - 1.0).abs() < 0.01,
+                "text[{i}] L2 norm should be ~1.0, got {norm}"
+            );
+        }
+
+        // Semantic sanity: context-question pairs should be more similar to each
+        // other than to unrelated pairs (bge-m3 is a cross-lingual retrieval model)
+        let sim_philosophy = cosine(&embeddings[0], &embeddings[1]); // context ↔ its question
+        let sim_noah = cosine(&embeddings[2], &embeddings[3]);       // context ↔ its question
+        let sim_cross = cosine(&embeddings[0], &embeddings[3]);      // philosophy ↔ noah question
+
+
+        assert!(
+            sim_philosophy > sim_cross,
+            "philosophy pair ({sim_philosophy:.3}) should outscore cross-topic ({sim_cross:.3})"
+        );
+        assert!(
+            sim_noah > sim_cross,
+            "noah pair ({sim_noah:.3}) should outscore cross-topic ({sim_cross:.3})"
         );
     }
 }
