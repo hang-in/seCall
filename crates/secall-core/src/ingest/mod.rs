@@ -19,6 +19,17 @@ pub use types::{Action, AgentKind, Role, Session, TokenUsage, Turn};
 const SECALL_SUMMARY_PROMPT_PREFIX: &str =
     "Analyze the following conversation and produce a JSON array of topic-based summaries";
 
+/// P83/P90 (#82, refactoring report [낮음]): codex/claude wiki 호출이 만든
+/// subprocess 세션을 ingest 가 self-ingest 노이즈로 식별하기 위한 prompt prefix
+/// marker. `is_noise_session` 이 첫 user turn 에서 이 marker 를 검출하면 해당
+/// 세션을 skip 한다.
+///
+/// 소유권은 노이즈 판정 주체인 `ingest` 에 둔다 — wiki 백엔드 (`wiki::{codex,
+/// claude}::generate`) 가 prompt 앞에 이 상수를 prepend 하므로, 하위 레이어
+/// (ingest) 의 식별 규칙을 상위 레이어 (wiki) 가 참조하는 올바른 의존 방향이다.
+/// (이전엔 `wiki::WIKI_INVOCATION_MARKER` 로 정의되어 ingest → wiki 역참조였음.)
+pub const WIKI_INVOCATION_MARKER: &str = "<!-- secall:wiki-update -->";
+
 pub trait SessionParser: Send + Sync {
     /// Check if this parser can handle the given path
     fn can_parse(&self, path: &Path) -> bool;
@@ -43,7 +54,7 @@ pub trait SessionParser: Send + Sync {
 /// ingest 가 발생해 vault 가 거의 동일한 짧은 세션으로 오염됐다. 차단 패턴:
 ///   1. cwd 가 OS 임시 디렉토리 (`/private/var/folders`, `/var/folders`, `/tmp`)
 ///   2. 첫 user turn 본문이 secall 의 알려진 summary 프롬프트 prefix 로 시작
-///   3. (P83) 첫 user turn 본문이 `wiki::WIKI_INVOCATION_MARKER` 를 포함
+///   3. (P83) 첫 user turn 본문이 `WIKI_INVOCATION_MARKER` 를 포함
 ///      — `secall wiki update` 가 codex/claude 백엔드 subprocess 호출 시 prompt
 ///      앞에 prefix 로 추가하는 marker. Issue #82 fix.
 ///
@@ -66,7 +77,7 @@ pub fn is_noise_session(session: &Session) -> Option<&'static str> {
         // P83 marker 는 `contains` — codex/claude 가 system prompt 를 앞에 prepend
         // 하는 경우에도 robust. 변수는 일관성 위해 `content_trimmed` 재사용
         // (trim 결과 marker 자체는 변하지 않음).
-        if content_trimmed.contains(crate::wiki::WIKI_INVOCATION_MARKER) {
+        if content_trimmed.contains(WIKI_INVOCATION_MARKER) {
             return Some("secall wiki invocation");
         }
     }
@@ -166,7 +177,7 @@ mod tests {
     fn is_noise_wiki_invocation_marker_at_start() {
         let prompt = format!(
             "{}\n\nUpdate the wiki for the following sessions...",
-            crate::wiki::WIKI_INVOCATION_MARKER
+            WIKI_INVOCATION_MARKER
         );
         let s = dummy_session(Some("/Users/me/projects/seCall"), Some(&prompt));
         assert_eq!(is_noise_session(&s), Some("secall wiki invocation"));
@@ -176,10 +187,7 @@ mod tests {
     fn is_noise_wiki_invocation_marker_in_middle() {
         // marker 가 어디에 있든 검출되어야 함 (codex/claude 의 system prompt 가
         // 앞에 붙는 경우에도 robust).
-        let prompt = format!(
-            "Some preamble...\n{}\nMore content",
-            crate::wiki::WIKI_INVOCATION_MARKER
-        );
+        let prompt = format!("Some preamble...\n{}\nMore content", WIKI_INVOCATION_MARKER);
         let s = dummy_session(Some("/Users/me/projects/seCall"), Some(&prompt));
         assert_eq!(is_noise_session(&s), Some("secall wiki invocation"));
     }
