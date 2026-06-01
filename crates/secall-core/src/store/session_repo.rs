@@ -469,10 +469,18 @@ impl Database {
             ],
         )?;
 
-        // P45 — 기존 row 가 있던 경우에도 vault frontmatter 의 archive 상태로 DB 동기화
+        // P45 — 기존 row 가 있던 경우에도 vault frontmatter 의 archive 상태로 DB 동기화.
+        // P89 (#100, Gemini PR #101): INSERT OR IGNORE 라 재인덱싱 시 turn_count 가
+        // 옛 값으로 남아 RRF 강등 판단이 stale 해진다. archive 와 함께 turn_count 도
+        // frontmatter 값으로 동기화.
         self.conn().execute(
-            "UPDATE sessions SET is_archived = ?1, archived_at = ?2 WHERE id = ?3",
-            rusqlite::params![archived_int, archived_at, fm.session_id],
+            "UPDATE sessions SET is_archived = ?1, archived_at = ?2, turn_count = ?3 WHERE id = ?4",
+            rusqlite::params![
+                archived_int,
+                archived_at,
+                fm.turns.unwrap_or(0),
+                fm.session_id
+            ],
         )?;
 
         // FTS 인덱싱 — 본문 전체를 하나의 청크로
