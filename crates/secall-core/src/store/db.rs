@@ -1515,6 +1515,6 @@ mod tests {
             map.get(&("s2".to_string(), 0)).map(String::as_str),
             Some("gamma")
         );
-        assert!(map.get(&("s2".to_string(), 99)).is_none());
+        assert!(!map.contains_key(&("s2".to_string(), 99)));
     }
 }
