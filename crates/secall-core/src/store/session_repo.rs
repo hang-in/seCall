@@ -1571,11 +1571,9 @@ mod tests {
 
         let read_turn_count = |id: &str| -> i64 {
             db.conn()
-                .query_row(
-                    "SELECT turn_count FROM sessions WHERE id = ?1",
-                    [id],
-                    |r| r.get(0),
-                )
+                .query_row("SELECT turn_count FROM sessions WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
                 .unwrap()
         };
 
