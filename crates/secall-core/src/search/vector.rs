@@ -290,6 +290,8 @@ impl VectorIndexer {
                             Ok((session_id, turn_index, _chunk_seq)) => {
                                 if let Ok(meta) = db.get_session_meta(&session_id) {
                                     if passes_filters(&meta, filters) {
+                                        // P89 (#100): snippet 은 루프 후 batch 로 채움
+                                        // (Gemini PR #101: N+1 회피).
                                         results.push(SearchResult {
                                             session_id,
                                             turn_index,
@@ -317,6 +319,7 @@ impl VectorIndexer {
                         );
                         // fall through to BLOB scan
                     } else {
+                        fill_snippets(db, &mut results);
                         return Ok(results);
                     }
                 }
@@ -325,13 +328,14 @@ impl VectorIndexer {
 
         // BLOB 선형 스캔 fallback
         let rows = db.search_vectors(embedding, limit, candidate_session_ids)?;
-        let results = rows
+        let mut results: Vec<SearchResult> = rows
             .into_iter()
             .filter_map(|row| {
                 let meta = db.get_session_meta(&row.session_id).ok()?;
                 if !passes_filters(&meta, filters) {
                     return None;
                 }
+                // P89 (#100): snippet 은 batch 로 채움 (Gemini PR #101: N+1 회피).
                 Some(SearchResult {
                     session_id: row.session_id,
                     turn_index: row.turn_index,
@@ -343,7 +347,29 @@ impl VectorIndexer {
                 })
             })
             .collect();
+        fill_snippets(db, &mut results);
         Ok(results)
+    }
+}
+
+/// P89 (#100, Gemini PR #101): vector 결과들의 snippet 을 단일 batch 쿼리로 채운다.
+/// turn content 앞부분 (200자) 을 snippet 으로 사용. 누락/실패는 빈 문자열 유지.
+fn fill_snippets(db: &Database, results: &mut [SearchResult]) {
+    if results.is_empty() {
+        return;
+    }
+    let keys: Vec<(String, u32)> = results
+        .iter()
+        .map(|r| (r.session_id.clone(), r.turn_index))
+        .collect();
+    let contents = match db.get_turn_contents(&keys) {
+        Ok(m) => m,
+        Err(_) => return, // 조회 실패 시 snippet 빈 채로 graceful
+    };
+    for r in results.iter_mut() {
+        if let Some(content) = contents.get(&(r.session_id.clone(), r.turn_index)) {
+            r.snippet = super::bm25::extract_snippet(content, "", 200);
+        }
     }
 }
 
@@ -731,6 +757,7 @@ mod tests {
             vault_path: None,
             session_type: "interactive".to_string(),
             is_archived,
+            turn_count: 10,
         }
     }
 

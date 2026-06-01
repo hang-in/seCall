@@ -164,7 +164,7 @@ impl SessionRepo for Database {
     fn get_session_meta(&self, session_id: &str) -> crate::error::Result<SessionMeta> {
         self.conn()
             .query_row(
-                "SELECT agent, model, project, start_time, vault_path, session_type, is_archived FROM sessions WHERE id = ?1",
+                "SELECT agent, model, project, start_time, vault_path, session_type, is_archived, turn_count FROM sessions WHERE id = ?1",
                 [session_id],
                 |row| {
                     let start_time: String = row.get(3)?;
@@ -177,6 +177,7 @@ impl SessionRepo for Database {
                         vault_path: row.get(4)?,
                         session_type: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
                         is_archived: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                        turn_count: row.get::<_, i64>(7).unwrap_or(0),
                     })
                 },
             )
@@ -213,6 +214,50 @@ impl Database {
                 },
                 _ => SecallError::Database(e),
             })
+    }
+
+    /// P89 (#100, Gemini PR #101): `(session_id, turn_index)` 다건의 content 를
+    /// 단일 쿼리로 가져온다. vector 검색 결과 snippet 채우기의 N+1 회피용.
+    ///
+    /// 누락된 키 (turn 없음) 는 맵에 포함되지 않는다. 입력이 비면 빈 맵 반환.
+    pub fn get_turn_contents(
+        &self,
+        keys: &[(String, u32)],
+    ) -> Result<std::collections::HashMap<(String, u32), String>> {
+        use std::collections::HashMap;
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // row-value IN: WHERE (session_id, turn_index) IN (VALUES (?,?), (?,?), ...)
+        let placeholders = vec!["(?,?)"; keys.len()].join(", ");
+        let sql = format!(
+            "SELECT session_id, turn_index, content FROM turns \
+             WHERE (session_id, turn_index) IN (VALUES {placeholders})"
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(keys.len() * 2);
+        for (sid, idx) in keys {
+            params.push(Box::new(sid.clone()));
+            params.push(Box::new(*idx as i64));
+        }
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let sid: String = row.get(0)?;
+            let idx: i64 = row.get(1)?;
+            let content: String = row.get(2)?;
+            Ok(((sid, idx as u32), content))
+        })?;
+
+        let mut map = HashMap::with_capacity(keys.len());
+        for r in rows {
+            let (key, content) = r?;
+            map.insert(key, content);
+        }
+        Ok(map)
     }
 
     pub fn count_sessions(&self) -> Result<i64> {
@@ -424,10 +469,18 @@ impl Database {
             ],
         )?;
 
-        // P45 — 기존 row 가 있던 경우에도 vault frontmatter 의 archive 상태로 DB 동기화
+        // P45 — 기존 row 가 있던 경우에도 vault frontmatter 의 archive 상태로 DB 동기화.
+        // P89 (#100, Gemini PR #101): INSERT OR IGNORE 라 재인덱싱 시 turn_count 가
+        // 옛 값으로 남아 RRF 강등 판단이 stale 해진다. archive 와 함께 turn_count 도
+        // frontmatter 값으로 동기화.
         self.conn().execute(
-            "UPDATE sessions SET is_archived = ?1, archived_at = ?2 WHERE id = ?3",
-            rusqlite::params![archived_int, archived_at, fm.session_id],
+            "UPDATE sessions SET is_archived = ?1, archived_at = ?2, turn_count = ?3 WHERE id = ?4",
+            rusqlite::params![
+                archived_int,
+                archived_at,
+                fm.turns.unwrap_or(0),
+                fm.session_id
+            ],
         )?;
 
         // FTS 인덱싱 — 본문 전체를 하나의 청크로
@@ -1508,5 +1561,37 @@ mod tests {
             )
             .unwrap();
         assert_eq!(is_archived_after, 1);
+    }
+
+    // P89 (#100, Gemini PR #101): 재인덱싱 시 turn_count 가 frontmatter 값으로
+    // 동기화되는지 (INSERT OR IGNORE 로 stale 하게 남지 않는지).
+    #[test]
+    fn test_insert_session_from_vault_reindex_syncs_turn_count() {
+        let db = Database::open_memory().unwrap();
+
+        let read_turn_count = |id: &str| -> i64 {
+            db.conn()
+                .query_row("SELECT turn_count FROM sessions WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+
+        let mut fm = make_fm("sess-tc", None);
+        fm.turns = Some(2);
+        db.insert_session_from_vault(&fm, "body", "raw/.sessions/tc.md")
+            .unwrap();
+        assert_eq!(read_turn_count("sess-tc"), 2);
+
+        // 재인덱싱: turns 2 → 8
+        let mut fm2 = make_fm("sess-tc", None);
+        fm2.turns = Some(8);
+        db.insert_session_from_vault(&fm2, "body", "raw/.sessions/tc.md")
+            .unwrap();
+        assert_eq!(
+            read_turn_count("sess-tc"),
+            8,
+            "reindex 시 turn_count 가 frontmatter 값으로 동기화돼야 함"
+        );
     }
 }

@@ -9,6 +9,11 @@ use crate::store::db::Database;
 
 const RRF_K: f64 = 60.0;
 
+/// P89 (#100): 이 turn 수 미만 세션은 관찰/요약성 노이즈로 보고 랭킹 강등.
+const OBSERVER_TURN_THRESHOLD: i64 = 3;
+/// P89 (#100): 관찰성 세션 RRF score 에 곱하는 penalty (제외 아닌 soft 강등).
+const OBSERVER_PENALTY: f64 = 0.5;
+
 pub fn reciprocal_rank_fusion(
     bm25_results: &[SearchResult],
     vector_results: &[SearchResult],
@@ -44,6 +49,12 @@ pub fn reciprocal_rank_fusion(
         .into_iter()
         .map(|(key, mut r)| {
             r.score = score_map[&key];
+            // P89 (#100): classify 가 못 잡은 짧은 관찰/요약 세션 (turn_count <
+            // OBSERVER_TURN_THRESHOLD) 을 soft 강등. automated 완전 제외 (recall.rs)
+            // 와 별개 레이어 — 제외가 아닌 하위 랭킹으로 노이즈만 완화.
+            if r.metadata.turn_count < OBSERVER_TURN_THRESHOLD {
+                r.score *= OBSERVER_PENALTY;
+            }
             r
         })
         .collect();
@@ -323,6 +334,15 @@ mod tests {
     use crate::search::bm25::SessionMeta;
 
     fn make_result(session_id: &str, turn: u32, score: f64) -> SearchResult {
+        make_result_with_turns(session_id, turn, score, 10)
+    }
+
+    fn make_result_with_turns(
+        session_id: &str,
+        turn: u32,
+        score: f64,
+        turn_count: i64,
+    ) -> SearchResult {
         SearchResult {
             session_id: session_id.to_string(),
             turn_index: turn,
@@ -338,6 +358,7 @@ mod tests {
                 vault_path: None,
                 session_type: "interactive".to_string(),
                 is_archived: false,
+                turn_count,
             },
         }
     }
@@ -359,6 +380,24 @@ mod tests {
         // B appears in both lists → should score highest
         assert!(!combined.is_empty());
         assert_eq!(combined[0].session_id, "B");
+    }
+
+    #[test]
+    fn test_rrf_observer_penalty_demotes_short_sessions() {
+        // P89 (#100): turn_count < OBSERVER_TURN_THRESHOLD 인 짧은 관찰 세션은
+        // 동일 rank 라도 penalty 로 하위로 강등되어야 한다.
+        // 두 결과를 각각 단독 리스트에 같은 1위로 넣어 RRF rank 를 동일하게 만든 뒤,
+        // turn_count 만 다르게 해 penalty 효과를 본다.
+        let normal = vec![make_result_with_turns("normal", 0, 1.0, 10)];
+        let observer = vec![make_result_with_turns("observer", 0, 1.0, 1)];
+        let combined = reciprocal_rank_fusion(&normal, &observer, RRF_K);
+
+        assert_eq!(combined.len(), 2);
+        // 둘 다 rank 0 (각 리스트 1위) 이지만 observer 는 penalty → normal 이 상위.
+        assert_eq!(combined[0].session_id, "normal");
+        assert_eq!(combined[1].session_id, "observer");
+        // observer score 가 normal 의 OBSERVER_PENALTY 배 (정규화 전 기준).
+        assert!(combined[1].score < combined[0].score);
     }
 
     #[test]

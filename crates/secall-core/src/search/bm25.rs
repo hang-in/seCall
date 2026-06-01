@@ -56,6 +56,8 @@ pub struct SessionMeta {
     pub session_type: String,
     /// P45 — vault SSOT archive 상태. vector passes_filters 에서 사용.
     pub is_archived: bool,
+    /// P89 (#100) — 세션 turn 수. 짧은 관찰/요약 세션 랭킹 강등에 사용.
+    pub turn_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,7 +194,7 @@ fn normalize_scores(results: &mut [SearchResult]) {
     }
 }
 
-fn extract_snippet(content: &str, query: &str, max_chars: usize) -> String {
+pub(crate) fn extract_snippet(content: &str, query: &str, max_chars: usize) -> String {
     let chars: Vec<char> = content.chars().collect();
     let total = chars.len();
 
