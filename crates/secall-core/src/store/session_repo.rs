@@ -164,7 +164,7 @@ impl SessionRepo for Database {
     fn get_session_meta(&self, session_id: &str) -> crate::error::Result<SessionMeta> {
         self.conn()
             .query_row(
-                "SELECT agent, model, project, start_time, vault_path, session_type, is_archived FROM sessions WHERE id = ?1",
+                "SELECT agent, model, project, start_time, vault_path, session_type, is_archived, turn_count FROM sessions WHERE id = ?1",
                 [session_id],
                 |row| {
                     let start_time: String = row.get(3)?;
@@ -177,6 +177,7 @@ impl SessionRepo for Database {
                         vault_path: row.get(4)?,
                         session_type: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
                         is_archived: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                        turn_count: row.get::<_, i64>(7).unwrap_or(0),
                     })
                 },
             )

@@ -290,13 +290,21 @@ impl VectorIndexer {
                             Ok((session_id, turn_index, _chunk_seq)) => {
                                 if let Ok(meta) = db.get_session_meta(&session_id) {
                                     if passes_filters(&meta, filters) {
+                                        // P89 (#100): vector 결과 snippet 채우기 —
+                                        // turn content 앞부분 (검증성 확보).
+                                        let snippet = db
+                                            .get_turn(&session_id, turn_index)
+                                            .map(|t| {
+                                                super::bm25::extract_snippet(&t.content, "", 200)
+                                            })
+                                            .unwrap_or_default();
                                         results.push(SearchResult {
                                             session_id,
                                             turn_index,
                                             score: 1.0 - *distance as f64,
                                             bm25_score: None,
                                             vector_score: Some(1.0 - *distance as f64),
-                                            snippet: String::new(),
+                                            snippet,
                                             metadata: meta,
                                         });
                                     }
@@ -332,13 +340,18 @@ impl VectorIndexer {
                 if !passes_filters(&meta, filters) {
                     return None;
                 }
+                // P89 (#100): vector 결과 snippet 채우기 (turn content 앞부분).
+                let snippet = db
+                    .get_turn(&row.session_id, row.turn_index)
+                    .map(|t| super::bm25::extract_snippet(&t.content, "", 200))
+                    .unwrap_or_default();
                 Some(SearchResult {
                     session_id: row.session_id,
                     turn_index: row.turn_index,
                     score: 1.0 - row.distance as f64,
                     bm25_score: None,
                     vector_score: Some(1.0 - row.distance as f64),
-                    snippet: String::new(),
+                    snippet,
                     metadata: meta,
                 })
             })
@@ -731,6 +744,7 @@ mod tests {
             vault_path: None,
             session_type: "interactive".to_string(),
             is_archived,
+            turn_count: 10,
         }
     }
 
