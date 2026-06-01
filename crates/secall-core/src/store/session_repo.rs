@@ -1562,4 +1562,28 @@ mod tests {
             .unwrap();
         assert_eq!(is_archived_after, 1);
     }
+
+    // P89 (#100, Gemini PR #101): 재인덱싱 시 turn_count 가 frontmatter 값으로
+    // 동기화되는지 (INSERT OR IGNORE 로 stale 하게 남지 않는지).
+    #[test]
+    fn test_insert_session_from_vault_reindex_syncs_turn_count() {
+        let db = Database::open_memory().unwrap();
+
+        let mut fm = make_fm("sess-tc", None);
+        fm.turns = Some(2);
+        db.insert_session_from_vault(&fm, "body", "raw/.sessions/tc.md")
+            .unwrap();
+        assert_eq!(db.get_session_meta("sess-tc").unwrap().turn_count, 2);
+
+        // 재인덱싱: turns 2 → 8
+        let mut fm2 = make_fm("sess-tc", None);
+        fm2.turns = Some(8);
+        db.insert_session_from_vault(&fm2, "body", "raw/.sessions/tc.md")
+            .unwrap();
+        assert_eq!(
+            db.get_session_meta("sess-tc").unwrap().turn_count,
+            8,
+            "reindex 시 turn_count 가 frontmatter 값으로 동기화돼야 함"
+        );
+    }
 }
