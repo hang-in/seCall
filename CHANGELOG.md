@@ -2,6 +2,21 @@
 
 > NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
 
+## v0.6.2 (2026-06-01)
+
+검색 품질 개선 + 내부 의존 방향 정리.
+
+### ✨ Improvements
+
+- **vector 검색 결과 snippet 채우기** (#101, P89, Closes #100): `secall recall --vec` 결과의 `snippet` 이 비어 검증성이 낮던 문제. ANN/BLOB 두 경로 모두 turn content 로 snippet 을 채운다 (배치 조회로 N+1 회피). 재인덱싱 시 `turn_count` 동기화도 함께 (Gemini 리뷰 반영).
+- **관찰/요약 세션 랭킹 강등** (#101, P89): hybrid 검색 RRF 결과에서 turn 수가 적은 (`< 3`) 짧은 관찰성 세션을 score ×0.5 로 soft 강등. `automated` 완전 제외와 별개로 일반 검색 노이즈 완화.
+
+### 🧹 Internal
+
+- **`WIKI_INVOCATION_MARKER` 소유권 이전** (#102, P90): 하위 레이어 `ingest` 가 상위 레이어 `wiki` 의 상수를 참조하던 역방향 의존(논리적 순환) 해소. 정의를 `ingest` 로 옮기고 `wiki` 는 re-export 로 호환 유지 — 동작 변경 없음.
+
+---
+
 ## v0.6.1 (2026-05-29)
 
 사용자 보고 이슈 fix 패치 — ORT bge-m3 (#94), Windows codex spawn (#92), claude+haiku wiki 경고 (#93).
