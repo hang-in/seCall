@@ -1472,4 +1472,49 @@ mod tests {
         let ids = db.list_sessions_for_graph_rebuild(filter).unwrap();
         assert_eq!(ids, vec!["d-10", "d-5"]);
     }
+
+    // P89 (#100, Gemini PR #101): get_turn_contents 배치 조회
+    #[test]
+    fn test_get_turn_contents_empty_returns_empty() {
+        let db = Database::open_memory().unwrap();
+        let map = db.get_turn_contents(&[]).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_get_turn_contents_batch_and_missing() {
+        let db = Database::open_memory().unwrap();
+        db.conn()
+            .execute_batch(
+                "INSERT INTO sessions(id, agent, start_time, ingested_at) VALUES('s1','claude-code','2026-01-01','2026-01-01');
+                 INSERT INTO sessions(id, agent, start_time, ingested_at) VALUES('s2','claude-code','2026-01-01','2026-01-01');
+                 INSERT INTO turns(session_id, turn_index, role, content) VALUES('s1',0,'user','alpha');
+                 INSERT INTO turns(session_id, turn_index, role, content) VALUES('s1',1,'assistant','beta');
+                 INSERT INTO turns(session_id, turn_index, role, content) VALUES('s2',0,'user','gamma');",
+            )
+            .unwrap();
+
+        let keys = vec![
+            ("s1".to_string(), 0u32),
+            ("s1".to_string(), 1u32),
+            ("s2".to_string(), 0u32),
+            ("s2".to_string(), 99u32), // missing → 맵에서 제외
+        ];
+        let map = db.get_turn_contents(&keys).unwrap();
+
+        assert_eq!(map.len(), 3, "missing key must be excluded");
+        assert_eq!(
+            map.get(&("s1".to_string(), 0)).map(String::as_str),
+            Some("alpha")
+        );
+        assert_eq!(
+            map.get(&("s1".to_string(), 1)).map(String::as_str),
+            Some("beta")
+        );
+        assert_eq!(
+            map.get(&("s2".to_string(), 0)).map(String::as_str),
+            Some("gamma")
+        );
+        assert!(map.get(&("s2".to_string(), 99)).is_none());
+    }
 }

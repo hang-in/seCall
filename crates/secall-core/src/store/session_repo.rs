@@ -216,6 +216,50 @@ impl Database {
             })
     }
 
+    /// P89 (#100, Gemini PR #101): `(session_id, turn_index)` 다건의 content 를
+    /// 단일 쿼리로 가져온다. vector 검색 결과 snippet 채우기의 N+1 회피용.
+    ///
+    /// 누락된 키 (turn 없음) 는 맵에 포함되지 않는다. 입력이 비면 빈 맵 반환.
+    pub fn get_turn_contents(
+        &self,
+        keys: &[(String, u32)],
+    ) -> Result<std::collections::HashMap<(String, u32), String>> {
+        use std::collections::HashMap;
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // row-value IN: WHERE (session_id, turn_index) IN (VALUES (?,?), (?,?), ...)
+        let placeholders = vec!["(?,?)"; keys.len()].join(", ");
+        let sql = format!(
+            "SELECT session_id, turn_index, content FROM turns \
+             WHERE (session_id, turn_index) IN (VALUES {placeholders})"
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(keys.len() * 2);
+        for (sid, idx) in keys {
+            params.push(Box::new(sid.clone()));
+            params.push(Box::new(*idx as i64));
+        }
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let sid: String = row.get(0)?;
+            let idx: i64 = row.get(1)?;
+            let content: String = row.get(2)?;
+            Ok(((sid, idx as u32), content))
+        })?;
+
+        let mut map = HashMap::with_capacity(keys.len());
+        for r in rows {
+            let (key, content) = r?;
+            map.insert(key, content);
+        }
+        Ok(map)
+    }
+
     pub fn count_sessions(&self) -> Result<i64> {
         let count = self
             .conn()
