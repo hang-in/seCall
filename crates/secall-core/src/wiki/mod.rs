@@ -22,12 +22,11 @@ pub use reviewers::{
     ClaudeReviewer, CodexReviewer, HaikuReviewer, LmStudioReviewer, OllamaReviewer,
 };
 
-/// P83: codex/claude wiki 호출이 만든 subprocess 세션을 ingest 가 식별하기 위한
-/// prompt prefix marker. `wiki::{codex,claude}::generate()` 가 prompt 앞에
-/// 이 marker 를 prepend 하고, `ingest::is_noise_session` 이 첫 user turn 에서
-/// 검출하면 self-ingest 루프 차단을 위해 해당 세션을 skip 한다.
-/// Issue #82 fix.
-pub const WIKI_INVOCATION_MARKER: &str = "<!-- secall:wiki-update -->";
+/// P83/P90: wiki self-ingest marker. 소유권은 노이즈 판정 주체인 `ingest` 로
+/// 이전됨 (`ingest::WIKI_INVOCATION_MARKER`). 기존 `wiki::WIKI_INVOCATION_MARKER`
+/// 참조 호환을 위해 re-export 한다. `wiki::{codex,claude}::generate()` 가 prompt
+/// 앞에 prepend, `ingest::is_noise_session` 이 검출. Issue #82.
+pub use crate::ingest::WIKI_INVOCATION_MARKER;
 
 /// wiki 생성 프롬프트를 LLM에 전달하고 결과를 반환하는 추상 인터페이스
 #[async_trait::async_trait]
