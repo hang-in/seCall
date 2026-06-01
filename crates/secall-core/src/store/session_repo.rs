@@ -1569,11 +1569,21 @@ mod tests {
     fn test_insert_session_from_vault_reindex_syncs_turn_count() {
         let db = Database::open_memory().unwrap();
 
+        let read_turn_count = |id: &str| -> i64 {
+            db.conn()
+                .query_row(
+                    "SELECT turn_count FROM sessions WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
         let mut fm = make_fm("sess-tc", None);
         fm.turns = Some(2);
         db.insert_session_from_vault(&fm, "body", "raw/.sessions/tc.md")
             .unwrap();
-        assert_eq!(db.get_session_meta("sess-tc").unwrap().turn_count, 2);
+        assert_eq!(read_turn_count("sess-tc"), 2);
 
         // 재인덱싱: turns 2 → 8
         let mut fm2 = make_fm("sess-tc", None);
@@ -1581,7 +1591,7 @@ mod tests {
         db.insert_session_from_vault(&fm2, "body", "raw/.sessions/tc.md")
             .unwrap();
         assert_eq!(
-            db.get_session_meta("sess-tc").unwrap().turn_count,
+            read_turn_count("sess-tc"),
             8,
             "reindex 시 turn_count 가 frontmatter 값으로 동기화돼야 함"
         );
