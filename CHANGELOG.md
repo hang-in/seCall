@@ -2,6 +2,14 @@
 
 > NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
 
+## Unreleased
+
+### 🐛 Fixes
+
+- **`cargo install --git` 빌드 실패 해결** (web-ui default): `web-ui` 기능이 release 빌드 시점에 `web/dist/` (gitignore 된 `pnpm build` 산출물) 를 `rust-embed` 로 요구하는데, `cargo install --git ...` 사용자는 `pnpm build` 를 거치지 않아 `RustEmbed` derive 가 `folder ... does not exist` 로 항상 컴파일 실패하던 문제. `crates/secall-core/build.rs` 추가 — dist 가 없으면 안내용 placeholder `index.html` 을 생성해 컴파일을 살리고(웹 UI 자리에 빌드 안내 페이지 표시, CLI·MCP·REST API 는 정상), dist 가 있으면 그대로 사용한다. 더불어 `web/dist/index.html` 에 `cargo:rerun-if-changed` 를 걸어 dist 갱신 후 옛 번들이 embed 되던 staleness 회귀도 함께 해소. Node 불필요. (웹 UI 가 필요 없으면 종전처럼 `--no-default-features` 로 설치 가능)
+
+---
+
 ## v0.6.2 (2026-06-01)
 
 검색 품질 개선 + 내부 의존 방향 정리.
