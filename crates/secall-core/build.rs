@@ -22,7 +22,7 @@ fn main() {
         return;
     }
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     // embed.rs 의 `#[folder = "../../web/dist/"]` 와 동일한 위치.
     let dist_dir = Path::new(&manifest_dir).join("../../web/dist");
     let index_html = dist_dir.join("index.html");
