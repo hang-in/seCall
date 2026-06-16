@@ -219,9 +219,21 @@ secall lint
 
 ### Step 1. 安装
 
-**GitHub Releases (推荐)** — 含 Web UI 的单一二进制:
+**一行安装 (推荐)** — 自动下载 release 二进制并放入 PATH:
 
-从 [Releases 页面](https://github.com/hang-in/seCall/releases) 下载对应 OS 的文件。
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/hang-in/seCall/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/hang-in/seCall/main/install.ps1 | iex
+```
+
+> Linux 暂无 prebuilt 二进制 — 请使用下面的 Cargo 构建。
+
+**手动下载** — 从 [Releases 页面](https://github.com/hang-in/seCall/releases) 下载对应 OS 的文件:
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip`（secall.exe + onnxruntime.dll）
 
