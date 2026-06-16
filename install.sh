@@ -54,6 +54,13 @@ Linux)
 	;;
 esac
 
+# Detect an existing install (used later to warn about shadowing copies).
+prev_bin="$(command -v secall 2>/dev/null || true)"
+if [ "$prev_bin" != "" ]; then
+	prev_ver="$("$prev_bin" --version 2>/dev/null || echo '?')"
+	info "Existing install: $prev_bin ($prev_ver)"
+fi
+
 # Resolve version (env override or latest release tag).
 if [ "${SECALL_VERSION:-}" != "" ]; then
 	version="$SECALL_VERSION"
@@ -72,7 +79,11 @@ info "Installing seCall $version ($target)"
 info "From: $url"
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT INT TERM
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+# On INT/TERM, exit explicitly so the script stops (the EXIT trap then runs cleanup);
+# a plain cleanup trap on INT/TERM would resume execution on the next line.
+trap 'exit 1' INT TERM
 
 dl_to "$url" "$tmp/$asset" || err "download failed: $url"
 tar -xzf "$tmp/$asset" -C "$tmp" || err "extraction failed"
@@ -94,6 +105,14 @@ case ":$PATH:" in
 	info "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
 	;;
 esac
+
+# Warn if a different secall on PATH would shadow the one just installed.
+if [ "$prev_bin" != "" ] && [ "$prev_bin" != "$INSTALL_DIR/secall" ]; then
+	printf '\n'
+	info "WARNING: another 'secall' exists at $prev_bin"
+	info "         Depending on PATH order it may shadow the version just installed."
+	info "         Remove the old copy if you want this one to take effect."
+fi
 
 printf '\n'
 info "Done. Next steps:"
