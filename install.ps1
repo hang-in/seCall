@@ -29,11 +29,24 @@ $Url = "https://github.com/$Repo/releases/download/$Version/$Asset"
 Info "Installing seCall $Version ($Target)"
 Info "From: $Url"
 
+# Detect an existing install (used later to warn about shadowing copies).
+$prev = Get-Command secall -CommandType Application -ErrorAction SilentlyContinue
+if ($prev) {
+    $prevVer = try { (& $prev.Source --version) 2>$null } catch { $null }
+    Info "Existing install: $($prev.Source) $prevVer"
+}
+
+# A running secall.exe is file-locked and cannot be overwritten — fail fast with a clear message.
+$running = Get-Process -Name secall -ErrorAction SilentlyContinue
+if ($running) {
+    throw "secall is running (PID $($running.Id -join ', ')). Stop it (e.g. 'secall serve' / MCP server) and re-run."
+}
+
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("secall-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 try {
     $zip = Join-Path $tmp $Asset
-    Invoke-WebRequest -Uri $Url -OutFile $zip
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $zip
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
 
     $exe = Join-Path $tmp 'secall.exe'
@@ -75,7 +88,16 @@ try {
         Info "Added $InstallDir to your user PATH (restart your terminal to pick it up)."
     }
 } finally {
-    $key.Close()
+    if ($key) { $key.Close() }
+}
+
+# Warn if a different secall on PATH would shadow the one just installed.
+$targetBin = Join-Path $InstallDir 'secall.exe'
+if ($prev -and ($prev.Source -ne $targetBin)) {
+    Write-Host ''
+    Info "WARNING: another 'secall' exists at $($prev.Source)"
+    Info "         Depending on PATH order it may shadow the version just installed."
+    Info "         Remove the old copy if you want this one to take effect."
 }
 
 Write-Host ''
