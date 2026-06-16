@@ -219,9 +219,21 @@ secall lint
 
 ### Step 1. 설치
 
-**GitHub Releases (권장)** — 웹 UI 포함된 단일 바이너리:
+**원라인 설치 (권장)** — release 바이너리를 자동으로 받아 PATH에 배치:
 
-[Releases 페이지](https://github.com/hang-in/seCall/releases)에서 OS에 맞는 파일 다운로드.
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/hang-in/seCall/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/hang-in/seCall/main/install.ps1 | iex
+```
+
+> Linux는 아직 prebuilt 바이너리가 없습니다 — 아래 Cargo 빌드를 사용하세요.
+
+**수동 다운로드** — [Releases 페이지](https://github.com/hang-in/seCall/releases)에서 OS에 맞는 파일 다운로드:
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
 
