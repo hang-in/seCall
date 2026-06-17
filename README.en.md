@@ -220,9 +220,21 @@ secall lint
 
 ### Step 1. Install
 
-**GitHub Releases (recommended)** — single binary with embedded web UI:
+**One-line install (recommended)** — downloads the release binary and places it on PATH:
 
-Download the binary for your OS from the [Releases page](https://github.com/hang-in/seCall/releases).
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/hang-in/seCall/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/hang-in/seCall/main/install.ps1 | iex
+```
+
+> Linux prebuilt binaries are not published yet — use the Cargo build below.
+
+**Manual download** — grab the binary for your OS from the [Releases page](https://github.com/hang-in/seCall/releases):
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
 

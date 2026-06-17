@@ -1,0 +1,2 @@
+install.sh text eol=lf
+install.ps1 text eol=crlf

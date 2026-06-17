@@ -219,9 +219,21 @@ secall lint
 
 ### Step 1. インストール
 
-**GitHub Releases (推奨)** — Web UI同梱の単一バイナリ:
+**ワンライナーインストール (推奨)** — releaseバイナリを自動取得してPATHに配置:
 
-[Releasesページ](https://github.com/hang-in/seCall/releases) からOSに合ったファイルをダウンロード。
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/hang-in/seCall/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/hang-in/seCall/main/install.ps1 | iex
+```
+
+> Linuxのprebuiltバイナリはまだありません — 下記のCargoビルドを利用してください。
+
+**手動ダウンロード** — [Releasesページ](https://github.com/hang-in/seCall/releases) からOSに合ったファイルをダウンロード:
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
 
