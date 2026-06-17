@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### ✨ Features
+
+- **원라인 설치 스크립트** (#106, Closes #105, 외부 기여 @hohoShin): `curl -fsSL .../install.sh | sh` (macOS) / `irm .../install.ps1 | iex` (Windows) 한 줄로 release 바이너리를 받아 PATH 에 배치. `install.sh` 는 `uname` 기반 target 감지 + GitHub API latest 조회 (`SECALL_VERSION` 고정 가능) + shadowing 경고, `install.ps1` 은 `secall.exe`+`onnxruntime.dll` 동반 복사 + User PATH 등록 시 REG_EXPAND_SZ 타입 보존. Linux 는 prebuilt 자산이 없어 소스 빌드 안내. README(.md/.en/.ja/.zh) 설치 섹션에 권장 경로로 추가.
+
 ### 🐛 Fixes
 
 - **`cargo install --git` 빌드 실패 해결** (web-ui default): `web-ui` 기능이 release 빌드 시점에 `web/dist/` (gitignore 된 `pnpm build` 산출물) 를 `rust-embed` 로 요구하는데, `cargo install --git ...` 사용자는 `pnpm build` 를 거치지 않아 `RustEmbed` derive 가 `folder ... does not exist` 로 항상 컴파일 실패하던 문제. `crates/secall-core/build.rs` 추가 — dist 가 없으면 안내용 placeholder `index.html` 을 생성해 컴파일을 살리고(웹 UI 자리에 빌드 안내 페이지 표시, CLI·MCP·REST API 는 정상), dist 가 있으면 그대로 사용한다. 더불어 `web/dist/index.html` 에 `cargo:rerun-if-changed` 를 걸어 dist 갱신 후 옛 번들이 embed 되던 staleness 회귀도 함께 해소. Node 불필요. (웹 UI 가 필요 없으면 종전처럼 `--no-default-features` 로 설치 가능)
