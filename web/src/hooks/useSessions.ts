@@ -1,4 +1,9 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { SessionFilterState, SessionsListParams } from "@/lib/types";
 
@@ -101,5 +106,20 @@ export function useSemanticRecall(
     enabled: opts.enabled && trimmed.length > 0,
     staleTime: 60_000,
     placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * 세션 삭제 — `DELETE /api/sessions/:id`.
+ *
+ * 성공 시 `["sessions"]` 쿼리(list/infinite/detail)를 무효화해 리스트가 자동 갱신된다.
+ */
+export function useDeleteSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteSession(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
   });
 }

@@ -1,4 +1,4 @@
-import { Star } from "lucide-react";
+import { Star, X } from "lucide-react";
 import { useMemo } from "react";
 import { AgentDot } from "@/components/AgentDot";
 import { highlightTerms, tokenizeQuery } from "@/lib/highlight";
@@ -19,6 +19,8 @@ interface Props {
   query?: string;
   selected?: boolean;
   onSelect: () => void;
+  /** 지정 시 우측 상단에 삭제(X) 버튼 노출. 클릭하면 호출된다. */
+  onDelete?: () => void;
 }
 
 const MAX_TAGS = 3;
@@ -28,6 +30,7 @@ export function SessionListItem({
   query,
   selected = false,
   onSelect,
+  onDelete,
 }: Props) {
   const tags = session.tags.slice(0, MAX_TAGS);
   const hidden = Math.max(0, session.tags.length - tags.length);
@@ -36,7 +39,8 @@ export function SessionListItem({
   const project = session.project ?? null;
 
   return (
-    <button
+    <div className="relative group">
+      <button
       type="button"
       onClick={onSelect}
       className={[
@@ -110,5 +114,19 @@ export function SessionListItem({
         </div>
       )}
     </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          aria-label="세션 삭제"
+          className="absolute right-ds-2 top-ds-2 flex size-6 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity hover:bg-surface-3 hover:text-status-danger focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-danger group-hover:opacity-100"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
   );
 }

@@ -9,7 +9,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
     },
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use futures_util::stream::Stream;
@@ -149,6 +149,7 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/sessions/{id}/tags", patch(api_set_tags))
         .route("/api/sessions/{id}/favorite", patch(api_set_favorite))
         .route("/api/sessions/{id}/notes", patch(api_set_notes))
+        .route("/api/sessions/{id}", delete(api_delete_session))
         // P33 Task 03 — Job 시스템
         .route("/api/commands/sync", post(api_command_sync))
         .route("/api/commands/ingest", post(api_command_ingest))
@@ -534,6 +535,17 @@ async fn api_set_notes(
     Json(body): Json<SetNotesBody>,
 ) -> impl IntoResponse {
     match s.do_set_notes(&id, body.notes.as_deref()) {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// `DELETE /api/sessions/{id}` — 세션 완전 삭제 (Web UI 삭제 버튼).
+async fn api_delete_session(
+    State(s): State<Arc<SeCallMcpServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match s.do_delete_session(&id) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

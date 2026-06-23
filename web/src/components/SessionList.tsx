@@ -1,9 +1,15 @@
 import { Loader2 } from "lucide-react";
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { SessionListItem } from "./SessionListItem";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useListHotkeys } from "@/hooks/useListHotkeys";
-import { useInfiniteSessions, useSemanticRecall } from "@/hooks/useSessions";
+import {
+  useDeleteSession,
+  useInfiniteSessions,
+  useSemanticRecall,
+} from "@/hooks/useSessions";
 import type {
   RecallResultItem,
   SearchMode,
@@ -55,6 +61,21 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const trimmed = query.trim();
+
+  // 세션 삭제 — 확인 모달 대상(null이면 닫힘) + mutation.
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+  const deleteMutation = useDeleteSession();
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    const deletingId = pendingDelete.id;
+    deleteMutation.mutate(deletingId, {
+      onSuccess: () => {
+        setPendingDelete(null);
+        // 삭제한 세션이 현재 열려 있으면 목록으로 이동.
+        if (id === deletingId) navigate("/sessions");
+      },
+    });
+  };
 
   // 시맨틱 모드 + 비어있지 않은 query에서만 recall 호출. 그 외엔 keyword 리스트.
   const useSemantic = mode === "semantic" && trimmed.length > 0;
@@ -150,6 +171,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
                   onSelect={() =>
                     navigate(`/sessions/${encodeURIComponent(s.id)}`)
                   }
+                  onDelete={() => setPendingDelete(s)}
                 />
                 {typeof score === "number" && (
                   <span className="absolute right-ds-3 bottom-ds-2 font-mono text-t-caption text-text-4 tabular-nums pointer-events-none">
@@ -160,6 +182,12 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
             );
           })}
         </div>
+        <DeleteSessionDialog
+          session={pendingDelete}
+          isDeleting={deleteMutation.isPending}
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       </div>
     );
   }
@@ -205,6 +233,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
             query={query}
             selected={s.id === id}
             onSelect={() => navigate(`/sessions/${encodeURIComponent(s.id)}`)}
+            onDelete={() => setPendingDelete(s)}
           />
         ))}
       </div>
@@ -224,6 +253,12 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
             끝 — 총 {total} 세션
           </div>
         )}
+      <DeleteSessionDialog
+        session={pendingDelete}
+        isDeleting={deleteMutation.isPending}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
