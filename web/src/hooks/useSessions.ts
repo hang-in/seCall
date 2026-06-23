@@ -120,6 +120,9 @@ export function useDeleteSession() {
     mutationFn: (id: string) => api.deleteSession(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sessions"] });
+      // 시맨틱 검색 결과(["recall","semantic",...])도 무효화 — 시맨틱 모드에서
+      // 삭제 시 목록에서 즉시 사라지도록.
+      qc.invalidateQueries({ queryKey: ["recall"] });
     },
   });
 }

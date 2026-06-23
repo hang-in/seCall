@@ -43,9 +43,10 @@ export function DeleteSessionDialog({
           <DialogDescription>
             이 작업은 되돌릴 수 없습니다. 세션과 모든 turn·검색 인덱스가 영구
             삭제됩니다.
-            {session?.project ? (
+            {session ? (
               <span className="mt-2 block font-mono text-xs text-text-2">
-                {session.project} · {session.date}
+                {session.project ? `${session.project} · ` : ""}
+                {session.agent} · {session.date}
               </span>
             ) : null}
           </DialogDescription>
