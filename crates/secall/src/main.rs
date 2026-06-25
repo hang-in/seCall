@@ -306,7 +306,7 @@ enum LlmAction {
     Set { key: String, value: String },
     /// Test LLM backend connectivity and credentials
     Test {
-        /// Backend: claude | codex | haiku | ollama | lmstudio | gemini
+        /// Backend: claude | codex | haiku | ollama | lmstudio | ollama_cloud
         backend: Option<String>,
         /// Skip outbound network calls and only verify local prerequisites
         #[arg(long)]
@@ -411,16 +411,16 @@ enum GraphAction {
         /// 처리할 최대 세션 수 (기본: 전체)
         #[arg(long)]
         limit: Option<usize>,
-        /// LLM 백엔드 오버라이드: "ollama" | "gemini" | "anthropic" | "lmstudio" | "disabled"
+        /// LLM 백엔드 오버라이드: "ollama" | "ollama_cloud" | "anthropic" | "lmstudio" | "disabled"
         #[arg(long)]
         backend: Option<String>,
         /// API base URL (예: http://localhost:11434, Ollama 전용)
         #[arg(long)]
         api_url: Option<String>,
-        /// 모델명 오버라이드 (예: gemma4:e4b, gemini-2.5-flash)
+        /// 모델명 오버라이드 (예: gemma4:e4b)
         #[arg(long)]
         model: Option<String>,
-        /// API 키 오버라이드 (Gemini 등). 보안상 환경변수 SECALL_GRAPH_API_KEY 사용 권장
+        /// API 키 오버라이드 (ollama_cloud용 → cloud_api_key). 보안상 환경변수 OLLAMA_CLOUD_API_KEY 사용 권장
         #[arg(long)]
         api_key: Option<String>,
     },
