@@ -41,6 +41,7 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 
 - [adr-blocking-io-in-async.md](adr-blocking-io-in-async.md) — ADR: async 내 blocking I/O 는 `spawn_blocking` 으로 래핑 (CLI 특성상 정당) · 상태: done
 - [idea-two-tier-llm-pipeline.md](idea-two-tier-llm-pipeline.md) — 아이디어: 2계층 LLM 파이프라인 (저비용 초안 → 고품질 검수) · 상태: draft, canonical: false
+- [antigravityIngestFeasibility.md](antigravityIngestFeasibility.md) — Antigravity CLI 세션 ingest feasibility (비공개 protobuf schema → 현재 보류, 재개 트리거 명시) · 상태: done
 
 ## CLI Reference
 
@@ -52,18 +53,18 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 |--------|------|--------|
 | `--delay <SECS>` | 세션 간 대기 시간 (소수점 가능) | 2.5 |
 | `--limit <N>` | 최대 처리 세션 수 | 전체 |
-| `--backend <NAME>` | LLM 백엔드 (`ollama`/`gemini`/`anthropic`/`disabled`) | config.toml |
+| `--backend <NAME>` | LLM 백엔드 (`ollama`/`ollama_cloud`/`anthropic`/`lmstudio`/`disabled`) | config.toml |
 | `--api-url <URL>` | API base URL (Ollama 전용) | config.toml |
-| `--model <NAME>` | 모델명 (예: `gemma4:e4b`, `gemini-2.5-flash`) | config.toml |
-| `--api-key <KEY>` | API 키 (Gemini 등). 환경변수 사용 권장 | config.toml |
+| `--model <NAME>` | 모델명 (예: `gemma4:e4b`) | config.toml |
+| `--api-key <KEY>` | API 키 (ollama_cloud용 → `cloud_api_key`). 환경변수 사용 권장 | config.toml |
 
 **환경변수** (우선순위: CLI 플래그 > 환경변수 > config.toml > 기본값):
 
 | 환경변수 | 용도 | 예시 값 |
 |----------|------|---------|
-| `SECALL_GRAPH_BACKEND` | 시맨틱 백엔드 | `gemini`, `ollama`, `disabled` |
+| `SECALL_GRAPH_BACKEND` | 시맨틱 백엔드 | `ollama_cloud`, `ollama`, `disabled` |
 | `SECALL_GRAPH_API_URL` | API base URL (Ollama용) | `http://localhost:11434` |
-| `SECALL_GRAPH_MODEL` | 모델명 | `gemma4:e4b`, `gemini-2.5-flash` |
-| `SECALL_GRAPH_API_KEY` | API 키 | `AIza...` |
+| `SECALL_GRAPH_MODEL` | 모델명 | `gemma4:e4b` |
+| `OLLAMA_CLOUD_API_KEY` | ollama_cloud API 키 (graph/log/embedding 공용) | `...` |
 
-> **참고**: `SECALL_GEMINI_API_KEY`(기존)와 `SECALL_GRAPH_API_KEY`(신규)가 모두 설정된 경우, `SECALL_GRAPH_API_KEY`가 우선 적용됩니다.
+> **참고**: ollama_cloud API 키는 `OLLAMA_CLOUD_API_KEY` 환경변수 또는 `--api-key` 플래그로 제공한다. anthropic 백엔드는 `ANTHROPIC_API_KEY` 를 직접 읽는다. (구 `SECALL_GEMINI_API_KEY`·`SECALL_GRAPH_API_KEY` 는 `apply_env_overrides` 에서 더 이상 읽지 않음 — gemini 백엔드 제거 잔재)
