@@ -190,12 +190,17 @@ async fn run_update_with_sink(
         .unwrap_or_else(|| config.wiki.default_backend.clone());
     let resolved_model = resolve_backend_model(&config, &backend_name, model);
 
-    // P86 (issue #88): ollama / lmstudio 백엔드는 wiki update 의 prompt 가
-    // 가정하는 MCP 도구 호출 (`secall recall/get/status` + `wiki/` 파일 쓰기) 을
-    // 수행할 능력이 없다. batch / incremental / --since 모든 모드에서 모델이
+    // P86 (issue #88): ollama / lmstudio / ollama_cloud 백엔드는 wiki update 의
+    // prompt 가 가정하는 MCP 도구 호출 (`secall recall/get/status` + `wiki/` 파일
+    // 쓰기) 을 수행할 능력이 없다. batch / incremental / --since 모든 모드에서 모델이
     // "임무 이해" 응답만 출력하고 종료 → 사용자가 silent wait (timeout 까지)
     // 후 빈손으로 깨닫는 사고. 명시적 fail-fast + 가이드.
-    if matches!(backend_name.as_str(), "ollama" | "lmstudio") {
+    // ollama_cloud 도 원격 API 호출이라 MCP 도구가 없어 동일하게 빈손 실패한다.
+    // (build_wiki_backend 의 ollama_cloud arm 은 review backend 전용 — generation 불가)
+    if matches!(
+        backend_name.as_str(),
+        "ollama" | "lmstudio" | "ollama_cloud"
+    ) {
         anyhow::bail!(
             "wiki backend `{backend_name}` 는 wiki update 와 호환되지 않습니다.\n\
              도구 호출 (`secall recall`/`get`/`status` + `wiki/` 파일 쓰기) 능력이 없어\n\
