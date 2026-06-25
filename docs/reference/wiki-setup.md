@@ -54,8 +54,8 @@ Claude Code 메타에이전트를 활용해 에이전트 세션 로그에서 Obs
 | `claude` | ✅ | ✅ | Claude Code CLI (MCP 통합). 단 2026-06-15 이후 구독은 credit pool 소진 — 대량 생성 시 비용 주의 |
 | `codex` | ✅ | ✅ | Codex CLI |
 | `haiku` | ✅ | ✅ | Anthropic API — 세션 데이터를 prompt 에 inline (도구 불필요). `ANTHROPIC_API_KEY` 필요 |
-| `ollama` | ❌ | — | HTTP, 도구 호출 불가 → 생성 시 명시적 에러 (issue #88) |
-| `lmstudio` | ❌ | — | 위와 동일 |
+| `ollama` | ❌ | ✅ | 생성은 도구 호출 불가 → 명시적 에러 (issue #88). 검토는 `OllamaReviewer` 로 지원 |
+| `lmstudio` | ❌ | ✅ | 위와 동일 (`LmStudioReviewer`) |
 | `ollama_cloud` | ⚠️ 비권장 | ✅ | review 는 정상. 생성은 도구 호출 불가라 빈 결과가 날 수 있음 — `--review` 백엔드로만 권장 |
 
 > **참고**: graph 시맨틱 추출과 log 일기는 별개로, 이미 `ollama_cloud` (`OLLAMA_CLOUD_API_KEY`) 를 기본으로 외부 에이전트 CLI 없이 동작합니다. 즉 **외부 CLI 가 꼭 필요한 건 wiki 본문 생성 뿐**입니다.
