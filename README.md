@@ -110,7 +110,7 @@ vault/
     └── graph.json   # 노드/엣지 데이터
 ```
 
-- **위키 생성**: pluggable LLM backend 기반 (`secall wiki update --backend claude|codex|haiku|ollama|lmstudio`)
+- **위키 생성**: pluggable LLM backend 기반 (`secall wiki update --backend claude|codex|haiku` — 생성은 도구 호출 가능 백엔드만; ollama/lmstudio 는 review 전용)
 - **Obsidian 백링크** (`[[]]`)로 세션 ↔ 위키 페이지 연결
 - Dataview 쿼리를 위한 frontmatter 메타데이터 (`summary` 필드로 세션 내용 즉시 파악)
 
@@ -526,18 +526,18 @@ secall wiki update
 # Codex CLI 백엔드
 secall wiki update --backend codex
 
-# 로컬 LLM 백엔드
-secall wiki update --backend ollama
-secall wiki update --backend lmstudio
-
 # Anthropic API (haiku — 직접 API 호출)
 secall wiki update --backend haiku
 
 # 특정 세션만 증분 업데이트
-secall wiki update --backend lmstudio --session <id>
+secall wiki update --backend codex --session <id>
 
 # 오프라인 / 수동 sync 모드
 secall wiki update --no-pull
+
+# 백엔드 호환성: 생성(generation)은 도구 호출이 가능한 claude/codex/haiku 만 동작.
+# ollama/lmstudio 는 생성 불가(도구 호출 미지원) — review 백엔드로만 사용.
+# 자세한 표: docs/reference/wiki-setup.md "백엔드 호환성"
 
 # 위키 상태 확인
 secall wiki status
