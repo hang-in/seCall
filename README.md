@@ -520,17 +520,17 @@ session_type = "automated"
 ### 위키 생성
 
 ```bash
-# Claude Code로 위키 업데이트 (기본값)
+# Codex CLI로 위키 업데이트 (기본값)
 secall wiki update
 
-# Codex CLI 백엔드
-secall wiki update --backend codex
+# Claude Code 백엔드
+secall wiki update --backend claude
 
 # Anthropic API (haiku — 직접 API 호출)
 secall wiki update --backend haiku
 
 # 특정 세션만 증분 업데이트
-secall wiki update --backend codex --session <id>
+secall wiki update --session <id>
 
 # 오프라인 / 수동 sync 모드
 secall wiki update --no-pull
@@ -671,7 +671,7 @@ secall serve --port 8080 --allow-config-edit
 | `graph.cloud_model` | Ollama Cloud 시맨틱 모델 | `gemma4:31b-cloud` |
 | `graph.cloud_host` | Ollama Cloud API 호스트 | `https://ollama.com` |
 | `graph.ollama_model` | Ollama/LM Studio 시맨틱 모델 | `gemma4:e4b` / `gemma-4-e4b-it` |
-| `wiki.default_backend` | 위키 생성 백엔드 (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
+| `wiki.default_backend` | 위키 생성 백엔드 (`codex` / `claude` / `haiku` / `ollama` / `lmstudio`) | `codex` |
 | `wiki.review_backend` | 위키 review 백엔드 (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `wiki.default_backend` 폴백 |
 | `wiki.review_model` | 위키 review 모델 override | `sonnet` |
 | `wiki.backends.<name>.api_url` | 백엔드 API 엔드포인트 | (기본값 사용) |
