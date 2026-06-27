@@ -2,6 +2,20 @@
 
 > NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
 
+## v0.6.4 (2026-06-28)
+
+wiki 기본 백엔드 codex 전환 + sync 시맨틱 추출 진행 표시.
+
+### ✨ Features
+
+- **sync 시맨틱 엣지 추출 진행 표시** (#112): `secall sync` 의 ingest phase 시맨틱 추출이 세션별 진행을 `tracing::debug` 로만 남겨 CLI 에서는 시작 헤더 뒤 무출력이라, ollama_cloud LLM 호출이 세션 수만큼 도는 동안 멈춘 것처럼 보이던 문제. `graph semantic` 과 동일 톤으로 세션별 `[i/N] <id> — N edges` (skipped/FAILED 포함) stderr 라인을 추가. 로직 변경 없이 출력만 추가.
+
+### ⚙️ Changes
+
+- **wiki 기본 생성 백엔드 `claude` → `codex` 강등** (#111): `claude -p` (headless) 백엔드가 환경에 따라 막혀 `secall wiki update` 기본 동작이 실패하고, Anthropic 의 구독↔프로그래매틱 빌링 분리(2026-06-15 발표→즉시 pause, 재도입 예고)로 `claude -p` 무료 사용 의존이 fragile. `wiki.default_backend` 기본값을 `codex` 로 변경. **claude 백엔드 코드 및 `--backend claude` / `[wiki] default_backend = "claude"` 옵션은 그대로 유지** — `[wiki] default_backend` 를 명시하지 않은 사용자만 기본이 codex 로 바뀌며 codex CLI 가 필요하다.
+
+---
+
 ## v0.6.3 (2026-06-18)
 
 설치 경험 개선 — `cargo install --git` 빌드 실패 복구 + 원라인 설치 스크립트.
