@@ -141,7 +141,7 @@ impl Default for WikiBackendConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WikiConfig {
-    /// 기본 사용 백엔드: "claude" | "haiku" | "ollama" | "lmstudio"
+    /// 기본 사용 백엔드: "codex"(기본) | "claude" | "haiku" | "ollama" | "ollama_cloud" | "lmstudio"
     #[serde(default = "default_wiki_backend")]
     pub default_backend: String,
     /// 백엔드별 설정 맵
@@ -162,7 +162,7 @@ pub struct WikiConfig {
 }
 
 fn default_wiki_backend() -> String {
-    "claude".to_string()
+    "codex".to_string()
 }
 
 /// Gemini PR #90 리뷰: compile-time const 로 정의하여 명확성/유지보수성 향상.
