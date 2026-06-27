@@ -775,6 +775,7 @@ async fn extract_semantic_edges_batch(
         // 동작 변경 없음 — 기존 tracing::warn/debug 메시지 그대로 보존.
         match extract_one_session_semantic(db, config, session_id).await {
             ExtractOneResult::Extracted(n) => {
+                eprintln!("  [{}/{}] {} — {} edges", sem_idx + 1, total_sem, short, n);
                 tracing::debug!(session = short, edges = n, "semantic edges extracted");
                 // P37 rework — 추출 성공 세션은 timestamp 갱신.
                 // graph rebuild 경로(graph.rs:280) 와 동일 동작 → ingest 후 NULL 로 남지 않음.
@@ -788,9 +789,23 @@ async fn extract_semantic_edges_batch(
                 }
             }
             ExtractOneResult::Skipped(reason) => {
+                eprintln!(
+                    "  [{}/{}] {} — skipped ({})",
+                    sem_idx + 1,
+                    total_sem,
+                    short,
+                    reason
+                );
                 tracing::debug!(session = short, "semantic extraction skipped: {}", reason)
             }
             ExtractOneResult::Failed(e) => {
+                eprintln!(
+                    "  [{}/{}] {} — FAILED: {}",
+                    sem_idx + 1,
+                    total_sem,
+                    short,
+                    e
+                );
                 tracing::warn!(session = short, "semantic extraction skipped: {}", e)
             }
         }
