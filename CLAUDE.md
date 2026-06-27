@@ -101,7 +101,8 @@
 - P27 — BM25-only 선택 시 graph semantic 자동 비활성화 (#25 fix, PR #27)
 
 ### In Progress
-- P26 — Gemini API 백엔드 추가 (시맨틱 그래프 + Log 일기) — 플랜 문서 작성됨
+- PR #108 (외부 기여, kainy21) — web UI 세션 삭제: "archive 전환" 요청 리뷰 게시 후 저자 응답 대기
+  (P26 Gemini API 백엔드는 폐기 — PR #110 에서 dead doc 잔재까지 제거됨)
 
 ### Known Issues
 - 기존 DB에 FTS 중복 잔존 (--force reingest로 세션별 정리 가능)
@@ -111,9 +112,9 @@
 
 ## 8. Next Priorities
 
-1. (P1) P26 — Gemini API 백엔드 추가 (wiki 작성은 Gemini Pro 3/3.1 예정)
-2. (P2) Wiki 파이프라인 대규모 실행 검증 — Gemini 백엔드 완성 후 전체 세션 처리
-3. (P2) 테스트 갭 대응 — REST API DTO/라우터 등 미테스트 46건
+1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1)
+2. (P2) 테스트 갭 대응 — REST API DTO/라우터 등 미테스트 46건
+3. (P3) Gemini Code Assist 리뷰 봇 2026-07-17 종료 대비 — PR 리뷰 수단 대안 결정
 
 ---
 
