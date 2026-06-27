@@ -99,6 +99,7 @@
 - P25 Phase 0-1 — REST API 서버 + Obsidian 플러그인 MVP (PR #24)
 - P25 Phase 2 — 데일리 노트 자동 생성 + Graph 탐색 뷰 (PR #27)
 - P27 — BM25-only 선택 시 graph semantic 자동 비활성화 (#25 fix, PR #27)
+- wiki 기본 생성 백엔드 claude → codex 강등 (claude -p 막힘 + 빌링 fragile, claude 코드는 유지, PR #111)
 
 ### In Progress
 - PR #108 (외부 기여, kainy21) — web UI 세션 삭제: "archive 전환" 요청 리뷰 게시 후 저자 응답 대기
@@ -112,7 +113,7 @@
 
 ## 8. Next Priorities
 
-1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1)
+1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1, 최신 맥락: `handoff_2026-06-27.md`)
 2. (P2) 테스트 갭 대응 — REST API DTO/라우터 등 미테스트 46건
 3. (P3) Gemini Code Assist 리뷰 봇 2026-07-17 종료 대비 — PR 리뷰 수단 대안 결정
 
