@@ -157,6 +157,13 @@ export const api = {
       { method: "PATCH", body: JSON.stringify({ notes }) },
     ),
 
+  /** 세션 완전 삭제 (`DELETE /api/sessions/:id`). sessions/turns/fts/vectors 제거. */
+  deleteSession: (id: string) =>
+    jfetch<{ session_id: string; deleted: boolean }>(
+      `/api/sessions/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+
   status: () => jfetch<StatusResponse>("/api/status"),
 
   daily: (date?: string) =>

@@ -1049,6 +1049,17 @@ impl SeCallMcpServer {
         }))
     }
 
+    /// 세션 완전 삭제 — sessions / turns / turns_fts / turn_vectors 전부 제거.
+    /// Web UI 세션 삭제 버튼용. 되돌릴 수 없음.
+    pub fn do_delete_session(&self, session_id: &str) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        db.delete_session_full(session_id)?;
+        Ok(serde_json::json!({ "session_id": session_id, "deleted": true }))
+    }
+
     // ─── Job 시스템 (P33 Task 03) ──────────────────────────────────────────
 
     /// 메모리 또는 DB에서 단일 job 상태 조회. 둘 다 없으면 Ok(None).

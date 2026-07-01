@@ -340,6 +340,9 @@ impl Database {
     /// `--force` 재수집 시 기존 데이터를 정리하는 데 사용.
     pub fn delete_session_full(&self, session_id: &str) -> Result<()> {
         self.delete_session_vectors(session_id)?;
+        // 지식 그래프 노드/엣지 정리 (`session:{id}`) — DELETE 엔드포인트 및
+        // `--force` 재수집에서 고아 그래프 데이터가 남지 않도록 함.
+        self.delete_graph_for_session(session_id)?;
         // FTS5 행 삭제 (turns 삭제 전에 수행 — session_id로 매칭)
         self.conn().execute(
             "DELETE FROM turns_fts WHERE session_id = ?1",
