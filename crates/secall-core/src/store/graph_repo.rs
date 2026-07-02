@@ -32,6 +32,8 @@ pub struct RelatedSession {
     pub date: String,
     /// 세션 요약 (첫 번째 사용자 발화 기반)
     pub summary: Option<String>,
+    /// Adamic-Adar 관련도 점수 (시드와 공유하는 희소 엔티티일수록 높음). 랭킹 기준.
+    pub score: f32,
 }
 
 impl Database {
@@ -328,6 +330,10 @@ impl Database {
             return Ok(vec![]);
         }
 
+        // Adamic-Adar 관련도 (시드와 공유하는 희소 엔티티일수록 강함) — 재랭킹 기준.
+        let cand_nodes: Vec<String> = found.keys().cloned().collect();
+        let aa_scores = self.adamic_adar_scores(&seed_set, &cand_nodes)?;
+
         // 세션 메타 일괄 조회
         let session_ids: Vec<String> = found
             .keys()
@@ -379,19 +385,86 @@ impl Database {
                     project,
                     date,
                     summary,
+                    score: aa_scores.get(node_id).copied().unwrap_or(0.0),
                 })
             })
             .collect();
 
-        // hop_count 오름차순, 동일 hop은 relation 알파벳 순
+        // Adamic-Adar 점수 내림차순(공유 엔티티 강도) → 동점은 hop 오름차 → session_id (결정성)
         results.sort_by(|a, b| {
-            a.hop_count
-                .cmp(&b.hop_count)
-                .then(a.relation.cmp(&b.relation))
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.hop_count.cmp(&b.hop_count))
+                .then(a.session_id.cmp(&b.session_id))
         });
         results.truncate(limit);
 
         Ok(results)
+    }
+
+    /// Adamic-Adar 관련도: 시드 세션과 후보 세션이 공유하는 엔티티(project/tool/tech/topic/file/issue)
+    /// 기반. 각 공유 엔티티 z 의 기여 = 1/ln(deg(z)) — 희소 엔티티(특정 file/issue)는 강하게,
+    /// 흔한 허브는 약하게 반영. `agent:` 는 준-보편 허브라 제외. deg = z 에 연결된 distinct 세션 수.
+    fn adamic_adar_scores(
+        &self,
+        seed_set: &std::collections::HashSet<String>,
+        candidate_nodes: &[String],
+    ) -> Result<HashMap<String, f32>> {
+        // 1. 시드 엔티티별 weight (deg>=2 만; deg=1 은 공유 대상 없음이고 ln(1)=0)
+        let mut ent_weight: HashMap<String, f64> = HashMap::new();
+        for seed in seed_set {
+            for z in self.entity_neighbors(seed)? {
+                if ent_weight.contains_key(&z) {
+                    continue;
+                }
+                let deg = self.entity_session_degree(&z)?;
+                if deg >= 2 {
+                    ent_weight.insert(z, 1.0 / (deg as f64).ln());
+                }
+            }
+        }
+        if ent_weight.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // 2. 후보별 공유 엔티티 weight 합
+        let mut scores: HashMap<String, f32> = HashMap::new();
+        for c in candidate_nodes {
+            let mut s = 0.0_f64;
+            for z in self.entity_neighbors(c)? {
+                if let Some(w) = ent_weight.get(&z) {
+                    s += w;
+                }
+            }
+            if s > 0.0 {
+                scores.insert(c.clone(), s as f32);
+            }
+        }
+        Ok(scores)
+    }
+
+    /// 노드의 엔티티 이웃 (session/agent 제외). 엣지는 session→entity(source=node) 방향.
+    fn entity_neighbors(&self, node: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT target FROM graph_edges \
+             WHERE source = ?1 AND target NOT LIKE 'session:%' AND target NOT LIKE 'agent:%'",
+        )?;
+        let v = stmt
+            .query_map([node], |r| r.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(v)
+    }
+
+    /// 엔티티 z 에 연결된 distinct 세션 수 (Adamic-Adar 의 deg).
+    fn entity_session_degree(&self, entity: &str) -> Result<usize> {
+        let n: i64 = self.conn().query_row(
+            "SELECT COUNT(DISTINCT source) FROM graph_edges \
+             WHERE target = ?1 AND source LIKE 'session:%'",
+            [entity],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
     }
 
     /// 그래프 필터 조건에 해당하는 세션 ID 목록 반환.
@@ -665,5 +738,68 @@ mod tests {
         let related = db.get_related_sessions(&["s1"], 2, 5).unwrap();
         // sessions 테이블에 데이터가 없으므로 meta_map이 비어 결과 0
         assert_eq!(related.len(), 0);
+    }
+
+    #[test]
+    fn test_adamic_adar_scores_rare_entity_higher() {
+        let db = Database::open_memory().unwrap();
+        for s in ["s1", "s2", "s3", "s4", "s5"] {
+            db.upsert_graph_node(&format!("session:{s}"), "session", s, None)
+                .unwrap();
+        }
+        db.upsert_graph_node("file:rare", "file", "rare.rs", None)
+            .unwrap();
+        db.upsert_graph_node("topic:common", "topic", "common", None)
+            .unwrap();
+        db.upsert_graph_node("agent:claude-code", "agent", "claude-code", None)
+            .unwrap();
+        // 희소 엔티티 file:rare — s1,s2 만 (deg=2)
+        db.upsert_graph_edge("session:s1", "file:rare", "modifies_file", "RULE", 0.9)
+            .unwrap();
+        db.upsert_graph_edge("session:s2", "file:rare", "modifies_file", "RULE", 0.9)
+            .unwrap();
+        // 흔한 엔티티 topic:common — s1,s3,s4,s5 (deg=4)
+        for s in ["s1", "s3", "s4", "s5"] {
+            db.upsert_graph_edge(
+                &format!("session:{s}"),
+                "topic:common",
+                "discusses_topic",
+                "LLM",
+                0.5,
+            )
+            .unwrap();
+        }
+        // agent 허브 — s1,s2,s3 (AA 에서 제외돼야 함)
+        for s in ["s1", "s2", "s3"] {
+            db.upsert_graph_edge(
+                &format!("session:{s}"),
+                "agent:claude-code",
+                "by_agent",
+                "RULE",
+                1.0,
+            )
+            .unwrap();
+        }
+
+        let seed: std::collections::HashSet<String> =
+            ["session:s1".to_string()].into_iter().collect();
+        let cands: Vec<String> = ["session:s2", "session:s3"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let scores = db.adamic_adar_scores(&seed, &cands).unwrap();
+
+        let s2 = scores.get("session:s2").copied().unwrap_or(0.0);
+        let s3 = scores.get("session:s3").copied().unwrap_or(0.0);
+        // 희소 file 공유(s2) > 흔한 topic 공유(s3)
+        assert!(
+            s2 > s3,
+            "rare-entity share must score higher: s2={s2} s3={s3}"
+        );
+        // agent 허브는 기여 X → s2 는 file:rare 하나뿐 = 1/ln(2)
+        assert!(
+            (s2 - (1.0 / 2.0_f64.ln()) as f32).abs() < 1e-4,
+            "s2 should equal 1/ln(2) (agent hub excluded): {s2}"
+        );
     }
 }
