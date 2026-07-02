@@ -883,14 +883,18 @@ pub async fn extract_one_session_semantic(
 
 /// P37 Task 01 — 시맨틱 추출 직전 임베딩 모델 unload.
 ///
-/// 16GB 시스템에서 bge-m3(임베딩) 와 gemma4(LLM) 동시 로드 시
+/// 16GB 시스템에서 qwen3-embedding(임베딩) 와 gemma4(LLM) 동시 로드 시
 /// OOM 위험을 줄이기 위해 시맨틱 backend 가 ollama 인 경우에만 발사.
 /// ingest 와 graph rebuild 둘 다 진입 시점에 한 번 호출한다.
 pub async fn unload_embedding_model_if_needed(config: &Config) {
     if config.embedding.backend != "ollama" || config.graph.semantic_backend != "ollama" {
         return;
     }
-    let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+    let embed_model = config
+        .embedding
+        .ollama_model
+        .as_deref()
+        .unwrap_or("qwen3-embedding:0.6b");
     let ollama_url = config
         .embedding
         .ollama_url
@@ -914,7 +918,11 @@ pub async fn unload_ollama_embed_model(config: &Config) {
     if config.embedding.backend != "ollama" {
         return;
     }
-    let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+    let embed_model = config
+        .embedding
+        .ollama_model
+        .as_deref()
+        .unwrap_or("qwen3-embedding:0.6b");
     let ollama_url = config
         .embedding
         .ollama_url

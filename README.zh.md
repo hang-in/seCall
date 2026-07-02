@@ -277,7 +277,7 @@ secall init --git git@github.com:you/obsidian-vault.git
 - Git remote（可选）
 - 分词器选择（lindera/kiwi）
 - 嵌入后端选择（ollama/none）
-- Ollama 安装检查 + 自动 pull `bge-m3` 模型
+- Ollama 安装检查 + 自动 pull `qwen3-embedding:0.6b` 模型
 
 ### Step 3. 收集会话
 
@@ -660,7 +660,7 @@ secall serve --port 8080 --allow-config-edit
 | `search.tokenizer` | 分词器（`lindera` / `kiwi`） | `lindera` |
 | `search.default_limit` | 检索结果数 | `10` |
 | `embedding.backend` | 嵌入后端（`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`） | `ollama` |
-| `embedding.ollama_model` | Ollama 模型名 | `bge-m3` |
+| `embedding.ollama_model` | Ollama 模型名 | `qwen3-embedding:0.6b` |
 | `embedding.pool_size` | ORT session pool 大小（未设置 = 根据 RAM 自动） | `null` |
 | `embedding.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
 | `embedding.cloud_model` | Ollama Cloud embedding 模型名 | `null` |
@@ -771,7 +771,7 @@ secall serve --port 8080 --allow-config-edit
 
 本项目基于以下想法与项目:
 
-- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (Andrej Karpathy) — 用 LLM 从原始素材逐步构建知识库的模式。seCall 的双层 vault 架构（原始会话 + AI 生成 wiki）正是该理念的直接落地。也可参考 [Tobi Lütke 的实现](https://github.com/tobi/llm-wiki)。
+- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (Andrej Karpathy) — 用 LLM 从原始素材逐步构建知识库的模式。seCall 的双层 vault 架构（原始会话 + AI 生成 wiki）正是该理念的直接落地。
 - **[qmd](https://github.com/tobi/qmd)** (Tobi Lütke) — 面向 Markdown 文件的本地搜索引擎。seCall 的搜索流水线（FTS5 BM25、向量嵌入、RRF k=60）参考了 qmd 的思路。
 - **[graphify](https://github.com/safishamsi/graphify)** (Safi Shamsi) — 将文件夹转换为 knowledge graph 的工具。seCall P16 的确定性图谱抽取与 confidence 标注从该项目获得灵感。
 

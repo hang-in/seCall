@@ -146,7 +146,7 @@ fn run_interactive() -> Result<()> {
     // Step 5: 임베딩 백엔드
     println!("  Step 5/6: 임베딩 백엔드");
     let backend_items = vec![
-        "ollama — 로컬 임베딩 (bge-m3, 무료)",
+        "ollama — 로컬 임베딩 (qwen3-embedding:0.6b, 무료)",
         "none — 벡터 검색 비활성화 (BM25만 사용)",
     ];
     let backend_default = if config.embedding.backend == "none" {
@@ -215,7 +215,7 @@ fn check_and_setup_ollama() -> Result<()> {
         println!();
         println!("    설치 후 다음 명령을 실행하세요:");
         println!("      ollama serve          # 서버 시작");
-        println!("      ollama pull bge-m3    # 임베딩 모델 다운로드");
+        println!("      ollama pull qwen3-embedding:0.6b  # 임베딩 모델 다운로드");
         println!();
         println!("    Ollama 없이도 BM25 검색은 사용 가능합니다.");
         println!("    나중에 `secall config set embedding.backend ollama`로 변경할 수 있습니다.");
@@ -235,22 +235,24 @@ fn check_and_setup_ollama() -> Result<()> {
     };
 
     let models = String::from_utf8_lossy(&list_output.stdout);
-    if models.contains("bge-m3") {
-        println!("  ✓ bge-m3 모델이 이미 설치되어 있습니다.");
+    if models.contains("qwen3-embedding:0.6b") {
+        println!("  ✓ qwen3-embedding:0.6b 모델이 이미 설치되어 있습니다.");
         return Ok(());
     }
 
-    println!("  ⟳ ollama pull bge-m3 실행 중... (최초 ~1.5GB 다운로드)");
+    println!("  ⟳ ollama pull qwen3-embedding:0.6b 실행 중... (최초 ~640MB 다운로드)");
     let status = Command::new("ollama")
-        .args(["pull", "bge-m3"])
+        .args(["pull", "qwen3-embedding:0.6b"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
 
     if status.success() {
-        println!("  ✓ bge-m3 모델 준비 완료.");
+        println!("  ✓ qwen3-embedding:0.6b 모델 준비 완료.");
     } else {
-        println!("  ⚠ 모델 다운로드 실패. 나중에 `ollama pull bge-m3`로 재시도하세요.");
+        println!(
+            "  ⚠ 모델 다운로드 실패. 나중에 `ollama pull qwen3-embedding:0.6b`로 재시도하세요."
+        );
     }
     Ok(())
 }

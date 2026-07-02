@@ -55,7 +55,11 @@ pub async fn run_semantic(
 
     // 임베딩 모델 언로드 (gemma4와 동시 로드 방지)
     if config.embedding.backend == "ollama" {
-        let embed_model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+        let embed_model = config
+            .embedding
+            .ollama_model
+            .as_deref()
+            .unwrap_or("qwen3-embedding:0.6b");
         let ollama_url = config
             .embedding
             .ollama_url

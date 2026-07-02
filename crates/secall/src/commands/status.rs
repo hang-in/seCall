@@ -20,7 +20,11 @@ pub fn run() -> Result<()> {
 
     let embedding_detail = match config.embedding.backend.as_str() {
         "ollama" => {
-            let model = config.embedding.ollama_model.as_deref().unwrap_or("bge-m3");
+            let model = config
+                .embedding
+                .ollama_model
+                .as_deref()
+                .unwrap_or("qwen3-embedding:0.6b");
             format!("ollama ({})", model)
         }
         "ort" => "ort (local ONNX, CPU)".to_string(),

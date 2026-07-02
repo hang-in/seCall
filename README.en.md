@@ -278,7 +278,7 @@ Running `secall init` without arguments starts an interactive wizard:
 - Git remote (optional)
 - Tokenizer selection (lindera/kiwi)
 - Embedding backend selection (ollama/none)
-- Ollama installation check + automatic `bge-m3` model pull
+- Ollama installation check + automatic `qwen3-embedding:0.6b` model pull
 
 ### Step 3. Ingest Sessions
 
@@ -542,7 +542,7 @@ secall wiki status
 # Backfill page embeddings for semantic / hybrid wiki search (P40)
 secall wiki vectorize                      # incremental — skips unchanged pages by content_hash
 secall wiki vectorize --force              # full reindex (use after switching embedding model)
-secall wiki vectorize --model bge-m3 \
+secall wiki vectorize --model qwen3-embedding:0.6b \
     --ollama-url http://localhost:11434    # explicit overrides
 ```
 
@@ -554,7 +554,7 @@ curl -s -X POST http://localhost:3000/api/wiki \
   -H 'content-type: application/json' \
   -d '{"query":"vault auto commit"}'
 
-# Pure semantic (page-level cosine over bge-m3 embeddings)
+# Pure semantic (page-level cosine over qwen3-embedding:0.6b embeddings)
 curl -s -X POST http://localhost:3000/api/wiki \
   -d '{"query":"git automation","mode":"semantic"}'
 
@@ -679,7 +679,7 @@ secall serve --port 8080 --allow-config-edit
 | `search.tokenizer` | Tokenizer (`lindera` / `kiwi`) | `lindera` |
 | `search.default_limit` | Search result count | `10` |
 | `embedding.backend` | Embedding backend (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`) | `ollama` |
-| `embedding.ollama_model` | Ollama model name | `bge-m3` |
+| `embedding.ollama_model` | Ollama model name | `qwen3-embedding:0.6b` |
 | `embedding.pool_size` | ORT session pool size (null = auto from RAM) | `null` |
 | `embedding.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
 | `embedding.cloud_model` | Ollama Cloud embedding model name | `null` |
@@ -792,7 +792,7 @@ For auto-sync on session start/end:
 
 This project is built on ideas from:
 
-- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** by Andrej Karpathy — The pattern of using LLMs to incrementally build a persistent, interlinked knowledge base from raw sources. seCall's two-layer vault architecture (raw sessions + AI-generated wiki) directly implements this concept. See also [Tobi Lütke's implementation](https://github.com/tobi/llm-wiki).
+- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** by Andrej Karpathy — The pattern of using LLMs to incrementally build a persistent, interlinked knowledge base from raw sources. seCall's two-layer vault architecture (raw sessions + AI-generated wiki) directly implements this concept.
 - **[qmd](https://github.com/tobi/qmd)** by Tobi Lütke — A local search engine for markdown files with hybrid BM25/vector search. seCall's search pipeline (FTS5 BM25, vector embeddings, RRF k=60) was designed with reference to qmd's approach.
 - **[graphify](https://github.com/safishamsi/graphify)** by Safi Shamsi — Turns file folders into queryable knowledge graphs. seCall P16's deterministic graph extraction and confidence labeling were inspired by this project.
 
