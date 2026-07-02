@@ -772,6 +772,7 @@ Claude Code 設定 (`~/.claude/settings.json`) に追加:
 本プロジェクトは以下のアイデア・プロジェクトをベースにしています:
 
 - **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (Andrej Karpathy) — LLM を用いて原本ソースから段階的にナレッジベースを構築するパターン。seCall の 2層ボールトアーキテクチャ (原本セッション + AI 生成 Wiki) はこのコンセプトを直接実装したものです。
+- **[nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)** (nashsu) — 同じ LLM Wiki パターンの本格的なデスクトップアプリ実装 (source 追跡・知識グラフ・セマンティック検索・MCP・Obsidian 互換)。seCall は同パターンを **AI エージェントのセッションログ** に特化した CLI/MCP ツール。
 - **[qmd](https://github.com/tobi/qmd)** (Tobi Lütke) — マークダウンファイル向けローカル検索エンジン。seCall の検索パイプライン (FTS5 BM25、ベクトルエンベディング、RRF k=60) は qmd のアプローチを参考に設計されています。
 - **[graphify](https://github.com/safishamsi/graphify)** (Safi Shamsi) — ファイルフォルダを knowledge graph に変換するツール。seCall P16 の決定論的グラフ抽出と confidence ラベリングはこのプロジェクトに着想を得ています。
 
