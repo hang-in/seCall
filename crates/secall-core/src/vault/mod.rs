@@ -16,6 +16,88 @@ use crate::ingest::{
     Session,
 };
 
+/// Canonical session storage subdirectory under a vault root.
+///
+/// P49/v0.5.0 부터 세션 md 는 `raw/.sessions/` (dot-prefix) 에 쓴다. 활성 코드는
+/// 직접 `join("raw").join("sessions")` (무점, legacy) 를 조립하지 말고 이 helper 를
+/// 사용한다. legacy 무점 경로는 더 이상 디스크에 존재하지 않는다.
+pub fn sessions_subdir(vault_path: &Path) -> PathBuf {
+    vault_path.join("raw").join(".sessions")
+}
+
+/// DB 에 저장된 `vault_path`(구분자 `\`·`/` 혼재 + legacy 무점 `raw/sessions` 가능)를
+/// 실제 존재하는 세션 md 파일로 해석한다.
+///
+/// 해석 우선순위:
+/// 1. 저장 경로 그대로 (구분자 정규화)
+/// 2. legacy `raw/sessions` → canonical `raw/.sessions` 치환
+/// 3. `raw/.sessions` 하위에서 8자리 session_id prefix 로 파일명 탐색
+///
+/// prefix 다중 매치는 임의 선택하지 않고 에러를 반환한다. 어디에서도 못 찾으면
+/// `SessionNotFound`.
+pub fn resolve_session_file(
+    vault_path: &Path,
+    stored_rel: &str,
+    session_id: &str,
+) -> crate::error::Result<PathBuf> {
+    // `\` 와 `/` 를 모두 컴포넌트 구분자로 취급해 OS-native path 로 재조립.
+    fn join_normalized(root: &Path, rel: &str) -> PathBuf {
+        let mut p = root.to_path_buf();
+        for comp in rel.split(['/', '\\']).filter(|c| !c.is_empty()) {
+            p.push(comp);
+        }
+        p
+    }
+
+    // (1) 저장 경로 그대로
+    let direct = join_normalized(vault_path, stored_rel);
+    if direct.is_file() {
+        return Ok(direct);
+    }
+
+    // (2) legacy 무점 `sessions` 컴포넌트를 `.sessions` 로 치환
+    let comps: Vec<&str> = stored_rel
+        .split(['/', '\\'])
+        .filter(|c| !c.is_empty())
+        .collect();
+    if comps.contains(&"sessions") {
+        let swapped: Vec<&str> = comps
+            .iter()
+            .map(|c| if *c == "sessions" { ".sessions" } else { *c })
+            .collect();
+        let cand = join_normalized(vault_path, &swapped.join("/"));
+        if cand.is_file() {
+            return Ok(cand);
+        }
+    }
+
+    // (3) prefix 탐색
+    let short = &session_id[..session_id.len().min(8)];
+    let sessions_dir = sessions_subdir(vault_path);
+    let mut matches: Vec<PathBuf> = Vec::new();
+    if sessions_dir.exists() {
+        for entry in walkdir::WalkDir::new(&sessions_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let p = entry.path();
+            if p.extension().map(|x| x == "md").unwrap_or(false) {
+                let fname = p.file_name().unwrap_or_default().to_string_lossy();
+                if fname.contains(short) {
+                    matches.push(p.to_path_buf());
+                }
+            }
+        }
+    }
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().unwrap()),
+        0 => Err(crate::SecallError::SessionNotFound(session_id.to_string())),
+        n => Err(crate::SecallError::Other(anyhow::anyhow!(
+            "ambiguous vault file for session {session_id}: {n} candidates match prefix '{short}'"
+        ))),
+    }
+}
+
 pub struct Vault {
     path: PathBuf,
 }
@@ -27,6 +109,11 @@ impl Vault {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Canonical `<vault>/raw/.sessions` directory.
+    pub fn sessions_dir(&self) -> PathBuf {
+        sessions_subdir(&self.path)
     }
 
     pub fn init(&self) -> Result<()> {
@@ -85,7 +172,7 @@ impl Vault {
     /// Check if a session has already been ingested (by ID)
     pub fn session_exists(&self, session_id: &str) -> bool {
         // Walk raw/.sessions/ looking for a file containing the session ID
-        let sessions_dir = self.path.join("raw").join(".sessions");
+        let sessions_dir = self.sessions_dir();
         if !sessions_dir.exists() {
             return false;
         }
@@ -392,6 +479,90 @@ mod tests {
             !content.contains("archived_at:"),
             "archived_at: should be removed"
         );
+    }
+
+    // ─── sessions_subdir / resolve_session_file ────────────────────────────────
+
+    #[test]
+    fn sessions_subdir_is_canonical_dot_path() {
+        let dir = TempDir::new().unwrap();
+        let sub = sessions_subdir(dir.path());
+        assert!(sub.ends_with(std::path::Path::new("raw").join(".sessions")));
+    }
+
+    fn write_md(root: &std::path::Path, rel: &str) -> std::path::PathBuf {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "---\nsession_id: x\n---\n\n## Turn 1 — User\n\nhi\n").unwrap();
+        p
+    }
+
+    #[test]
+    fn resolve_direct_dot_path() {
+        let dir = TempDir::new().unwrap();
+        let real = write_md(
+            dir.path(),
+            "raw/.sessions/2026-04-01/claude-code_p_abcd1234.md",
+        );
+        let got = resolve_session_file(
+            dir.path(),
+            "raw/.sessions/2026-04-01/claude-code_p_abcd1234.md",
+            "abcd1234-0000",
+        )
+        .unwrap();
+        assert_eq!(got, real);
+    }
+
+    #[test]
+    fn resolve_legacy_backslash_no_dot_to_dot_file() {
+        // DB 에 저장된 legacy 백슬래시 무점 경로 → 실제 .sessions 파일로 해석
+        let dir = TempDir::new().unwrap();
+        let real = write_md(
+            dir.path(),
+            "raw/.sessions/2026-04-01/claude-code_p_abcd1234.md",
+        );
+        let stored = "raw\\sessions\\2026-04-01\\claude-code_p_abcd1234.md";
+        let got = resolve_session_file(dir.path(), stored, "abcd1234-0000").unwrap();
+        assert_eq!(got, real);
+    }
+
+    #[test]
+    fn resolve_by_prefix_when_path_differs() {
+        // 저장 경로의 날짜 버킷이 달라도 8자리 prefix 로 탐색
+        let dir = TempDir::new().unwrap();
+        let real = write_md(
+            dir.path(),
+            "raw/.sessions/2026-05-09/claude-code_p_deadbeef.md",
+        );
+        let stored = "raw\\sessions\\2026-04-01\\claude-code_p_deadbeef.md";
+        let got = resolve_session_file(dir.path(), stored, "deadbeef-1111").unwrap();
+        assert_eq!(got, real);
+    }
+
+    #[test]
+    fn resolve_missing_file_is_not_found() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sessions_subdir(dir.path())).unwrap();
+        let err = resolve_session_file(
+            dir.path(),
+            "raw\\sessions\\2026-04-01\\claude-code_p_00000000.md",
+            "00000000-2222",
+        );
+        assert!(matches!(err, Err(crate::SecallError::SessionNotFound(_))));
+    }
+
+    #[test]
+    fn resolve_ambiguous_prefix_errors() {
+        // 동일 8자리 prefix 파일이 둘 → 임의 선택 금지, 에러
+        let dir = TempDir::new().unwrap();
+        write_md(
+            dir.path(),
+            "raw/.sessions/2026-04-01/claude-code_p_abcd1234.md",
+        );
+        write_md(dir.path(), "raw/.sessions/2026-04-02/codex_q_abcd1234.md");
+        let stored = "raw\\sessions\\2026-01-01\\missing_abcd1234.md";
+        let err = resolve_session_file(dir.path(), stored, "abcd1234-3333");
+        assert!(matches!(err, Err(crate::SecallError::Other(_))));
     }
 }
 

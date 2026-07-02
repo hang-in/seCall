@@ -233,6 +233,10 @@ enum Commands {
         /// Rebuild from vault markdown files
         #[arg(long)]
         from_vault: bool,
+        /// 기존 세션 중 turns 가 0개인 것을 vault markdown 에서 복구 (비파괴 healing).
+        /// 정상 turns 가 있는 세션과 graph/favorite/notes 는 건드리지 않음.
+        #[arg(long)]
+        repair_missing_turns: bool,
     },
 
     /// Manage wiki generation via pluggable LLM backends
@@ -609,8 +613,11 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Commands::Reindex { from_vault } => {
-            commands::reindex::run(from_vault)?;
+        Commands::Reindex {
+            from_vault,
+            repair_missing_turns,
+        } => {
+            commands::reindex::run(from_vault, repair_missing_turns)?;
         }
         Commands::Wiki { action } => match action {
             WikiAction::Update {

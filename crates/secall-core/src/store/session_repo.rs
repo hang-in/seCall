@@ -356,6 +356,38 @@ impl Database {
         Ok(())
     }
 
+    /// 세션의 turns_fts 행만 삭제 (sessions/turns/vectors/graph 는 보존).
+    /// reindex healing 시 legacy `turn_id=0` 단일 블롭 및 이전 healed FTS 행을
+    /// 제거해 per-turn 재삽입이 중복되지 않도록 한다.
+    pub fn clear_session_fts(&self, session_id: &str) -> Result<usize> {
+        let n = self.conn().execute(
+            "DELETE FROM turns_fts WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(n)
+    }
+
+    /// 세션의 turns 행 개수 (healing 대상 판별용).
+    pub fn count_session_turns(&self, session_id: &str) -> Result<usize> {
+        let n: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM turns WHERE session_id = ?1",
+            [session_id],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// turns 가 0개인 세션 수 (healing 리포트용).
+    pub fn count_zero_turn_sessions(&self) -> Result<usize> {
+        let n: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM sessions s WHERE NOT EXISTS \
+             (SELECT 1 FROM turns t WHERE t.session_id = s.id)",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
     /// 세션의 모든 벡터를 삭제. 부분 임베딩 정리 및 재임베딩 전 DELETE-first에 사용.
     pub fn delete_session_vectors(&self, session_id: &str) -> Result<usize> {
         // turn_vectors 테이블이 없으면 0 반환 (정상)

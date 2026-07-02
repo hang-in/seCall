@@ -9,7 +9,7 @@ pub fn run_summary(dry_run: bool) -> Result<()> {
     let config = Config::load_or_default();
     let db = Database::open(&get_default_db_path())?;
 
-    let sessions_dir = config.vault.path.join("raw").join("sessions");
+    let sessions_dir = secall_core::vault::sessions_subdir(&config.vault.path);
     if !sessions_dir.exists() {
         println!("No vault sessions directory found.");
         return Ok(());

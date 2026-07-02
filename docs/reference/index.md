@@ -9,7 +9,7 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 새 세션에서 컨텍스트를 파악할 때 다음 순서로 읽으면 충분하다.
 
 1. 프로젝트 루트 [`CLAUDE.md`](../../CLAUDE.md) — 프로젝트 전체 규약과 현재 상태 요약
-2. [handoff_2026-06-27.md](handoff_2026-06-27.md) — 최신 세션 핸드오프 (현재 작업 맥락)
+2. [handoff_2026-07-02.md](handoff_2026-07-02.md) — 최신 세션 핸드오프 (현재 작업 맥락)
 3. [core-backlog.md](core-backlog.md) / [web-backlog.md](web-backlog.md) — 현 우선순위와 백로그
 4. 작업 영역별 reference (LLM 설정이면 `llm-config.md`, Wiki 작업이면 `wiki-setup.md` 등)
 5. (필요 시) 관련 [plans](../plans/index.md) / [prompts](../prompts/index.md)
@@ -25,7 +25,8 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 
 ### 세션 핸드오프 (시간순 스냅샷, 최신만 우선 참고)
 
-- [handoff_2026-06-27.md](handoff_2026-06-27.md) — 최신 세션 핸드오프 (wiki 기본 백엔드 claude→codex 강등 PR #111 + claude -p 빌링 사실 확정; 다음=배포방법 고도화) · 상태: draft
+- [handoff_2026-07-02.md](handoff_2026-07-02.md) — 최신 세션 핸드오프 (Windows: zero-turn 세션 healing 기능 추가 `reindex --repair-missing-turns` + 운영 DB 복구 2399→1293; 다음=macOS 리뷰/머지 + 배포 고도화) · 상태: draft
+- [handoff_2026-06-27.md](handoff_2026-06-27.md) — 이전 세션 핸드오프 (wiki 기본 백엔드 claude→codex 강등 PR #111 + claude -p 빌링 사실 확정; 다음=배포방법 고도화) · 상태: draft
 - [handoff_2026-06-26.md](handoff_2026-06-26.md) — 이전 세션 핸드오프 (PR #108 archive 리뷰 + 백로그 정리 PR #110; 배포 고도화 §3.1 상세) · 상태: done
 - [handoff_2026-06-25.md](handoff_2026-06-25.md) — 이전 세션 핸드오프 (v0.6.0~0.6.3 릴리스 + 외부 PR + CLI 변동 점검) · 상태: done
 - [handoff_2026-05-19.md](handoff_2026-05-19.md) — 이전 세션 핸드오프 (v0.5.0+10 PR) · 상태: done

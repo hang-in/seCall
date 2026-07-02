@@ -6,10 +6,50 @@ use std::time::Instant;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use secall_core::{
-    ingest::Session,
+    ingest::{markdown::parse_session_turns, Session},
     store::{get_default_db_path, Database},
-    vault::Config,
+    vault::{resolve_session_file, Config},
 };
+
+/// 세션을 임베딩용으로 로드하되, DB turns 가 비어 있으면 vault markdown 에서 복구한다.
+///
+/// zero-turn 세션(과거 reindex 로 메타만 있고 turns 미저장)은 DB 만으로는 0 chunks 라
+/// 임베딩되지 않는다. 이 경우 vault_path 를 해석해 실제 md 를 읽고 `parse_session_turns`
+/// 로 turn 을 복원한다. 복구 불가(파일 부재/중복) 시 원래의 빈 세션을 그대로 반환해
+/// 상위에서 no-op skip 되게 한다.
+fn load_session_with_vault_fallback(
+    db: &Database,
+    vault_root: &std::path::Path,
+    session_id: &str,
+) -> Result<Session> {
+    let mut session = db.get_session_for_embedding(session_id)?;
+    if !session.turns.is_empty() {
+        return Ok(session);
+    }
+
+    let Some(vault_path) = db.get_session_vault_path(session_id)? else {
+        return Ok(session);
+    };
+
+    let file = match resolve_session_file(vault_root, &vault_path, session_id) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!(session = %session_id, error = %e, "embed fallback: vault file unresolved");
+            return Ok(session);
+        }
+    };
+
+    let content = std::fs::read_to_string(&file)?;
+    let turns = parse_session_turns(&content)?;
+    if !turns.is_empty() {
+        tracing::info!(
+            session = %session_id, file = %file.display(), turns = turns.len(),
+            "embed: recovered turns from vault fallback"
+        );
+        session.turns = turns;
+    }
+    Ok(session)
+}
 
 enum WorkItem {
     /// Default mode — pre-filter loaded the Session, embed pending chunks.
@@ -47,6 +87,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
     let indexer = Arc::new(indexer.with_batch_size(batch_size));
 
     let tz = config.timezone();
+    let vault_root: Arc<PathBuf> = Arc::new(config.vault.path.clone());
     let candidate_ids: Vec<String> = db.list_all_session_ids()?;
 
     // Pre-filter pass — sessions whose chunks are all already embedded (or
@@ -64,7 +105,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
         eprintln!("Scanning {total_candidates} session(s) for pending chunks...");
         let mut filtered: Vec<WorkItem> = Vec::new();
         for sid in &candidate_ids {
-            let session = match db.get_session_for_embedding(sid) {
+            let session = match load_session_with_vault_fallback(&db, &vault_root, sid) {
                 Ok(s) => s,
                 Err(_) => {
                     // surface failure in the embed pass (worker reload path)
@@ -108,6 +149,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
             let db_path = Arc::clone(&db_path);
             let counter = Arc::clone(&counter);
             let total_chunks = Arc::clone(&total_chunks);
+            let vault_root = Arc::clone(&vault_root);
             async move {
                 let sid = item.id().to_string();
                 let short = &sid[..sid.len().min(8)];
@@ -132,7 +174,7 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
                                 return;
                             }
                         }
-                        match db.get_session_for_embedding(&sid) {
+                        match load_session_with_vault_fallback(&db, &vault_root, &sid) {
                             Ok(s) => s,
                             Err(e) => {
                                 let i = counter.fetch_add(1, Ordering::Relaxed) + 1;
