@@ -30,12 +30,14 @@ secall serve --allow-config-edit
 
 | 엔드포인트 | 설명 |
 | --- | --- |
-| `GET /api/recall` | 세션 검색 (BM25 / 벡터 / hybrid) |
-| `GET /api/get` | 특정 세션 조회 |
+| `POST /api/recall` | 세션 검색 (BM25 / 벡터 / hybrid) |
+| `POST /api/get` | 특정 세션 조회 |
 | `GET /api/status` | 인덱스 상태 |
-| `GET /api/daily` | 데일리 노트 |
-| `GET /api/graph` | Knowledge Graph 조회 |
-| `GET /api/wiki` | 위키 검색 |
+| `POST /api/daily` | 데일리 노트 |
+| `POST /api/graph` | Knowledge Graph 조회 |
+| `GET /api/graph/snapshot` | Knowledge Graph 스냅샷 (edge_limit + 우선순위 sampling) |
+| `POST /api/wiki` | 위키 검색 |
+| `GET /api/wiki` | 위키 목록 |
 | `GET /api/wiki/{project}` | 위키 본문 |
 
 ### 세션 메타
@@ -49,6 +51,7 @@ secall serve --allow-config-edit
 | `PATCH /api/sessions/{id}/tags` | 태그 편집 |
 | `PATCH /api/sessions/{id}/favorite` | 즐겨찾기 토글 |
 | `PATCH /api/sessions/{id}/notes` | 세션 노트 저장 |
+| `DELETE /api/sessions/{id}` | 세션 완전 삭제 (#108) |
 
 ### 설정
 
@@ -56,6 +59,7 @@ secall serve --allow-config-edit
 | --- | --- |
 | `GET /api/config` | 설정 조회 |
 | `PATCH /api/config/{section}` | 설정 수정 (`--allow-config-edit` 필요, secret 키는 응답/저장에서 필터) |
+| `GET /api/models?backend={name}&force={true\|false}` | 백엔드별 사용 가능 모델 목록 |
 
 ### 명령 (비동기 Job)
 
