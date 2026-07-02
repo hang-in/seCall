@@ -27,14 +27,13 @@ impl WikiBackend for ClaudeBackend {
             );
         }
 
-        // P56: review default (WIKI_REVIEW_DEFAULT="haiku") 가 claude CLI 에서
-        // 의도대로 동작하도록 alias 추가. 이전엔 "haiku" → fallback sonnet 으로
-        // 매핑되어 review default 효과 없었음.
-        let model_id = match self.model.as_str() {
-            "opus" => "claude-opus-4-6",
-            "haiku" => "claude-haiku-4-5",
-            _ => "claude-sonnet-4-6",
-        };
+        // model 문자열을 Claude Code CLI 에 그대로 전달한다. CLI 가 alias
+        // ("sonnet"/"opus"/"haiku" → 각 tier 최신) 와 full model id 를 자체
+        // 해석하므로, seCall 이 특정 버전으로 하드코딩 매핑하지 않는다.
+        // (이전엔 catch-all 이 "sonnet" 등 모든 값을 claude-sonnet-4-6 으로
+        //  삼켜 Sonnet 5 등 신규 모델 선택이 불가능했다. pass-through 로
+        //  CLI 의 최신-tier 해석 + 명시 model id 지정을 모두 허용.)
+        let model_id = self.model.as_str();
 
         let mut child = tokio::process::Command::new(crate::resolve_program("claude"))
             .args(["-p", "--model", model_id])
