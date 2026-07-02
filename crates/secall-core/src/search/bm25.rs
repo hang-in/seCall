@@ -126,7 +126,9 @@ impl Bm25Indexer {
         limit: usize,
         filters: &SearchFilters,
     ) -> Result<Vec<SearchResult>> {
-        let tokenized_query = self.tokenizer.tokenize_for_fts(query);
+        // 질의는 fts_query (OR + prefix + 외래어 음역 alias) 로 확장한다.
+        // 색인은 tokenize_for_fts (형태소) 그대로라 재색인 불요.
+        let tokenized_query = self.tokenizer.fts_query(query);
         if tokenized_query.is_empty() {
             return Ok(Vec::new());
         }
