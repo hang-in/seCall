@@ -104,6 +104,7 @@
 - PR #108 — web UI 세션 삭제 (외부 기여 kainy21, Windows 에서 머지)
 - PR #115 — zero-turn 세션 비파괴 healing (`reindex --repair-missing-turns` + embed vault 폴백 + 경로 canonical, Gemini 리뷰 3건 반영)
 - PR #116 — README 슬림화(798→729줄) + API 문서 분리(`docs/reference/api.md`) + 버전이력 CHANGELOG 통합
+- CodeRabbit 자동 PR 리뷰 도입 — Gemini Code Assist 2026-07-17 종료 대체 (공개 레포 무료). PR #117 로 동작 검증 (CodeRabbit + Gemini 둘 다 동일 SSE 오류 잡음). **P3 해결.**
 
 ### In Progress
 - (없음) — Open PR 없음. 다음 우선순위는 §8 참고.
@@ -119,7 +120,8 @@
 
 1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1, 최신 맥락: `handoff_2026-07-02.md`)
 2. (P2) 테스트 갭 대응 — REST API DTO/라우터 등 미테스트 46건
-3. (P3) Gemini Code Assist 리뷰 봇 2026-07-17 종료 대비 — PR 리뷰 수단 대안 결정
+
+> (해결) ~~P3 Gemini Code Assist 7/17 종료 대비~~ → **CodeRabbit 도입으로 대체** (공개 레포 무료, PR #117 검증). Gemini 는 7/17 자연 종료 예정 — 별도 제거 불필요.
 
 ---
 
