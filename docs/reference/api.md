@@ -26,6 +26,8 @@ secall serve --port 8080
 secall serve --allow-config-edit
 ```
 
+> 모든 응답 본문은 JSON 이다. 오류는 표준 HTTP 상태코드 + `{ "error": "..." }` 형태로 반환된다.
+
 ### 읽기 / 검색
 
 | 엔드포인트 | 설명 |
