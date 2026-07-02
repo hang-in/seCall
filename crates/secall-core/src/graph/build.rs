@@ -41,7 +41,7 @@ pub fn build_graph(
     since: Option<&str>,
     force: bool,
 ) -> Result<BuildResult> {
-    let sessions_dir = vault_path.join("raw").join("sessions");
+    let sessions_dir = crate::vault::sessions_subdir(vault_path);
     if !sessions_dir.exists() {
         return Ok(BuildResult::default());
     }
@@ -237,7 +237,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn write_session_md(dir: &Path, session_id: &str, date: &str, project: &str) {
-        let date_dir = dir.join("raw").join("sessions").join(date);
+        let date_dir = crate::vault::sessions_subdir(dir).join(date);
         std::fs::create_dir_all(&date_dir).unwrap();
         let path = date_dir.join(format!("{}.md", session_id));
         let content = format!(

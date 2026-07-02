@@ -62,7 +62,7 @@ pub fn run() -> Result<()> {
     println!();
 
     // Vault status
-    let sessions_dir = config.vault.path.join("raw").join("sessions");
+    let sessions_dir = secall_core::vault::sessions_subdir(&config.vault.path);
     if sessions_dir.exists() {
         let md_count = walkdir::WalkDir::new(&sessions_dir)
             .into_iter()

@@ -59,6 +59,124 @@ pub fn extract_body_text(content: &str) -> String {
         .to_string()
 }
 
+/// vault 세션 Markdown 본문을 turn 단위로 역파싱한다 (`render_session` 의 역방향).
+///
+/// 헤딩 규칙:
+/// - `## Turn N — Role` → turn (index=N-1, role=Role)
+/// - `### Turn N` → 직전 turn 의 role 을 상속 (P49 연속 role 헤더 축약의 역)
+///
+/// 본문(thinking/tool callout 포함)은 검색 가능한 텍스트 그대로 content 에 보존한다.
+/// frontmatter 및 첫 turn 이전 영역(세션 요약 등)은 turn content 에 포함하지 않는다.
+///
+/// 주의: 렌더링은 lossy 하다 (`escape_dataview_fields` 의 zero-width space 삽입,
+/// `collapse_blank_lines`, tool 출력 `TOOL_OUTPUT_MAX_CHARS` 절단). 따라서 복원된
+/// turn 은 원본과 byte-identical 하지 않은 **재구성본**이며 FTS/임베딩 검색 목적에
+/// 한해 유효하다. CRLF/LF 모두 지원하며 malformed 헤딩은 panic 없이 처리한다.
+pub fn parse_session_turns(content: &str) -> crate::error::Result<Vec<super::types::Turn>> {
+    use super::types::Turn;
+
+    // CRLF/LF normalize 후 frontmatter 제거
+    let normalized = content.replace("\r\n", "\n");
+    let body = normalized
+        .split_once("\n---\n")
+        .map(|(_, b)| b)
+        .unwrap_or(normalized.as_str());
+
+    let mut turns: Vec<Turn> = Vec::new();
+    // (index, role, content lines)
+    let mut cur: Option<(u32, Role, Vec<String>)> = None;
+    let mut last_role: Option<Role> = None;
+    let mut in_code_block = false;
+
+    fn flush(cur: &mut Option<(u32, Role, Vec<String>)>, turns: &mut Vec<Turn>) {
+        if let Some((index, role, lines)) = cur.take() {
+            let content = lines.join("\n").trim().to_string();
+            turns.push(Turn {
+                index,
+                role,
+                timestamp: None,
+                content,
+                actions: Vec::new(),
+                tokens: None,
+                thinking: None,
+                is_sidechain: false,
+            });
+        }
+    }
+
+    for line in body.lines() {
+        // fenced code block 토글 — 코드블록 내부의 "## Turn"/"### Turn" 라인을
+        // 실제 turn 헤더로 오인하지 않도록 추적한다 (세션 본문이 vault 포맷을
+        // 코드블록으로 인용하는 메타 세션에서 오파싱 방지).
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            if let Some((_, _, lines)) = cur.as_mut() {
+                lines.push(line.to_string());
+            }
+            continue;
+        }
+        if in_code_block {
+            if let Some((_, _, lines)) = cur.as_mut() {
+                lines.push(line.to_string());
+            }
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("## Turn ") {
+            match parse_turn_heading_h2(rest) {
+                Some((n, role)) => {
+                    flush(&mut cur, &mut turns);
+                    last_role = Some(role);
+                    cur = Some((n.saturating_sub(1), role, Vec::new()));
+                }
+                // malformed h2 헤딩: 유실 방지 위해 현재 turn 본문으로 취급
+                None => {
+                    if let Some((_, _, lines)) = cur.as_mut() {
+                        lines.push(line.to_string());
+                    }
+                }
+            }
+        } else if let Some(rest) = line.strip_prefix("### Turn ") {
+            match parse_turn_heading_h3(rest) {
+                Some(n) => {
+                    let role = last_role.unwrap_or(Role::User);
+                    flush(&mut cur, &mut turns);
+                    cur = Some((n.saturating_sub(1), role, Vec::new()));
+                }
+                None => {
+                    if let Some((_, _, lines)) = cur.as_mut() {
+                        lines.push(line.to_string());
+                    }
+                }
+            }
+        } else if let Some((_, _, lines)) = cur.as_mut() {
+            lines.push(line.to_string());
+        }
+        // 첫 turn 헤딩 이전 라인(요약/헤더)은 무시
+    }
+    flush(&mut cur, &mut turns);
+
+    Ok(turns)
+}
+
+/// `## Turn ` 접두 제거 후 나머지("N — Role" 또는 "N — Role (HH:MM)")에서 (N, Role) 추출.
+fn parse_turn_heading_h2(rest: &str) -> Option<(u32, Role)> {
+    let (num_part, role_part) = rest.split_once(" — ")?;
+    let n: u32 = num_part.trim().parse().ok()?;
+    let role = match role_part.split_whitespace().next()? {
+        "User" => Role::User,
+        "Assistant" => Role::Assistant,
+        "System" => Role::System,
+        _ => return None,
+    };
+    Some((n, role))
+}
+
+/// `### Turn ` 접두 제거 후 나머지("N" 또는 "N (HH:MM)")에서 N 추출.
+fn parse_turn_heading_h3(rest: &str) -> Option<u32> {
+    rest.split_whitespace().next()?.parse().ok()
+}
+
 const TOOL_OUTPUT_MAX_CHARS: usize = 500;
 
 /// Render a Session to Obsidian-compatible Markdown string
@@ -881,5 +999,89 @@ mod tests {
             md.contains("## Turn 4 — User"),
             "role change back to User must emit h2 again"
         );
+    }
+
+    // ─── parse_session_turns (역파서) ──────────────────────────────────────────
+
+    #[test]
+    fn parse_h2_role_and_index() {
+        // `## Turn N — Role` 에서 role 과 index(0-based) 복원
+        let md = "---\nsession_id: x\n---\n\n## Turn 1 — User\n\nhello\n\n## Turn 2 — Assistant\n\nhi there\n";
+        let turns = parse_session_turns(md).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].index, 0);
+        assert_eq!(turns[0].role, Role::User);
+        assert_eq!(turns[0].content, "hello");
+        assert_eq!(turns[1].index, 1);
+        assert_eq!(turns[1].role, Role::Assistant);
+        assert_eq!(turns[1].content, "hi there");
+    }
+
+    #[test]
+    fn parse_h3_inherits_previous_role() {
+        // 연속 role 의 `### Turn N` 은 직전 role 을 상속
+        let md = "---\ns: 1\n---\n\n## Turn 2 — Assistant\n\nfirst\n\n### Turn 3\n\nsecond\n";
+        let turns = parse_session_turns(md).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].index, 2);
+        assert_eq!(turns[1].role, Role::Assistant, "h3 must inherit prior role");
+        assert_eq!(turns[1].content, "second");
+    }
+
+    #[test]
+    fn parse_supports_crlf() {
+        let md = "---\r\ns: 1\r\n---\r\n\r\n## Turn 1 — User\r\n\r\nline a\r\nline b\r\n";
+        let turns = parse_session_turns(md).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].role, Role::User);
+        assert_eq!(turns[0].content, "line a\nline b");
+    }
+
+    #[test]
+    fn parse_excludes_frontmatter_and_summary() {
+        // 첫 `## Turn` 이전 영역(요약 blockquote 등)은 turn content 에 포함되지 않음
+        let md = "---\ns: 1\n---\n\n> **프로젝트**: p | **브랜치**: main\n\n## Turn 1 — User\n\nreal content\n";
+        let turns = parse_session_turns(md).unwrap();
+        assert_eq!(turns.len(), 1);
+        assert!(!turns[0].content.contains("프로젝트"));
+        assert_eq!(turns[0].content, "real content");
+    }
+
+    #[test]
+    fn parse_malformed_heading_no_panic() {
+        // `## Turn abc — User` 는 숫자 파싱 실패 → panic 없이 본문 취급
+        let md = "---\ns: 1\n---\n\n## Turn 1 — User\n\nbody\n\n## Turn abc — User\ntrailing\n";
+        let turns = parse_session_turns(md).unwrap();
+        assert_eq!(turns.len(), 1, "malformed heading must not create a turn");
+        assert!(turns[0].content.contains("body"));
+    }
+
+    #[test]
+    fn parse_roundtrip_from_render() {
+        // render_session → parse_session_turns 왕복: 개수/role/index 보존
+        let turns = vec![
+            make_turn(Role::User, "question one"),
+            make_turn(Role::Assistant, "answer one"),
+            make_turn(Role::Assistant, "answer one cont"),
+            make_turn(Role::User, "question two"),
+        ];
+        // make_turn 은 index 를 세팅하지 않으므로 명시적으로 부여
+        let turns: Vec<Turn> = turns
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut t)| {
+                t.index = i as u32;
+                t
+            })
+            .collect();
+        let session = make_session(turns.clone());
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        let parsed = parse_session_turns(&md).unwrap();
+        assert_eq!(parsed.len(), turns.len());
+        for (orig, got) in turns.iter().zip(parsed.iter()) {
+            assert_eq!(orig.index, got.index);
+            assert_eq!(orig.role, got.role);
+            assert!(got.content.contains(&orig.content));
+        }
     }
 }
