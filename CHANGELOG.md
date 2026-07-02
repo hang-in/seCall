@@ -1,6 +1,6 @@
 # Changelog
 
-> NOTE: v0.3.x ~ v0.4.x 의 상세 변경 이력은 `README.md` 의 "버전 히스토리" 표 참고. CHANGELOG.md 는 v0.2.x 시점에서 README 로 SSOT 이전됨.
+> NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
 ## v0.6.4 (2026-06-28)
 
@@ -139,6 +139,25 @@ P49 ~ P55 누적 — 데이터 품질 / 클라우드 LLM 통합 / 거대 함수 
 - log diary cloud: kimi-k2.6:cloud 15s 한국어 일기 정상
 - wiki claude CLI 5분 hang → P52 timeout 정확히 300s 발동 + SIGKILL 차단
 - embed 1240/26946 chunks 정상 (local Ollama)
+
+## v0.3.0 – v0.4.x + 개발 Phase (2026-04 ~ 2026-05)
+
+> 이 구간(v0.3.x · v0.4.0 및 개발 Phase P35~P44)은 이전에 README "버전 히스토리" 표로만 관리되었다. CHANGELOG 단일 SSOT 통합 시 이관 (2026-07-02).
+
+| 날짜 | 버전 / Phase | 요약 |
+| --- | --- | --- |
+| 2026-05-10 | P44 | Wiki cross-host merge, `--no-pull`, sources 합집합 기반 자동 재생성 |
+| 2026-05-09 | P43 | Wiki review backend 확장, config 주석 보존 |
+| 2026-05-09 | P41 | LLM 설정 통합, `/api/config`, Web `/settings` |
+| 2026-05-06 | P40 | Wiki 검색 hybrid 모드, wiki vectorize, page-level embedding |
+| 2026-05-03 | P38 | REST route와 session repo 테스트 보강 |
+| 2026-05-03 | P37 | Graph rebuild CLI / REST / Web UI 추가 |
+| 2026-05-02 | P36 | Job cancellation 추가 |
+| 2026-05-02 | P35 | Web UI 성능 개선, tags API, 무한 스크롤, code split |
+| 2026-05-02 | v0.4.0 | Web UI 명령 실행, Job 시스템, SSE 진행 표시 |
+| 2026-04-17 | v0.3.3 | LM Studio backend, `sync --no-semantic`, Gemini Web ZIP ingest |
+| 2026-04-15 | v0.3.2 | Gemini API backend, REST API, Obsidian plugin, 작업 일기 |
+| 2026-04-12 | v0.3.0 | 세션 분류, 위키 backend 확장, automated 세션 필터 |
 
 ## v0.2.3 (2026-04-09)
 
