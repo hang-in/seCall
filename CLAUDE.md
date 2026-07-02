@@ -100,9 +100,13 @@
 - P25 Phase 2 — 데일리 노트 자동 생성 + Graph 탐색 뷰 (PR #27)
 - P27 — BM25-only 선택 시 graph semantic 자동 비활성화 (#25 fix, PR #27)
 - wiki 기본 생성 백엔드 claude → codex 강등 (claude -p 막힘 + 빌링 fragile, claude 코드는 유지, PR #111)
+- v0.6.4 릴리스 — sync 시맨틱 추출 진행 CLI 출력(#112) + codex 기본값(#111) 포함 (#113, tag v0.6.4)
+- PR #108 — web UI 세션 삭제 (외부 기여 kainy21, Windows 에서 머지)
+- PR #115 — zero-turn 세션 비파괴 healing (`reindex --repair-missing-turns` + embed vault 폴백 + 경로 canonical, Gemini 리뷰 3건 반영)
+- PR #116 — README 슬림화(798→729줄) + API 문서 분리(`docs/reference/api.md`) + 버전이력 CHANGELOG 통합
 
 ### In Progress
-- PR #108 (외부 기여, kainy21) — web UI 세션 삭제: "archive 전환" 요청 리뷰 게시 후 저자 응답 대기
+- (없음) — Open PR 없음. 다음 우선순위는 §8 참고.
   (P26 Gemini API 백엔드는 폐기 — PR #110 에서 dead doc 잔재까지 제거됨)
 
 ### Known Issues
@@ -113,7 +117,7 @@
 
 ## 8. Next Priorities
 
-1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1, 최신 맥락: `handoff_2026-06-27.md`)
+1. (P1) 배포방법 고도화 — Linux 바이너리 / cargo-binstall / 체크섬 검증 등 (상세: `docs/reference/handoff_2026-06-26.md` §3.1, 최신 맥락: `handoff_2026-07-02.md`)
 2. (P2) 테스트 갭 대응 — REST API DTO/라우터 등 미테스트 46건
 3. (P3) Gemini Code Assist 리뷰 봇 2026-07-17 종료 대비 — PR 리뷰 수단 대안 결정
 
