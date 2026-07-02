@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use axum::{extract::State, routing::post, Json, Router};
 use secall_core::{
@@ -6,20 +6,27 @@ use secall_core::{
         tools::{WikiSearchMode, WikiSearchParams},
         SeCallMcpServer,
     },
-    search::{Bm25Indexer, LinderaKoTokenizer, SearchEngine},
+    search::{
+        vector::VectorIndexer, Bm25Indexer, LinderaKoTokenizer, OllamaEmbedder, SearchEngine,
+    },
     store::{Database, WikiVectorRepo},
 };
 use serde_json::json;
-use tokio::sync::Mutex as TokioMutex;
 
-fn env_lock() -> &'static TokioMutex<()> {
-    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| TokioMutex::new(()))
-}
-
-fn make_server(vault_path: &std::path::Path, db: Database) -> SeCallMcpServer {
+/// 쿼리 임베딩용 벡터 인덱서를 stub ollama(embed_url)로 구성해 서버를 만든다.
+/// embed_url=None 이면 벡터 검색 비활성(키워드 전용).
+///
+/// (#121 이후 위키 시맨틱 검색은 env(OLLAMA_BASE_URL) 가 아니라 `SearchEngine` 의 config
+/// 벡터 인덱서 경로로 쿼리를 임베딩하므로, 테스트도 stub 을 인덱서로 주입한다.)
+fn make_server(
+    vault_path: &std::path::Path,
+    db: Database,
+    embed_url: Option<&str>,
+) -> SeCallMcpServer {
     let tok = LinderaKoTokenizer::new().expect("tokenizer init");
-    let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), None);
+    let vector =
+        embed_url.map(|url| VectorIndexer::new(Box::new(OllamaEmbedder::new(Some(url), None))));
+    let engine = SearchEngine::new(Bm25Indexer::new(Box::new(tok)), vector);
     SeCallMcpServer::new(
         Arc::new(Mutex::new(db)),
         Arc::new(engine),
@@ -70,7 +77,7 @@ fn test_keyword_mode_default_when_mode_none() {
         "# Keyword Page\n\nrust exact keyword match",
     );
 
-    let server = make_server(tmp.path(), Database::open_memory().expect("db"));
+    let server = make_server(tmp.path(), Database::open_memory().expect("db"), None);
     let json = server
         .do_wiki_search(WikiSearchParams {
             query: "keyword".to_string(),
@@ -86,7 +93,6 @@ fn test_keyword_mode_default_when_mode_none() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_semantic_mode_returns_results() {
-    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
@@ -105,10 +111,8 @@ async fn test_semantic_mode_returns_results() {
 
     let embeddings = Arc::new(Mutex::new(vec![vec![1.0, 0.0, 0.0, 0.0]]));
     let (base_url, handle) = start_embed_stub(embeddings).await;
-    std::env::set_var("OLLAMA_BASE_URL", &base_url);
-    std::env::remove_var("OLLAMA_EMBED_MODEL");
 
-    let server = make_server(tmp.path(), db);
+    let server = make_server(tmp.path(), db, Some(&base_url));
     let json = server
         .do_wiki_search(WikiSearchParams {
             query: "git automation".to_string(),
@@ -119,7 +123,6 @@ async fn test_semantic_mode_returns_results() {
         .expect("semantic search");
 
     handle.abort();
-    std::env::remove_var("OLLAMA_BASE_URL");
 
     assert_eq!(json["count"], 1);
     assert_eq!(json["results"][0]["path"], "wiki/projects/semantic.md");
@@ -127,7 +130,6 @@ async fn test_semantic_mode_returns_results() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hybrid_mode_combines_both() {
-    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
@@ -158,9 +160,8 @@ async fn test_hybrid_mode_combines_both() {
 
     let embeddings = Arc::new(Mutex::new(vec![vec![1.0, 0.0, 0.0, 0.0]]));
     let (base_url, handle) = start_embed_stub(embeddings).await;
-    std::env::set_var("OLLAMA_BASE_URL", &base_url);
 
-    let server = make_server(tmp.path(), db);
+    let server = make_server(tmp.path(), db, Some(&base_url));
     let json = server
         .do_wiki_search(WikiSearchParams {
             query: "git 자동화".to_string(),
@@ -171,7 +172,6 @@ async fn test_hybrid_mode_combines_both() {
         .expect("hybrid search");
 
     handle.abort();
-    std::env::remove_var("OLLAMA_BASE_URL");
 
     let paths: Vec<String> = json["results"]
         .as_array()
@@ -189,7 +189,6 @@ async fn test_hybrid_mode_combines_both() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_semantic_fallback_on_embed_failure() {
-    let _guard = env_lock().lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     write_page(
         &tmp,
@@ -197,8 +196,12 @@ async fn test_semantic_fallback_on_embed_failure() {
         "# Fallback\n\ngit 자동화 fallback keyword result",
     );
 
-    std::env::set_var("OLLAMA_BASE_URL", "http://127.0.0.1:9");
-    let server = make_server(tmp.path(), Database::open_memory().expect("db"));
+    // 도달 불가한 임베더 → embed 실패 → do_wiki_search 가 keyword 로 폴백.
+    let server = make_server(
+        tmp.path(),
+        Database::open_memory().expect("db"),
+        Some("http://127.0.0.1:9"),
+    );
     let json = server
         .do_wiki_search(WikiSearchParams {
             query: "fallback".to_string(),
@@ -207,7 +210,6 @@ async fn test_semantic_fallback_on_embed_failure() {
             mode: Some(WikiSearchMode::Semantic),
         })
         .expect("fallback search");
-    std::env::remove_var("OLLAMA_BASE_URL");
 
     assert_eq!(json["count"], 1);
     assert_eq!(json["results"][0]["path"], "wiki/projects/fallback.md");
