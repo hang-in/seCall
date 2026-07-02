@@ -183,18 +183,24 @@ fn heal_session(
         return Ok(0);
     }
 
-    // FTS 재삽입 전 기존 행 제거 (legacy blob + 재실행 중복 방지)
-    db.clear_session_fts(session_id)?;
+    // 모든 DB 쓰기를 트랜잭션으로 묶어 원자성 보장 — 중간 실패로 turn 일부만
+    // 삽입되면 count>0 이 되어 다음 실행에서 영구 skip 되는 버그를 차단한다.
+    db.with_transaction(|| {
+        // FTS 재삽입 전 기존 행 제거 (legacy blob + 재실행 중복 방지)
+        db.clear_session_fts(session_id)?;
 
-    for turn in &turns {
-        let tokenized = tokenizer.tokenize_for_fts(&turn.content);
-        // insert_turn 은 INSERT OR IGNORE (UNIQUE(session_id, turn_index)) 라 멱등.
-        db.insert_turn(session_id, turn)?;
-        db.insert_fts(&tokenized, session_id, turn.index)?;
-    }
+        for turn in &turns {
+            let tokenized = tokenizer.tokenize_for_fts(&turn.content);
+            // insert_turn 은 INSERT OR IGNORE (UNIQUE(session_id, turn_index)) 라 멱등.
+            db.insert_turn(session_id, turn)?;
+            db.insert_fts(&tokenized, session_id, turn.index)?;
+        }
 
-    // vault_path 를 실제 파일 경로로 정정 (legacy 백슬래시/무점 경로 교체).
-    db.update_session_vault_path(session_id, vault_rel_path)?;
+        // vault_path 를 실제 파일 경로로 정정 (legacy 백슬래시/무점 경로 교체).
+        db.update_session_vault_path(session_id, vault_rel_path)?;
+
+        Ok(())
+    })?;
 
     Ok(turns.len())
 }

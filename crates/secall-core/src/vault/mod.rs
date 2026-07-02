@@ -73,6 +73,11 @@ pub fn resolve_session_file(
 
     // (3) prefix 탐색
     let short = &session_id[..session_id.len().min(8)];
+    // 빈 session_id 방어: short 가 "" 이면 fname.contains("") 가 항상 true 라
+    // 전체 .md 가 매칭되어 ambiguous/오탐 → 즉시 not-found 로 종료.
+    if short.is_empty() {
+        return Err(crate::SecallError::SessionNotFound(session_id.to_string()));
+    }
     let sessions_dir = sessions_subdir(vault_path);
     let mut matches: Vec<PathBuf> = Vec::new();
     if sessions_dir.exists() {

@@ -100,3 +100,19 @@ fn healthy_session_turns_are_preserved() {
         "OR IGNORE keeps existing turns"
     );
 }
+
+#[test]
+fn turn_headers_inside_code_block_are_not_parsed_as_turns() {
+    // 세션 본문이 vault 포맷을 코드블록으로 인용할 때(메타 세션), 코드블록 내부의
+    // "## Turn"/"### Turn" 라인을 실제 turn 헤더로 오인하면 안 된다.
+    let md = "---\nsession_id: s1\n---\n\n## Turn 1 — User\n\n포맷 예시:\n\n```md\n## Turn 99 — Assistant\n### Turn 100\n```\n\n실제 turn 은 2개.\n\n## Turn 2 — Assistant\n\nanswer\n";
+    let turns = parse_session_turns(md).unwrap();
+    assert_eq!(
+        turns.len(),
+        2,
+        "코드블록 내부의 turn 헤더는 turn 으로 세지 않는다"
+    );
+    // 코드블록 원문은 첫 turn 본문에 보존된다.
+    assert!(turns[0].content.contains("## Turn 99 — Assistant"));
+    assert!(turns[0].content.contains("### Turn 100"));
+}

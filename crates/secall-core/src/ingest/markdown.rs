@@ -86,6 +86,7 @@ pub fn parse_session_turns(content: &str) -> crate::error::Result<Vec<super::typ
     // (index, role, content lines)
     let mut cur: Option<(u32, Role, Vec<String>)> = None;
     let mut last_role: Option<Role> = None;
+    let mut in_code_block = false;
 
     fn flush(cur: &mut Option<(u32, Role, Vec<String>)>, turns: &mut Vec<Turn>) {
         if let Some((index, role, lines)) = cur.take() {
@@ -104,6 +105,23 @@ pub fn parse_session_turns(content: &str) -> crate::error::Result<Vec<super::typ
     }
 
     for line in body.lines() {
+        // fenced code block 토글 — 코드블록 내부의 "## Turn"/"### Turn" 라인을
+        // 실제 turn 헤더로 오인하지 않도록 추적한다 (세션 본문이 vault 포맷을
+        // 코드블록으로 인용하는 메타 세션에서 오파싱 방지).
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            if let Some((_, _, lines)) = cur.as_mut() {
+                lines.push(line.to_string());
+            }
+            continue;
+        }
+        if in_code_block {
+            if let Some((_, _, lines)) = cur.as_mut() {
+                lines.push(line.to_string());
+            }
+            continue;
+        }
+
         if let Some(rest) = line.strip_prefix("## Turn ") {
             match parse_turn_heading_h2(rest) {
                 Some((n, role)) => {
