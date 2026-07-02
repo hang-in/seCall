@@ -14,7 +14,6 @@ use super::tools::{
 };
 use crate::search::bm25::{SearchFilters, SearchResult};
 use crate::search::hybrid::{diversify_by_session, parse_temporal_filter, SearchEngine};
-use crate::search::{Embedder, OllamaEmbedder};
 use crate::store::db::Database;
 use crate::store::{SessionRepo, WikiVectorRepo};
 use crate::vault::Config;
@@ -755,11 +754,12 @@ impl SeCallMcpServer {
             return Ok(Vec::new());
         }
 
-        let query_embedding = {
-            let base_url = std::env::var("OLLAMA_BASE_URL").ok();
-            let model = std::env::var("OLLAMA_EMBED_MODEL").ok();
-            let embedder = OllamaEmbedder::new(base_url.as_deref(), model.as_deref());
-            run_future_blocking(embedder.embed(&params.query))?
+        // 세션 recall(do_recall)과 동일하게 config 임베딩 경로(SearchEngine::embed_query)를 사용한다.
+        // (기존엔 OLLAMA_EMBED_MODEL env / OllamaEmbedder 기본값(bge-m3)으로 쿼리를 임베딩해,
+        //  config(qwen) 로 vectorize 된 wiki_vectors 와 교차모델 불일치 → 시맨틱 위키검색이 무의미했음)
+        let query_embedding = match run_future_blocking(self.search.embed_query(&params.query))? {
+            Some(vec) => vec,
+            None => return Ok(Vec::new()),
         };
 
         let category_prefix = params
