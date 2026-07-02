@@ -36,6 +36,14 @@ pub struct RelatedSession {
     pub score: f32,
 }
 
+/// `?start, ?start+1, ...` SQL 플레이스홀더 생성 (동적 IN 절용).
+fn sql_placeholders(start: usize, count: usize) -> String {
+    (start..start + count)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl Database {
     /// 노드 upsert (INSERT OR REPLACE)
     pub fn upsert_graph_node(
@@ -250,7 +258,7 @@ impl Database {
     /// - `max_hops`: 최대 탐색 깊이 (1~3, 기본 2)
     /// - `limit`: 반환할 최대 관련 세션 수
     ///
-    /// 반환값은 hop_count 오름차순 → 동일 hop에서 relation 알파벳 순으로 정렬.
+    /// 반환값은 Adamic-Adar 관련도 점수 내림차순(공유 엔티티 강도) → 동점은 hop → session_id 순.
     /// seed 세션 자신은 결과에서 제외.
     pub fn get_related_sessions(
         &self,
@@ -411,60 +419,82 @@ impl Database {
         seed_set: &std::collections::HashSet<String>,
         candidate_nodes: &[String],
     ) -> Result<HashMap<String, f32>> {
-        // 1. 시드 엔티티별 weight (deg>=2 만; deg=1 은 공유 대상 없음이고 ln(1)=0)
-        let mut ent_weight: HashMap<String, f64> = HashMap::new();
-        for seed in seed_set {
-            for z in self.entity_neighbors(seed)? {
-                if ent_weight.contains_key(&z) {
-                    continue;
-                }
-                let deg = self.entity_session_degree(&z)?;
-                if deg >= 2 {
-                    ent_weight.insert(z, 1.0 / (deg as f64).ln());
-                }
-            }
+        // 배치 3쿼리로 N+1 회피: (1) 시드 엔티티 → (2) degree/weight → (3) 후보 연결 누적.
+        if candidate_nodes.is_empty() {
+            return Ok(HashMap::new());
         }
+
+        // 1. 시드 엔티티 (session/agent 제외) — 1 쿼리
+        let seeds: Vec<&String> = seed_set.iter().collect();
+        let seed_entities: Vec<String> = {
+            let sql = format!(
+                "SELECT DISTINCT target FROM graph_edges \
+                 WHERE source IN ({}) \
+                   AND target NOT LIKE 'session:%' AND target NOT LIKE 'agent:%'",
+                sql_placeholders(1, seeds.len())
+            );
+            let mut stmt = self.conn().prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::types::ToSql> = seeds
+                .iter()
+                .map(|s| *s as &dyn rusqlite::types::ToSql)
+                .collect();
+            let rows = stmt.query_map(params.as_slice(), |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        if seed_entities.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // 2. 시드 엔티티별 degree(연결된 distinct 세션 수) → weight (deg>=2 만) — 1 GROUP BY 쿼리
+        let ent_weight: HashMap<String, f64> = {
+            let sql = format!(
+                "SELECT target, COUNT(DISTINCT source) FROM graph_edges \
+                 WHERE target IN ({}) AND source LIKE 'session:%' GROUP BY target",
+                sql_placeholders(1, seed_entities.len())
+            );
+            let mut stmt = self.conn().prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::types::ToSql> = seed_entities
+                .iter()
+                .map(|s| s as &dyn rusqlite::types::ToSql)
+                .collect();
+            let rows = stmt.query_map(params.as_slice(), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })?;
+            rows.filter_map(|r| r.ok())
+                .filter(|(_, deg)| *deg >= 2)
+                .map(|(z, deg)| (z, 1.0 / (deg as f64).ln()))
+                .collect()
+        };
         if ent_weight.is_empty() {
             return Ok(HashMap::new());
         }
-        // 2. 후보별 공유 엔티티 weight 합
-        let mut scores: HashMap<String, f32> = HashMap::new();
+
+        // 3. 후보 ↔ 가중 시드엔티티 연결 — 1 쿼리, weight 누적
+        let weighted: Vec<&String> = ent_weight.keys().collect();
+        let sql = format!(
+            "SELECT source, target FROM graph_edges \
+             WHERE source IN ({}) AND target IN ({})",
+            sql_placeholders(1, candidate_nodes.len()),
+            sql_placeholders(candidate_nodes.len() + 1, weighted.len())
+        );
+        let mut stmt = self.conn().prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = Vec::new();
         for c in candidate_nodes {
-            let mut s = 0.0_f64;
-            for z in self.entity_neighbors(c)? {
-                if let Some(w) = ent_weight.get(&z) {
-                    s += w;
-                }
-            }
-            if s > 0.0 {
-                scores.insert(c.clone(), s as f32);
+            params.push(c as &dyn rusqlite::types::ToSql);
+        }
+        for z in &weighted {
+            params.push(*z as &dyn rusqlite::types::ToSql);
+        }
+        let mut scores: HashMap<String, f32> = HashMap::new();
+        let pairs = stmt.query_map(params.as_slice(), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for (cand, ent) in pairs.filter_map(|r| r.ok()) {
+            if let Some(w) = ent_weight.get(&ent) {
+                *scores.entry(cand).or_insert(0.0) += *w as f32;
             }
         }
         Ok(scores)
-    }
-
-    /// 노드의 엔티티 이웃 (session/agent 제외). 엣지는 session→entity(source=node) 방향.
-    fn entity_neighbors(&self, node: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn().prepare(
-            "SELECT target FROM graph_edges \
-             WHERE source = ?1 AND target NOT LIKE 'session:%' AND target NOT LIKE 'agent:%'",
-        )?;
-        let v = stmt
-            .query_map([node], |r| r.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-        Ok(v)
-    }
-
-    /// 엔티티 z 에 연결된 distinct 세션 수 (Adamic-Adar 의 deg).
-    fn entity_session_degree(&self, entity: &str) -> Result<usize> {
-        let n: i64 = self.conn().query_row(
-            "SELECT COUNT(DISTINCT source) FROM graph_edges \
-             WHERE target = ?1 AND source LIKE 'session:%'",
-            [entity],
-            |r| r.get(0),
-        )?;
-        Ok(n as usize)
     }
 
     /// 그래프 필터 조건에 해당하는 세션 ID 목록 반환.
