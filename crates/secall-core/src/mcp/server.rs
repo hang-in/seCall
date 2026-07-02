@@ -757,10 +757,11 @@ impl SeCallMcpServer {
         // 세션 recall(do_recall)과 동일하게 config 임베딩 경로(SearchEngine::embed_query)를 사용한다.
         // (기존엔 OLLAMA_EMBED_MODEL env / OllamaEmbedder 기본값(bge-m3)으로 쿼리를 임베딩해,
         //  config(qwen) 로 vectorize 된 wiki_vectors 와 교차모델 불일치 → 시맨틱 위키검색이 무의미했음)
-        let query_embedding = match run_future_blocking(self.search.embed_query(&params.query))? {
-            Some(vec) => vec,
-            None => return Ok(Vec::new()),
-        };
+        // None(벡터 백엔드 미설정) 시 에러 반환 → do_wiki_search 가 keyword 로 폴백 (Gemini #121 리뷰 반영).
+        let query_embedding = run_future_blocking(self.search.embed_query(&params.query))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("no vector embedding backend for semantic wiki search")
+            })?;
 
         let category_prefix = params
             .category

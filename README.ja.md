@@ -787,6 +787,7 @@ Claude Code 設定 (`~/.claude/settings.json`) に追加:
 
 | 日付 | バージョン/Phase | 変更内容 |
 |------|------|---------|
+| 2026-07-03 | **v0.6.5** | 検索品質の大幅改善 — 外来語 alias + OR/prefix FTS 質問 (#118)、デフォルト埋め込み → `qwen3-embedding:0.6b` (#120)、wiki セマンティック検索の config 経路修正 (#121)、zero-turn セッション healing (#115)、web UI セッション削除 (#108)、デッドリンク除去 (Closes #114)。**v0.6.1〜v0.6.4 と全詳細: [CHANGELOG.md](CHANGELOG.md)。** |
 | 2026-05-15 | **v0.5.0** | 累積 release (P49〜P56) — TMPDIR/secall-prompt ノイズの ingest 遮断 (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian 自動非表示、breaking)、`LlmBackend` trait + 4 バックエンド統合 (P50-B)、wiki/ingest 巨大関数の分解 (P50-C/D/E)、graph/log のデフォルトを `ollama_cloud` に (P51、breaking)、wiki 4 バックエンドの `generate()` に 300s timeout — `kill_on_drop` (P52)、wiki `--since` ターゲット表示の精度向上 (P53)、`secall lint --fix-orphan-vault` (P54)、`ollama_cloud` wiki review/generation バックエンド (P55)、`WikiBackendConfig.cloud_*` フィールド + claude CLI `haiku` alias (P56) |
 | 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` 起動時に自動 `auto_commit + pull`、`wiki/*.md` 衝突時は両方の `sources` 和集合ベースで自動再生成、`--no-pull` 追加、`merge_with_existing()` の本文累積を撤廃 |
 | 2026-05-09 | P43 (v0.4.0+) | Wiki review backend 拡張: `wiki update --review` が `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic` backend をサポート、`[wiki].review_backend` + `--review-backend` 追加、`toml_edit` ベースの config 保存でユーザーコメントを保持、`docs/reference/llm-config.md` 追加 |

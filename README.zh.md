@@ -787,6 +787,7 @@ secall serve --port 8080 --allow-config-edit
 
 | 日期 | 版本/Phase | 变更内容 |
 |------|------|---------|
+| 2026-07-03 | **v0.6.5** | 搜索质量大幅提升 — 外来语 alias + OR/prefix FTS 查询 (#118)、默认嵌入 → `qwen3-embedding:0.6b` (#120)、wiki 语义搜索 config 路径修复 (#121)、zero-turn 会话 healing (#115)、web UI 会话删除 (#108)、死链清理 (Closes #114)。**v0.6.1~v0.6.4 及完整详情: [CHANGELOG.md](CHANGELOG.md)。** |
 | 2026-05-15 | **v0.5.0** | 累积 release (P49~P56) — ingest 阶段过滤 TMPDIR/secall-prompt 噪声 (P49) + `raw/sessions/` → `raw/.sessions/` rename（obsidian 自动隐藏, breaking）, `LlmBackend` trait + 4 backend 统一 (P50-B), wiki/ingest 大函数拆解 (P50-C/D/E), graph/log 默认改为 `ollama_cloud` (P51, breaking), wiki 4 backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target 显示精确化 (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` 字段 + claude CLI `haiku` alias (P56) |
 | 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` 启动时自动 `auto_commit + pull`, `wiki/*.md` 冲突时基于两侧 `sources` 并集自动重新生成, 新增 `--no-pull`, 移除 `merge_with_existing()` 中正文累积逻辑 |
 | 2026-05-09 | P43 (v0.4.0+) | 扩展 Wiki review backend: `wiki update --review` 支持 `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic` backend, 新增 `[wiki].review_backend` + `--review-backend`, 基于 `toml_edit` 保存 config 时保留用户注释, 新增 `docs/reference/llm-config.md` |

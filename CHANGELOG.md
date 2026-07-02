@@ -2,6 +2,30 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.6.5 (2026-07-03)
+
+검색 품질 대폭 개선(외래어 검색 이식 + qwen 임베딩 전환 + 위키 시맨틱 버그픽스) + zero-turn 세션 healing + 웹 UI 세션 삭제.
+
+### ✨ Features
+
+- **외래어 음역 alias + OR/prefix 질의 확장** (#118, tunaRound 역이식): FTS 질의를 형태소 + raw 토큰 + 외래어 음역 alias 로 확장하고, 각 토큰에 prefix(`*`) + ` OR ` 조인. 교차스크립트(리프레시 ↔ refresh) 갭을 보강해 R@5 0.878 → 0.944 (tunaRound 벤치). FTS5 특수문자(`* + - . @ "`) 토큰 인용·이스케이프로 syntax error 방지 포함.
+- **기본 임베딩 모델 `bge-m3` → `qwen3-embedding:0.6b`** (#120): fresh 설치 기본 임베딩 전환. tunaRound 실코퍼스 벤치에서 MRR 우위(vecMRR 0.958 vs 0.903, hybMRR 1.000 vs 0.917), 둘 다 1024-dim 이라 드롭인. `ort`/`openvino` ONNX 경로는 `BAAI/bge-m3` 유지(qwen ONNX 미지원). 기존 설치는 config override 로 무영향.
+- **web UI 세션 삭제** (#108, 외부 기여 @kainy21): 웹 세션 목록에서 개별 세션 삭제.
+- **claude 백엔드 model 문자열 pass-through** (#119): `wiki update --backend claude --model <str>` 가 alias/full-id 를 그대로 전달.
+
+### 🐛 Fixes
+
+- **위키 시맨틱 검색 쿼리 임베딩 config 경로 통일** (#121, Gemini 리뷰 반영): `collect_semantic_matches` 가 쿼리를 `OLLAMA_EMBED_MODEL` env / OllamaEmbedder 기본값(bge-m3)으로 임베딩해, config(qwen)로 vectorize 된 `wiki_vectors` 와 교차모델 불일치 → 시맨틱/hybrid 위키검색이 무작위 랭킹(score ~0.02)을 반환하던 버그. 세션 검색과 동일한 config 경로(`SearchEngine::embed_query`)로 통일해 정상화(score 0.6~0.8, 정확한 페이지 top). 벡터 백엔드 미설정 시 keyword 로 폴백. MCP `wiki_search` + REST `/api/wiki` 공통.
+- **zero-turn 세션 비파괴 healing** (#115): `reindex --repair-missing-turns` + embed vault 폴백 + 경로 canonical 통일. 잘못 인덱싱된 zero-turn 세션(2399→1293)을 원본 파괴 없이 복구.
+- **죽은 참고 링크 제거** (#120, Closes #114, 제보 @jeonghyeon-net): 존재하지 않는 `github.com/tobi/llm-wiki`(404) 참조를 README(4종)에서 제거. 실제 출처(Karpathy 패턴 + `tobi/qmd`)는 기존 링크 유지.
+
+### 📝 Docs
+
+- **README 슬림화 + API 문서 분리 + 버전 이력 통합** (#116): README 의 API 상세 → `docs/reference/api.md`, 버전 이력 → 이 CHANGELOG. 이번 릴리스에서 README(en/ja/zh) 의 잔여 버전표도 CHANGELOG 포인터로 통일.
+- **REST 응답 형식 명시** (#117): `api.md` 에 REST 응답 형식을 명시(CodeRabbit 동작 확인).
+
+---
+
 ## v0.6.4 (2026-06-28)
 
 wiki 기본 백엔드 codex 전환 + sync 시맨틱 추출 진행 표시.
