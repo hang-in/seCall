@@ -127,7 +127,7 @@ secall init --git git@github.com:you/obsidian-vault.git
 | Git remote | 여러 기기 동기화용 원격 저장소                                             |
 | 토크나이저      | `lindera` 또는 `kiwi`                                           |
 | 임베딩 백엔드    | `ollama`, `ort`, `openai`, `openvino`, `ollama_cloud`, `none` |
-| Ollama 모델  | 기본값 `bge-m3`                                                  |
+| Ollama 모델  | 기본값 `qwen3-embedding:0.6b`                                                  |
 
 ---
 
@@ -548,7 +548,7 @@ secall serve --port 8080 --allow-config-edit
 | `search.tokenizer`       | `lindera` 또는 `kiwi`  | `lindera`                 |
 | `search.default_limit`   | 기본 검색 결과 수           | `10`                      |
 | `embedding.backend`      | 임베딩 백엔드              | `ollama`                  |
-| `embedding.ollama_model` | Ollama 임베딩 모델        | `bge-m3`                  |
+| `embedding.ollama_model` | Ollama 임베딩 모델        | `qwen3-embedding:0.6b`                  |
 | `embedding.cloud_host`   | Ollama Cloud API 호스트 | `https://ollama.com`      |
 | `output.timezone`        | IANA 타임존             | `UTC`                     |
 | `graph.semantic_backend` | 그래프 시맨틱 추출 백엔드       | `none`                    |
@@ -702,7 +702,6 @@ interfaces
 ## 참고한 프로젝트와 아이디어
 
 * [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM으로 원본 자료에서 점진적 지식 베이스를 만드는 패턴
-* [tobi/llm-wiki](https://github.com/tobi/llm-wiki) — LLM Wiki 구현 참고
 * [qmd](https://github.com/tobi/qmd) — Markdown 파일용 로컬 검색 엔진
 * [graphify](https://github.com/safishamsi/graphify) — 파일 폴더를 Knowledge Graph로 변환하는 접근
 

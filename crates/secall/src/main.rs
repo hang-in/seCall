@@ -386,7 +386,7 @@ enum WikiAction {
         force: bool,
 
         /// Embedding model ID
-        #[arg(long, default_value = "bge-m3")]
+        #[arg(long, default_value = "qwen3-embedding:0.6b")]
         model: String,
 
         /// Ollama base URL

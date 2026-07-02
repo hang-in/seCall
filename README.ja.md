@@ -277,7 +277,7 @@ secall init --git git@github.com:you/obsidian-vault.git
 - Gitリモート (オプション)
 - トークナイザー選択 (lindera/kiwi)
 - エンベディングバックエンド選択 (ollama/none)
-- Ollama インストール確認 + `bge-m3` モデル自動pull
+- Ollama インストール確認 + `qwen3-embedding:0.6b` モデル自動pull
 
 ### Step 3. セッション収集
 
@@ -660,7 +660,7 @@ secall serve --port 8080 --allow-config-edit
 | `search.tokenizer` | トークナイザー (`lindera` / `kiwi`) | `lindera` |
 | `search.default_limit` | 検索結果数 | `10` |
 | `embedding.backend` | エンベディングバックエンド (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`) | `ollama` |
-| `embedding.ollama_model` | Ollama モデル名 | `bge-m3` |
+| `embedding.ollama_model` | Ollama モデル名 | `qwen3-embedding:0.6b` |
 | `embedding.pool_size` | ORT session pool サイズ (未設定 = RAM ベース自動) | `null` |
 | `embedding.cloud_host` | Ollama Cloud API ホスト | `https://ollama.com` |
 | `embedding.cloud_model` | Ollama Cloud embedding モデル名 | `null` |
@@ -771,7 +771,7 @@ Claude Code 設定 (`~/.claude/settings.json`) に追加:
 
 本プロジェクトは以下のアイデア・プロジェクトをベースにしています:
 
-- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (Andrej Karpathy) — LLM を用いて原本ソースから段階的にナレッジベースを構築するパターン。seCall の 2層ボールトアーキテクチャ (原本セッション + AI 生成 Wiki) はこのコンセプトを直接実装したものです。[Tobi Lütke の実装](https://github.com/tobi/llm-wiki) も参考。
+- **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (Andrej Karpathy) — LLM を用いて原本ソースから段階的にナレッジベースを構築するパターン。seCall の 2層ボールトアーキテクチャ (原本セッション + AI 生成 Wiki) はこのコンセプトを直接実装したものです。
 - **[qmd](https://github.com/tobi/qmd)** (Tobi Lütke) — マークダウンファイル向けローカル検索エンジン。seCall の検索パイプライン (FTS5 BM25、ベクトルエンベディング、RRF k=60) は qmd のアプローチを参考に設計されています。
 - **[graphify](https://github.com/safishamsi/graphify)** (Safi Shamsi) — ファイルフォルダを knowledge graph に変換するツール。seCall P16 の決定論的グラフ抽出と confidence ラベリングはこのプロジェクトに着想を得ています。
 

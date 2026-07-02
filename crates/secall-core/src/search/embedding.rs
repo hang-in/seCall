@@ -45,7 +45,7 @@ impl OllamaEmbedder {
         OllamaEmbedder {
             client: Client::new(),
             base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
-            model: model.unwrap_or("bge-m3").to_string(),
+            model: model.unwrap_or("qwen3-embedding:0.6b").to_string(),
             api_key: None,
         }
     }
@@ -122,7 +122,7 @@ impl Embedder for OllamaEmbedder {
     }
 
     fn dimensions(&self) -> usize {
-        1024 // bge-m3 default
+        1024 // qwen3-embedding:0.6b / bge-m3 (both 1024-dim)
     }
 
     fn model_name(&self) -> &str {
