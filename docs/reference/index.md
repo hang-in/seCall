@@ -33,6 +33,7 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 
 ### 운영·설정 가이드
 
+- [api.md](api.md) — API 레퍼런스 (REST 엔드포인트 + MCP 도구·설정). README 에서 분리된 API 상세 · 상태: done
 - [llm-config.md](llm-config.md) — LLM 백엔드 설정 (Ollama/Gemini/Anthropic, env/config.toml 우선순위) · 상태: done
 - [wiki-setup.md](wiki-setup.md) — Wiki 파이프라인 초기 설정 · 상태: done
 - [github-vault-sync.md](github-vault-sync.md) — Obsidian Vault ↔ GitHub 동기화 절차 · 상태: done

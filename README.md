@@ -220,68 +220,20 @@ Web UI에서 할 수 있는 일:
 | 태그 / 즐겨찾기 | 세션 메타데이터 편집                                 |
 | 사용자 노트    | 세션별 Markdown 노트 작성                          |
 
+REST API 엔드포인트 전체(검색 · 세션 메타 · 명령 · Job · SSE)는 **[API 레퍼런스](docs/reference/api.md)** 를 참고하세요.
+
 ---
 
 ## MCP 서버
 
-MCP 호환 AI 에이전트에서 seCall 검색을 사용할 수 있습니다.
-
-stdio 모드:
+MCP 호환 AI 에이전트(Claude Code, Cursor 등)에서 seCall 검색을 사용할 수 있습니다.
 
 ```bash
-secall mcp
+secall mcp                        # stdio 모드
+secall mcp --http 127.0.0.1:8080  # HTTP 모드
 ```
 
-HTTP 모드:
-
-```bash
-secall mcp --http 127.0.0.1:8080
-```
-
-제공 도구:
-
-| 도구            | 설명                 |
-| ------------- | ------------------ |
-| `recall`      | 세션 검색              |
-| `get`         | 특정 세션 조회           |
-| `status`      | 인덱스 상태 확인          |
-| `wiki_search` | 위키 문서 검색           |
-| `graph_query` | Knowledge Graph 탐색 |
-
-Claude Code 설정 예시:
-
-```json
-{
-  "mcpServers": {
-    "secall": {
-      "command": "secall",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-세션 시작 / 종료 시 자동 동기화 예시:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "matcher": "startup|resume",
-      "hooks": [{
-        "type": "command",
-        "command": "secall sync --local-only"
-      }]
-    }],
-    "SessionEnd": [{
-      "hooks": [{
-        "type": "command",
-        "command": "secall sync"
-      }]
-    }]
-  }
-}
-```
+제공 도구(`recall` / `get` / `status` / `wiki_search` / `graph_query`), MCP 클라이언트 설정, 세션 hooks 자동 동기화 예시는 **[API 레퍼런스](docs/reference/api.md)** 를 참고하세요.
 
 ---
 
@@ -760,28 +712,7 @@ seCall은 AI 코딩 에이전트인 Claude Code와 Codex를 [tunaFlow](https://g
 
 ## 업데이트 이력
 
-전체 변경 이력은 git tag와 `CHANGELOG.md`를 기준으로 관리하는 것을 권장합니다.
-
-최근 주요 변경:
-
-| 날짜         | 버전 / Phase | 요약                                                                                                 |
-| ---------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| 2026-05-15 | v0.5.0     | `raw/.sessions/` 구조 변경, LLM backend 통합, graph/log 기본 backend 변경, wiki review/generation backend 확장 |
-| 2026-05-10 | P44        | Wiki cross-host merge, `--no-pull`, sources 합집합 기반 자동 재생성                                          |
-| 2026-05-09 | P43        | Wiki review backend 확장, config 주석 보존                                                               |
-| 2026-05-09 | P41        | LLM 설정 통합, `/api/config`, Web `/settings`                                                          |
-| 2026-05-06 | P40        | Wiki 검색 hybrid 모드, wiki vectorize, page-level embedding                                            |
-| 2026-05-03 | P38        | REST route와 session repo 테스트 보강                                                                    |
-| 2026-05-03 | P37        | Graph rebuild CLI / REST / Web UI 추가                                                               |
-| 2026-05-02 | P36        | Job cancellation 추가                                                                                |
-| 2026-05-02 | P35        | Web UI 성능 개선, tags API, 무한 스크롤, code split                                                         |
-| 2026-05-02 | v0.4.0     | Web UI 명령 실행, Job 시스템, SSE 진행 표시                                                                   |
-| 2026-04-17 | v0.3.3     | LM Studio backend, `sync --no-semantic`, Gemini Web ZIP ingest                                     |
-| 2026-04-15 | v0.3.2     | Gemini API backend, REST API, Obsidian plugin, 작업 일기                                               |
-| 2026-04-12 | v0.3.0     | 세션 분류, 위키 backend 확장, automated 세션 필터                                                              |
-| 2026-04-09 | v0.2.3     | ChatGPT export parser                                                                              |
-| 2026-04-05 | v0.2       | claude.ai export parser                                                                            |
-| 2026-03-31 | MVP        | Claude Code / Codex / Gemini parser, BM25 + vector search, MCP, Obsidian vault                     |
+전체 버전 · Phase 변경 이력은 **[CHANGELOG.md](CHANGELOG.md)** 에서 관리합니다.
 
 ---
 
