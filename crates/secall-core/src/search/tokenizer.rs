@@ -32,6 +32,8 @@ pub trait Tokenizer: Send + Sync {
     fn fts_query(&self, text: &str) -> String {
         let mut toks = self.tokenize(text);
         toks.extend(self.raw_tokens(text));
+        toks.sort();
+        toks.dedup();
         // alias 는 원 토큰 기준으로 모아 사후 추가(확장 토큰이 다시 확장되지 않도록).
         let aliases: Vec<String> = toks
             .iter()
@@ -41,7 +43,10 @@ pub trait Tokenizer: Send + Sync {
         toks.sort();
         toks.dedup();
         toks.into_iter()
-            .map(|t| format!("{t}*"))
+            .filter(|t| !t.is_empty())
+            // FTS5 구문오류 방지: 토큰을 큰따옴표로 감싸고 내부 " 이스케이프 후 prefix(*).
+            // 특수문자(* + - . @ ") 가 토큰에 있어도 syntax error 없이 안전.
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(" OR ")
     }
@@ -350,18 +355,18 @@ mod tests {
         // SimpleTokenizer 로 결정적 검증 (사전 불요)
         let q = SimpleTokenizer.fts_query("hello world");
         assert!(q.contains(" OR "), "다토큰은 OR 로 조인: {q}");
-        assert!(q.contains("hello*"), "prefix 와일드카드: {q}");
-        assert!(q.contains("world*"));
+        assert!(q.contains("\"hello\"*"), "인용+prefix 와일드카드: {q}");
+        assert!(q.contains("\"world\"*"));
     }
 
     #[test]
     fn fts_query_expands_loanword_aliases() {
         // 한글 음역 질의가 영어 원어 alias 를 병기 (교차스크립트 갭 보강)
         let q = SimpleTokenizer.fts_query("리프레시 토큰");
-        assert!(q.contains("리프레시*"));
-        assert!(q.contains("refresh*"), "리프레시 → refresh alias: {q}");
-        assert!(q.contains("토큰*"));
-        assert!(q.contains("token*"), "토큰 → token alias: {q}");
+        assert!(q.contains("\"리프레시\"*"));
+        assert!(q.contains("\"refresh\"*"), "리프레시 → refresh alias: {q}");
+        assert!(q.contains("\"토큰\"*"));
+        assert!(q.contains("\"token\"*"), "토큰 → token alias: {q}");
     }
 
     #[test]
@@ -374,8 +379,8 @@ mod tests {
     fn fts_query_no_alias_when_none_matches() {
         let q = SimpleTokenizer.fts_query("architecture design");
         // alias 없는 토큰은 그대로 prefix+OR
-        assert!(q.contains("architecture*"));
-        assert!(q.contains("design*"));
+        assert!(q.contains("\"architecture\"*"));
+        assert!(q.contains("\"design\"*"));
         // 영어→한글 병기가 잘못 끼지 않음 (음역 테이블에 없는 단어)
         assert!(!q.contains("아키텍처"));
     }
