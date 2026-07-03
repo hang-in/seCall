@@ -25,3 +25,6 @@ scripts/*.log
 
 # 외부 커뮤니티 게시 임시 콘텐츠 (다모앙 등) — 사용자가 직접 게시, repo 보존 X
 docs/community/damoang-*.md
+
+# 위키 심화 루프 로컬 운영 상태(capped 스크립트/done/log) — 로컬 자동화, commit X
+.wiki-loop/
