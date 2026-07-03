@@ -442,6 +442,15 @@ enum GraphAction {
     Stats,
     /// Export graph to vault/graph/graph.json
     Export,
+    /// Discovery report: surprising connections + knowledge gaps (검색 아님)
+    Insights {
+        /// 출력할 surprising 세션 쌍 최대 개수
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+        /// surprising 후보 엔티티 degree 상한 — 흔한 허브 배제
+        #[arg(long, default_value_t = 25)]
+        deg_cap: usize,
+    },
     /// Rebuild semantic edges for selected sessions (P37)
     Rebuild {
         /// Only process sessions started since this date (YYYY-MM-DD)
@@ -687,6 +696,9 @@ async fn main() -> anyhow::Result<()> {
             }
             GraphAction::Export => {
                 commands::graph::run_export()?;
+            }
+            GraphAction::Insights { top, deg_cap } => {
+                commands::graph::run_insights(top, deg_cap)?;
             }
             GraphAction::Rebuild {
                 since,

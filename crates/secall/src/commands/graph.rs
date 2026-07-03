@@ -196,6 +196,77 @@ pub fn run_export() -> Result<()> {
     Ok(())
 }
 
+/// `graph insights` — 그래프 발견/큐레이션 리포트 (검색 아님).
+/// surprising connections(희소 엔티티 공유 세션 쌍) + knowledge gaps(고립/싱글턴/degree).
+pub fn run_insights(top: usize, deg_cap: usize) -> Result<()> {
+    let db = Database::open(&get_default_db_path())?;
+    let insights = db.graph_insights(top, deg_cap)?;
+
+    let short = |id: &str| -> String { id[..8.min(id.len())].to_string() };
+
+    println!("Graph Insights");
+    println!("==============");
+    println!();
+
+    // ── Surprising connections ──
+    println!("Surprising connections (cross-project, 희소 file/issue/tech 공유, deg ≤ {deg_cap}, 상위 {top}):");
+    if insights.surprising.is_empty() {
+        println!("  (none — 그래프가 비었거나 공유 희소 엔티티 없음)");
+    } else {
+        for (i, p) in insights.surprising.iter().enumerate() {
+            println!(
+                "  {}. {} [{}] ↔ {} [{}]  (score {:.3})",
+                i + 1,
+                short(&p.session_a),
+                p.project_a.as_deref().unwrap_or("?"),
+                short(&p.session_b),
+                p.project_b.as_deref().unwrap_or("?"),
+                p.score
+            );
+            let shown: Vec<&str> = p.shared.iter().take(5).map(String::as_str).collect();
+            let extra = p.shared.len().saturating_sub(shown.len());
+            let suffix = if extra > 0 {
+                format!(" (+{extra} more)")
+            } else {
+                String::new()
+            };
+            println!("     shared: {}{}", shown.join(", "), suffix);
+        }
+    }
+    println!();
+
+    // ── Knowledge gaps ──
+    let g = &insights.gaps;
+    println!("Knowledge gaps:");
+    println!(
+        "  Sessions in graph: {} / {}  (missing {})",
+        g.sessions_in_graph, g.sessions_total, g.sessions_missing_from_graph
+    );
+    println!(
+        "  Isolated sessions (편입됐으나 엣지 0): {}",
+        g.isolated_session_count
+    );
+    if !g.isolated_session_examples.is_empty() {
+        let ex: Vec<String> = g
+            .isolated_session_examples
+            .iter()
+            .map(|s| short(s))
+            .collect();
+        println!("    e.g. {}", ex.join(", "));
+    }
+    println!("  Singleton files (deg 1):  {}", g.singleton_file_count);
+    println!("  Singleton issues (deg 1): {}", g.singleton_issue_count);
+    if !g.singleton_examples.is_empty() {
+        println!("    e.g. {}", g.singleton_examples.join(", "));
+    }
+    println!(
+        "  Session degree (엣지≥1):  min {} / median {} / max {}",
+        g.session_degree_min, g.session_degree_median, g.session_degree_max
+    );
+
+    Ok(())
+}
+
 // ─── P37 Task 01: graph rebuild ─────────────────────────────────────────────
 
 /// `graph rebuild` 명령 인자 — REST DTO/Job 어댑터(Task 02)에서 동일 구조 사용.

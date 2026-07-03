@@ -36,6 +36,63 @@ pub struct RelatedSession {
     pub score: f32,
 }
 
+/// `graph insights` 결과 — 그래프 기반 발견/큐레이션 리포트 (검색 아님).
+#[derive(Debug, Default, Serialize)]
+pub struct GraphInsights {
+    /// 희소 엔티티(file/issue/tech)를 공유해 강하게 연결된 세션 쌍 (AA 내림차순).
+    pub surprising: Vec<SurprisingPair>,
+    /// 지식 공백 진단 (고립 세션 / 싱글턴 아티팩트 / degree 분포).
+    pub gaps: KnowledgeGaps,
+}
+
+/// 공유 희소 엔티티로 연결된 세션 쌍. `session_a < session_b` 로 정규화.
+/// **cross-project 만** 수록 — 두 세션의 project 가 서로 다를 때(진짜 교차 연결).
+#[derive(Debug, Clone, Serialize)]
+pub struct SurprisingPair {
+    /// 세션 ID (`session:` 프리픽스 제거, 사전순 앞).
+    pub session_a: String,
+    /// 세션 ID (사전순 뒤).
+    pub session_b: String,
+    /// session_a 의 project (cross-project 판정·표시용).
+    pub project_a: Option<String>,
+    /// session_b 의 project.
+    pub project_b: Option<String>,
+    /// Adamic-Adar 관련도 = 공유 엔티티 Σ 1/ln(deg). 높을수록 희소 공유.
+    pub score: f32,
+    /// 공유 엔티티 근거 (node_id, 예: "issue:42", "file:src/foo.rs"). 기여도 내림차순.
+    pub shared: Vec<String>,
+}
+
+/// 지식 공백 진단 집계.
+#[derive(Debug, Default, Serialize)]
+pub struct KnowledgeGaps {
+    /// 엔티티 엣지가 하나도 없는 고립 세션 노드 수 (semantic 추출 누락/빈 세션).
+    pub isolated_session_count: usize,
+    /// 고립 세션 예시 (session_id, 최대 예시 개수).
+    pub isolated_session_examples: Vec<String>,
+    /// deg=1 (한 세션만 참조) file 노드 수 — 고아 파일 지식.
+    pub singleton_file_count: usize,
+    /// deg=1 issue 노드 수 — 한 세션에만 등장한 이슈.
+    pub singleton_issue_count: usize,
+    /// 싱글턴 아티팩트 예시 (node_id, issue 우선, 최대 예시 개수).
+    pub singleton_examples: Vec<String>,
+    /// `sessions` 테이블 총 세션 수.
+    pub sessions_total: usize,
+    /// 그래프에 session 노드로 편입된 세션 수.
+    pub sessions_in_graph: usize,
+    /// 그래프에 아예 편입되지 않은 세션 수 (semantic 추출 대상이지만 미처리 — 최대 knowledge gap).
+    pub sessions_missing_from_graph: usize,
+    /// 엣지≥1 세션의 degree(연결 엔티티 수) 최소값.
+    pub session_degree_min: usize,
+    /// 엣지≥1 세션의 degree 중앙값.
+    pub session_degree_median: usize,
+    /// 엣지≥1 세션의 degree 최대값.
+    pub session_degree_max: usize,
+}
+
+/// `surprising_pairs` 누적기 값: (AA score 합, [(공유 엔티티 node_id, 기여 weight)]).
+type PairAccum = (f32, Vec<(String, f32)>);
+
 /// `?start, ?start+1, ...` SQL 플레이스홀더 생성 (동적 IN 절용).
 fn sql_placeholders(start: usize, count: usize) -> String {
     (start..start + count)
@@ -610,11 +667,353 @@ impl Database {
         let deleted = self.conn().execute(&sql, params.as_slice())?;
         Ok(deleted)
     }
+
+    /// 그래프 발견/큐레이션 리포트: surprising connections + knowledge gaps.
+    ///
+    /// - **surprising**: 희소 엔티티(file/issue/tech, `2 ≤ deg ≤ deg_cap`)를 공유하는 세션 쌍을
+    ///   Adamic-Adar(`Σ 1/ln(deg)`)로 랭킹. 흔한 허브는 deg_cap 으로 배제. topic 은 라벨 파편화가
+    ///   심해 1차에서 제외.
+    /// - **gaps**: 고립 세션(엣지 0) + 싱글턴 file/issue(deg 1) + 세션 degree 분포.
+    ///
+    /// 세션-세션 직접 엣지가 없는 스키마이므로 "직접 엣지 없음"은 자동 충족 — 공유 엔티티가 유일 신호.
+    pub fn graph_insights(&self, top_n: usize, deg_cap: usize) -> Result<GraphInsights> {
+        // graph_edges 테이블이 없으면 빈 결과
+        let table_exists: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='graph_edges'",
+            [],
+            |r| r.get(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(GraphInsights::default());
+        }
+
+        let surprising = self.surprising_pairs(top_n, deg_cap)?;
+        let gaps = self.knowledge_gaps()?;
+        Ok(GraphInsights { surprising, gaps })
+    }
+
+    /// 희소 엔티티 공유 세션 쌍을 AA 로 랭킹 (`graph_insights` 내부).
+    ///
+    /// CTE 로 후보 엔티티(`2 ≤ deg ≤ deg_cap`, file/issue/tech)를 먼저 좁혀 self-join 폭발을
+    /// 방지한다. 엔티티당 쌍 수는 최대 `C(deg_cap, 2)` 로 상한. 한 쿼리로 (a, b, ent, deg) 튜플을
+    /// 받아 메모리에서 (a,b) 별 weight 누적.
+    fn surprising_pairs(&self, top_n: usize, deg_cap: usize) -> Result<Vec<SurprisingPair>> {
+        if top_n == 0 {
+            return Ok(vec![]);
+        }
+        let sql = "\
+            WITH cand AS ( \
+                SELECT target, COUNT(DISTINCT source) AS deg \
+                FROM graph_edges \
+                WHERE source LIKE 'session:%' \
+                  AND (target LIKE 'file:%' OR target LIKE 'issue:%' OR target LIKE 'tech:%') \
+                GROUP BY target \
+                HAVING deg >= 2 AND deg <= ?1 \
+            ) \
+            SELECT e1.source AS a, e2.source AS b, cand.target AS ent, cand.deg AS deg \
+            FROM graph_edges e1 \
+            JOIN graph_edges e2 ON e1.target = e2.target AND e1.source < e2.source \
+            JOIN cand ON cand.target = e1.target \
+            WHERE e1.source LIKE 'session:%' AND e2.source LIKE 'session:%'";
+        let mut stmt = self.conn().prepare(sql)?;
+        let rows = stmt.query_map([deg_cap as i64], |r| {
+            Ok((
+                r.get::<_, String>(0)?, // a  (session:...)
+                r.get::<_, String>(1)?, // b  (session:...)
+                r.get::<_, String>(2)?, // ent (공유 엔티티 node_id)
+                r.get::<_, i64>(3)?,    // deg (엔티티의 전체 세션 degree)
+            ))
+        })?;
+
+        // (a,b) → (누적 score, [(공유 엔티티, weight)])
+        let mut acc: HashMap<(String, String), PairAccum> = HashMap::new();
+        for (a, b, ent, deg) in rows.filter_map(|r| r.ok()) {
+            if deg < 2 {
+                continue; // ln(1)=0 방어 (HAVING 이 걸러주지만 이중 안전)
+            }
+            let w = (1.0 / (deg as f64).ln()) as f32;
+            let entry = acc.entry((a, b)).or_insert((0.0, Vec::new()));
+            entry.0 += w;
+            entry.1.push((ent, w));
+        }
+
+        // 세션 project 맵 — cross-project 필터 + 라벨 (sessions 테이블 통째, 수천 rows 라 가벼움).
+        let proj_map: HashMap<String, Option<String>> = {
+            let mut stmt = self.conn().prepare("SELECT id, project FROM sessions")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        let mut pairs: Vec<SurprisingPair> = acc
+            .into_iter()
+            .filter_map(|((a, b), (score, mut shared))| {
+                let sa = a.strip_prefix("session:").unwrap_or(&a);
+                let sb = b.strip_prefix("session:").unwrap_or(&b);
+                let pa = proj_map.get(sa).cloned().flatten();
+                let pb = proj_map.get(sb).cloned().flatten();
+                // cross-project 만: 둘 다 project 가 있고 서로 다를 때 (같은 프로젝트/미상은 제외).
+                // 대소문자 표기 변형(tunaFlow/tunaflow)은 동일 프로젝트로 간주 → 제외.
+                match (&pa, &pb) {
+                    (Some(x), Some(y)) if !x.eq_ignore_ascii_case(y) => {}
+                    _ => return None,
+                }
+                // 공유 엔티티를 기여도(weight) 내림차순 → 근거 상위부터
+                shared.sort_by(|x, y| {
+                    y.1.partial_cmp(&x.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(x.0.cmp(&y.0))
+                });
+                Some(SurprisingPair {
+                    session_a: sa.to_string(),
+                    session_b: sb.to_string(),
+                    project_a: pa,
+                    project_b: pb,
+                    score,
+                    shared: shared.into_iter().map(|(e, _)| e).collect(),
+                })
+            })
+            .collect();
+
+        // score 내림차순 → 동점은 (a,b) 사전순 (결정성)
+        pairs.sort_by(|x, y| {
+            y.score
+                .partial_cmp(&x.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(x.session_a.cmp(&y.session_a))
+                .then(x.session_b.cmp(&y.session_b))
+        });
+        pairs.truncate(top_n);
+        Ok(pairs)
+    }
+
+    /// 고립 세션 / 싱글턴 아티팩트 / 세션 degree 분포 (`graph_insights` 내부).
+    fn knowledge_gaps(&self) -> Result<KnowledgeGaps> {
+        const EXAMPLE_LIMIT: i64 = 10;
+
+        // 1. 고립 세션: type='session' 노드 중 source 엣지가 없는 것.
+        let isolated_session_count = self.conn().query_row(
+            "SELECT COUNT(*) FROM graph_nodes n WHERE n.type='session' \
+             AND NOT EXISTS (SELECT 1 FROM graph_edges e WHERE e.source = n.id)",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize;
+
+        let isolated_session_examples: Vec<String> = {
+            let mut stmt = self.conn().prepare(
+                "SELECT n.id FROM graph_nodes n WHERE n.type='session' \
+                 AND NOT EXISTS (SELECT 1 FROM graph_edges e WHERE e.source = n.id) \
+                 ORDER BY n.id LIMIT ?1",
+            )?;
+            let rows = stmt.query_map([EXAMPLE_LIMIT], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok())
+                .map(|id| id.strip_prefix("session:").unwrap_or(&id).to_string())
+                .collect()
+        };
+
+        // 2. 싱글턴 file/issue: deg=1 (한 세션만 참조).
+        let count_singleton = |prefix: &str| -> Result<usize> {
+            let sql = format!(
+                "SELECT COUNT(*) FROM ( \
+                   SELECT target FROM graph_edges \
+                   WHERE source LIKE 'session:%' AND target LIKE '{}:%' \
+                   GROUP BY target HAVING COUNT(DISTINCT source) = 1 \
+                 )",
+                prefix
+            );
+            let c: i64 = self.conn().query_row(&sql, [], |r| r.get(0))?;
+            Ok(c as usize)
+        };
+        let singleton_file_count = count_singleton("file")?;
+        let singleton_issue_count = count_singleton("issue")?;
+
+        // 예시는 issue 우선(수가 적고 의미 큼) 후 file.
+        let singleton_examples: Vec<String> = {
+            let mut stmt = self.conn().prepare(
+                "SELECT target FROM graph_edges \
+                 WHERE source LIKE 'session:%' AND (target LIKE 'issue:%' OR target LIKE 'file:%') \
+                 GROUP BY target HAVING COUNT(DISTINCT source) = 1 \
+                 ORDER BY CASE WHEN target LIKE 'issue:%' THEN 0 ELSE 1 END, target LIMIT ?1",
+            )?;
+            let rows = stmt.query_map([EXAMPLE_LIMIT], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        // 3. 세션 degree 분포 (엣지≥1 세션의 연결 엔티티 수).
+        let mut degrees: Vec<usize> = {
+            let mut stmt = self.conn().prepare(
+                "SELECT COUNT(*) FROM graph_edges WHERE source LIKE 'session:%' GROUP BY source",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+            rows.filter_map(|r| r.ok()).map(|d| d as usize).collect()
+        };
+        let (session_degree_min, session_degree_median, session_degree_max) = if degrees.is_empty()
+        {
+            (0, 0, 0)
+        } else {
+            degrees.sort_unstable();
+            (
+                degrees[0],
+                degrees[degrees.len() / 2],
+                degrees[degrees.len() - 1],
+            )
+        };
+
+        // 4. 그래프 편입률 — sessions 테이블 대비 graph 미편입 세션 (최대 gap).
+        let sessions_total = self
+            .conn()
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get::<_, i64>(0))?
+            as usize;
+        let sessions_in_graph = self.conn().query_row(
+            "SELECT COUNT(*) FROM graph_nodes WHERE type='session'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as usize;
+        let sessions_missing_from_graph = sessions_total.saturating_sub(sessions_in_graph);
+
+        Ok(KnowledgeGaps {
+            isolated_session_count,
+            isolated_session_examples,
+            singleton_file_count,
+            singleton_issue_count,
+            singleton_examples,
+            sessions_total,
+            sessions_in_graph,
+            sessions_missing_from_graph,
+            session_degree_min,
+            session_degree_median,
+            session_degree_max,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::store::Database;
+
+    #[test]
+    fn test_graph_insights_surprising_and_gaps() {
+        let db = Database::open_memory().unwrap();
+
+        // 세션 노드 4개 — iso 는 엣지 없음 → 고립
+        for s in ["session:s1", "session:s2", "session:s3", "session:iso"] {
+            db.upsert_graph_node(s, "session", s, None).unwrap();
+        }
+        // sessions 테이블 행 — cross-project 필터용 project 부여 (s1,s3=projA / s2=projB)
+        insert_session_row(&db, "s1", "projA");
+        insert_session_row(&db, "s2", "projB");
+        insert_session_row(&db, "s3", "projA");
+        insert_session_row(&db, "iso", "projA");
+        // 엔티티 노드 (graph_edges FK 제약 충족)
+        db.upsert_graph_node("file:shared", "file", "shared", None)
+            .unwrap();
+        db.upsert_graph_node("tech:common", "tech", "common", None)
+            .unwrap();
+        db.upsert_graph_node("issue:only1", "issue", "only1", None)
+            .unwrap();
+        db.upsert_graph_node("topic:x", "topic", "x", None).unwrap();
+
+        // file:shared — s1,s2 (deg 2) → 강한 surprising 근거
+        db.upsert_graph_edge(
+            "session:s1",
+            "file:shared",
+            "modifies_file",
+            "EXTRACTED",
+            1.0,
+        )
+        .unwrap();
+        db.upsert_graph_edge(
+            "session:s2",
+            "file:shared",
+            "modifies_file",
+            "EXTRACTED",
+            1.0,
+        )
+        .unwrap();
+        // tech:common — s1,s2,s3 (deg 3)
+        for s in ["session:s1", "session:s2", "session:s3"] {
+            db.upsert_graph_edge(s, "tech:common", "introduces_tech", "EXTRACTED", 1.0)
+                .unwrap();
+        }
+        // issue:only1 — s1 만 (deg 1) → 싱글턴, surprising 후보 아님
+        db.upsert_graph_edge("session:s1", "issue:only1", "fixes_bug", "EXTRACTED", 1.0)
+            .unwrap();
+        // topic:x — s1,s2 (deg 2) 이지만 topic 은 surprising 후보에서 제외돼야 함
+        db.upsert_graph_edge("session:s1", "topic:x", "discusses_topic", "EXTRACTED", 1.0)
+            .unwrap();
+        db.upsert_graph_edge("session:s2", "topic:x", "discusses_topic", "EXTRACTED", 1.0)
+            .unwrap();
+
+        let ins = db.graph_insights(10, 25).unwrap();
+
+        // ── surprising ── (s1,s2) 가 file:shared + tech:common 공유로 최상위
+        assert!(!ins.surprising.is_empty());
+        let top = &ins.surprising[0];
+        assert_eq!(top.session_a, "s1");
+        assert_eq!(top.session_b, "s2");
+        // cross-project 라벨 (projA ↔ projB)
+        assert_eq!(top.project_a.as_deref(), Some("projA"));
+        assert_eq!(top.project_b.as_deref(), Some("projB"));
+        // same-project 쌍 (s1,s3 = 둘 다 projA) 은 제외됨
+        assert!(!ins
+            .surprising
+            .iter()
+            .any(|p| p.session_a == "s1" && p.session_b == "s3"));
+        assert!(top.shared.contains(&"file:shared".to_string()));
+        assert!(top.shared.contains(&"tech:common".to_string()));
+        // topic 은 후보에서 제외 → 근거에 없어야 함
+        assert!(!top.shared.iter().any(|s| s.starts_with("topic:")));
+        // score = 1/ln2 + 1/ln3 (내부 f64→f32 캐스트와 동일 방식으로 기대값 계산)
+        let expect = (1.0f64 / 2f64.ln()) as f32 + (1.0f64 / 3f64.ln()) as f32;
+        assert!((top.score - expect).abs() < 1e-3);
+        // (s1,s2) 가 전체 최고 score
+        for p in &ins.surprising[1..] {
+            assert!(p.score <= top.score);
+        }
+
+        // ── gaps ──
+        assert_eq!(ins.gaps.isolated_session_count, 1);
+        assert_eq!(ins.gaps.isolated_session_examples, vec!["iso".to_string()]);
+        assert_eq!(ins.gaps.singleton_issue_count, 1);
+        assert!(ins
+            .gaps
+            .singleton_examples
+            .contains(&"issue:only1".to_string()));
+        // file:shared 는 deg 2 라 싱글턴 아님
+        assert_eq!(ins.gaps.singleton_file_count, 0);
+        // degree 분포: s1=4, s2=3, s3=1 (iso 제외) → min1/median3/max4
+        assert_eq!(ins.gaps.session_degree_min, 1);
+        assert_eq!(ins.gaps.session_degree_max, 4);
+        // 그래프 편입률: 4세션 모두 노드 등록 → missing 0
+        assert_eq!(ins.gaps.sessions_total, 4);
+        assert_eq!(ins.gaps.sessions_in_graph, 4);
+        assert_eq!(ins.gaps.sessions_missing_from_graph, 0);
+    }
+
+    /// sessions 테이블에 최소 세션 행 삽입 (cross-project 필터 테스트용).
+    fn insert_session_row(db: &Database, id: &str, project: &str) {
+        use crate::ingest::{AgentKind, Session, TokenUsage};
+        use crate::store::SessionRepo;
+        use chrono::Utc;
+        let s = Session {
+            id: id.to_string(),
+            agent: AgentKind::ClaudeCode,
+            model: None,
+            project: Some(project.to_string()),
+            cwd: None,
+            git_branch: None,
+            host: None,
+            start_time: Utc::now(),
+            end_time: None,
+            turns: Vec::new(),
+            total_tokens: TokenUsage::default(),
+            session_type: "interactive".to_string(),
+            archived: false,
+            archived_at: None,
+        };
+        db.insert_session(&s).unwrap();
+    }
 
     #[test]
     fn test_graph_upsert_and_stats() {
