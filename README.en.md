@@ -793,9 +793,12 @@ For auto-sync on session start/end:
 This project is built on ideas from:
 
 - **[LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** by Andrej Karpathy — The pattern of using LLMs to incrementally build a persistent, interlinked knowledge base from raw sources. seCall's two-layer vault architecture (raw sessions + AI-generated wiki) directly implements this concept.
-- **[nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)** by nashsu — A full desktop-app implementation of the same LLM Wiki pattern (source tracing, knowledge graph, semantic search, MCP, Obsidian-compatible). seCall specializes the pattern for **AI-agent session logs** as a CLI/MCP tool.
 - **[qmd](https://github.com/tobi/qmd)** by Tobi Lütke — A local search engine for markdown files with hybrid BM25/vector search. seCall's search pipeline (FTS5 BM25, vector embeddings, RRF k=60) was designed with reference to qmd's approach.
 - **[graphify](https://github.com/safishamsi/graphify)** by Safi Shamsi — Turns file folders into queryable knowledge graphs. seCall P16's deterministic graph extraction and confidence labeling were inspired by this project.
+
+**Related projects** (not sources seCall drew from, but independent takes on the same pattern):
+
+- **[nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)** by nashsu — An independent full desktop-app implementation of the same LLM Wiki pattern (source tracing, knowledge graph, semantic search, MCP, Obsidian-compatible). No shared code with seCall — a sibling take applying the pattern differently (desktop app ↔ seCall's session-log CLI/MCP).
 
 This project was developed using AI coding agents (Claude Code, Codex) orchestrated via [tunaFlow](https://github.com/hang-in/tunaFlow), a multi-agent workflow platform.
 

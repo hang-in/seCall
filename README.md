@@ -702,9 +702,12 @@ interfaces
 ## 참고한 프로젝트와 아이디어
 
 * [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM으로 원본 자료에서 점진적 지식 베이스를 만드는 패턴
-* [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) — 위 패턴을 구현한 대표적 풀 데스크톱 앱(Tauri): source 추적 · 지식그래프 · 시맨틱 검색 · MCP · Obsidian 호환. seCall 은 같은 패턴을 **AI 에이전트 세션 로그**에 특화한 CLI/MCP 도구.
 * [qmd](https://github.com/tobi/qmd) — Markdown 파일용 로컬 검색 엔진
 * [graphify](https://github.com/safishamsi/graphify) — 파일 폴더를 Knowledge Graph로 변환하는 접근
+
+**관련 프로젝트** (참고한 게 아니라 같은 패턴을 독립적으로 구현한 이웃 작업):
+
+* [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) — 같은 LLM Wiki 패턴을 독립 구현한 풀 데스크톱 앱(Tauri): source 추적 · 지식그래프 · 시맨틱 검색 · MCP · Obsidian 호환. seCall 과 소스 관계는 없고, 동일 패턴을 다르게 적용한 사례(데스크톱 앱 ↔ seCall 의 세션 로그 CLI/MCP).
 
 seCall은 AI 코딩 에이전트인 Claude Code와 Codex를 [tunaFlow](https://github.com/hang-in/tunaFlow) 멀티에이전트 워크플로우로 오케스트레이션하여 개발되었습니다.
 
