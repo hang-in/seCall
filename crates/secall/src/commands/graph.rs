@@ -202,7 +202,8 @@ pub fn run_insights(top: usize, deg_cap: usize) -> Result<()> {
     let db = Database::open(&get_default_db_path())?;
     let insights = db.graph_insights(top, deg_cap)?;
 
-    let short = |id: &str| -> String { id[..8.min(id.len())].to_string() };
+    // char-boundary-safe: 세션 ID 는 외부 export raw string 이라 non-ASCII 가능 (byte slice panic 회피).
+    let short = |id: &str| -> String { id.chars().take(8).collect() };
 
     println!("Graph Insights");
     println!("==============");
