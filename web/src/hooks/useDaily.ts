@@ -25,8 +25,10 @@ export interface DailyResponse {
 }
 
 export function useDaily(date: string) {
+  // 브라우저 로컬 tz 오프셋(분, 로컬-UTC). getTimezoneOffset 은 UTC-로컬이라 부호 반전.
+  const tzOffset = -new Date().getTimezoneOffset();
   return useQuery({
-    queryKey: ["daily", date],
-    queryFn: () => api.daily(date) as Promise<DailyResponse>,
+    queryKey: ["daily", date, tzOffset],
+    queryFn: () => api.daily(date, tzOffset) as Promise<DailyResponse>,
   });
 }
