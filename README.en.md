@@ -80,13 +80,13 @@ seCall is a local-first tool for AI agent conversations. It ingests session logs
 
 Parse and normalize sessions from multiple AI coding agents into a unified format:
 
-| Agent | Format | Status |
-|---|---|---|
-| Claude Code | JSONL | ✅ Stable |
-| Codex CLI | JSONL | ✅ Stable |
-| Gemini CLI | JSON | ✅ Stable |
-| claude.ai | JSON (ZIP) | ✅ New in v0.2 |
-| ChatGPT | JSON (ZIP) | ✅ New in v0.2.3 |
+| Agent       | Format     | Status           |
+| ----------- | ---------- | ---------------- |
+| Claude Code | JSONL      | ✅ Stable        |
+| Codex CLI   | JSONL      | ✅ Stable        |
+| Gemini CLI  | JSON       | ✅ Stable        |
+| claude.ai   | JSON (ZIP) | ✅ New in v0.2   |
+| ChatGPT     | JSON (ZIP) | ✅ New in v0.2.3 |
 
 ### Hybrid Search
 
@@ -136,6 +136,7 @@ secall serve --port 8080
 ```
 
 **Endpoints**:
+
 - Read (Phase 0): `/api/recall`, `/api/get`, `/api/status`, `/api/daily`, `/api/graph`, `/api/wiki` (search)
 - Wiki body (Phase 1): `GET /api/wiki/{project}`
 - Session metadata (Phase 0): `/api/sessions`, `/api/projects`, `/api/agents`, `PATCH /api/sessions/{id}/{tags,favorite}`
@@ -154,6 +155,7 @@ secall serve --port 8080
   - 404: `{ "error": "job not found or already evicted" }` — unknown / evicted
 
 **Web UI** (`web/`, P32 Phase 0 + P33 Phase 1):
+
 - Dark-mode-first modern UI (Tailwind + shadcn/ui + Pretendard / Geist Sans)
 - 2-pane layout (left: search/list, right: detail)
 - Graph folding overlay (click node → load session + auto-fold)
@@ -162,6 +164,7 @@ secall serve --port 8080
 - Global progress banner + SSE progress streaming + completion/failure toast (Phase 1)
 
 **Obsidian Plugin** (`obsidian-secall/`):
+
 - **Search View** — keyword/semantic session search
 - **Daily View** — daily work summary grouped by project, with note creation
 - **Graph View** — explore node relationships (depth 1-3, relation filters)
@@ -235,6 +238,7 @@ irm https://raw.githubusercontent.com/hang-in/seCall/main/install.ps1 | iex
 > Linux prebuilt binaries are not published yet — use the Cargo build below.
 
 **Manual download** — grab the binary for your OS from the [Releases page](https://github.com/hang-in/seCall/releases):
+
 - macOS: `secall-aarch64-apple-darwin.tar.gz` / `secall-x86_64-apple-darwin.tar.gz`
 - Windows: `secall-x86_64-pc-windows-msvc.zip` (secall.exe + onnxruntime.dll)
 
@@ -259,6 +263,7 @@ brew install hang-in/tap/secall
 ```
 
 > **Windows users**: Core features (parsing, BM25 search, vault, MCP) work identically. The following are disabled due to MSVC limitations:
+>
 > - **HNSW ANN index** (`usearch`) — falls back to BLOB cosine scan
 > - **Kiwi-rs morpheme analysis** — falls back to Lindera ko-dic
 
@@ -274,6 +279,7 @@ secall init --git git@github.com:you/obsidian-vault.git
 ```
 
 Running `secall init` without arguments starts an interactive wizard:
+
 - Vault path setup
 - Git remote (optional)
 - Tokenizer selection (lindera/kiwi)
@@ -323,12 +329,14 @@ secall serve --port 8080
 ```
 
 **Phase 0 features** (P32, read-only):
+
 - Search / session browsing (2-pane layout)
 - Daily diary / wiki page viewing (full body — wiki-body fetch added in Phase 1)
 - Graph exploration (sidebar Graph button → fullscreen overlay)
 - Tag / favorite editing
 
 **Phase 1 features** (P33, command triggers):
+
 - Sidebar **Commands** menu — Sync / Ingest / Wiki Update buttons + options dialog
 - SSE progress streaming — per-phase live updates
 - Global progress banner — track active jobs from any page (sticky top)
@@ -338,6 +346,7 @@ secall serve --port 8080
 - Auto-resume in-progress jobs after closing/reopening tabs
 
 **Phase 2 features** (P34, viewer enhancements):
+
 - Semantic search mode toggle (when Ollama is available)
 - Search-term highlighting — both in the list and the markdown body
 - Multi-tag AND filter + date quick range (today / this week / this month)
@@ -348,11 +357,13 @@ secall serve --port 8080
 - Per-session user notes — markdown editor (1s autosave, `PATCH /api/sessions/{id}/notes`)
 
 **Phase 3 features** (P35, performance + accuracy):
+
 - `/api/tags` endpoint — accurate full tag set with usage counts (replaces 100-session heuristic)
 - SessionList infinite scroll — IntersectionObserver-based auto-load (page_size=100)
 - Code-split — per-route + vendor (react/query/radix/viz) chunks, initial entry JS ≤ 250 kB (gzip)
 
 **Job Cancellation** (P36, cancel running work):
+
 - Safely interrupt a running sync / ingest / wiki-update job
 - Built on `tokio_util::sync::CancellationToken` — wired through `JobRegistry`, `JobExecutor`, and `BroadcastSink`; exposed via `ProgressSink::is_cancelled()`
 - Adapters (sync/ingest/wiki) poll at safe points — between phases, at the top of file/session loops, and right before each LLM call
@@ -362,6 +373,7 @@ secall serve --port 8080
 - Web UI: a **Cancel** button in `JobBanner` and the active `JobItem`, gated by `window.confirm` (`useCancelJob` mutation hook)
 
 **Graph Sync automation** (P37, semantic graph rebuild):
+
 - Rebuild the semantic graph for already-ingested sessions out-of-band — backfill sessions that only have embeddings, or reprocess everything after swapping the model/prompt
 - DB schema v8: `sessions.semantic_extracted_at` column tracks semantic extraction state (NULL = not yet processed)
 - CLI: `secall graph rebuild [--since DATE] [--session ID] [--all] [--retry-failed]`
@@ -371,26 +383,27 @@ secall serve --port 8080
 
 ### Keyboard shortcuts (Phase 2)
 
-| Key | Action |
-|---|---|
-| `?` | Shortcut help |
-| `/` | Focus search |
-| `j` / `k` | Next / previous list item |
-| `[` / `]` | Previous / next session |
-| `g d` | Daily view |
-| `g w` | Wiki view |
-| `g s` | Sessions view |
-| `g c` | Commands view |
-| `g g` | Toggle graph overlay |
-| `f` | Toggle favorite on current session |
-| `e` | Edit notes on current session |
-| `Esc` | Close dialog / overlay |
+| Key       | Action                             |
+| --------- | ---------------------------------- |
+| `?`       | Shortcut help                      |
+| `/`       | Focus search                       |
+| `j` / `k` | Next / previous list item          |
+| `[` / `]` | Previous / next session            |
+| `g d`     | Daily view                         |
+| `g w`     | Wiki view                          |
+| `g s`     | Sessions view                      |
+| `g c`     | Commands view                      |
+| `g g`     | Toggle graph overlay               |
+| `f`       | Toggle favorite on current session |
+| `e`       | Edit notes on current session      |
+| `Esc`     | Close dialog / overlay             |
 
 ### Running Commands
 
 In the web UI: left sidebar **Commands** menu → choose command + options → start.
 
 Same commands work from the CLI (the Job system is web-UI only):
+
 ```bash
 secall sync --local-only --dry-run
 secall sync --no-graph         # disable graph incremental during sync (default: enabled)
@@ -446,6 +459,7 @@ just dev    # Vite dev server (5173) + axum (8080) in parallel
 ```
 
 `just dev` runs Vite at 5173 and axum reverse-proxies it from 8080.
+
 - **Connect to 8080**: single-port (HMR requires manual refresh)
 - **Connect to 5173 directly**: HMR works, `/api/*` is proxied to 8080
 
@@ -569,12 +583,12 @@ If Ollama is down or the embedding call fails, `semantic` and `hybrid` automatic
 
 When `secall wiki update` detects a git-backed vault, it now attempts `auto_commit + pull --rebase` before generation.
 
-| Scenario | Behavior |
-|---|---|
-| The same wiki topic changed on two machines | Detects `wiki/*.md` conflicts and regenerates the page from the union of both sides' `sources` |
-| A non-wiki file (`raw/`, `log/`, `graph/`, etc.) conflicts | Aborts and asks for manual resolution |
-| Offline or manually managed sync | Use `secall wiki update --no-pull` to skip git operations |
-| Re-running the same topic on one host | Replaces the body with the latest generated content and keeps only the `sources` union |
+| Scenario                                                   | Behavior                                                                                       |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| The same wiki topic changed on two machines                | Detects `wiki/*.md` conflicts and regenerates the page from the union of both sides' `sources` |
+| A non-wiki file (`raw/`, `log/`, `graph/`, etc.) conflicts | Aborts and asks for manual resolution                                                          |
+| Offline or manually managed sync                           | Use `secall wiki update --no-pull` to skip git operations                                      |
+| Re-running the same topic on one host                      | Replaces the body with the latest generated content and keeps only the `sources` union         |
 
 Configure the default backend in `config.toml`:
 
@@ -596,16 +610,17 @@ model = "gemma3:27b"
 
 `secall wiki update --review` can use a dedicated review backend.
 
-| Backend | Auth | JSON reliability | Cost |
-|---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | High | API |
-| `haiku` | `ANTHROPIC_API_KEY` | High | API |
-| `claude` | claude CLI | Medium | subscription |
-| `codex` | codex CLI | Medium | subscription |
-| `ollama` | none | model-dependent | local |
-| `lmstudio` | none | model-dependent | local |
+| Backend     | Auth                | JSON reliability | Cost         |
+| ----------- | ------------------- | ---------------- | ------------ |
+| `anthropic` | `ANTHROPIC_API_KEY` | High             | API          |
+| `haiku`     | `ANTHROPIC_API_KEY` | High             | API          |
+| `claude`    | claude CLI          | Medium           | subscription |
+| `codex`     | codex CLI           | Medium           | subscription |
+| `ollama`    | none                | model-dependent  | local        |
+| `lmstudio`  | none                | model-dependent  | local        |
 
 Priority:
+
 1. CLI `--review-backend`
 2. `[wiki].review_backend`
 3. `[wiki].default_backend`
@@ -671,69 +686,70 @@ secall serve --port 8080 --allow-config-edit
 
 ### Available Keys
 
-| Key | Description | Default |
-|---|---|---|
-| `vault.path` | Obsidian vault path | `~/obsidian-vault/seCall` |
-| `vault.git_remote` | Git remote URL | (none) |
-| `vault.branch` | Git branch name | `main` |
-| `search.tokenizer` | Tokenizer (`lindera` / `kiwi`) | `lindera` |
-| `search.default_limit` | Search result count | `10` |
-| `embedding.backend` | Embedding backend (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`) | `ollama` |
-| `embedding.ollama_model` | Ollama model name | `qwen3-embedding:0.6b` |
-| `embedding.pool_size` | ORT session pool size (null = auto from RAM) | `null` |
-| `embedding.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
-| `embedding.cloud_model` | Ollama Cloud embedding model name | `null` |
-| `output.timezone` | Timezone (IANA) | `UTC` |
-| `ingest.classification.default` | Default session_type when no rule matches | `interactive` |
-| `ingest.classification.skip_embed_types` | Session types to skip vector embedding | `[]` |
-| `graph.semantic_backend` | Semantic edge extraction backend (`ollama_cloud` / `ollama` / `lmstudio` / `anthropic` / `none`) | `none` |
-| `graph.cloud_model` | Ollama Cloud semantic model | `gemma4:31b-cloud` |
-| `graph.cloud_host` | Ollama Cloud API host | `https://ollama.com` |
-| `graph.ollama_model` | Ollama / LM Studio semantic model | `gemma4:e4b` / `gemma-4-e4b-it` |
-| `wiki.default_backend` | Wiki generation backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | `claude` |
-| `wiki.review_backend` | Wiki review backend (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | falls back to `wiki.default_backend` |
-| `wiki.review_model` | Wiki review model override | `sonnet` |
-| `wiki.backends.<name>.api_url` | Backend API endpoint | (default) |
-| `wiki.backends.<name>.model` | Model name for the backend | (default) |
-| `wiki.backends.<name>.max_tokens` | Max tokens to generate | `4096` |
-| `log.backend` | Daily diary backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`) | falls back to `graph.semantic_backend` |
-| `log.model` | Daily diary model override | backend default |
-| `log.api_url` | Daily diary API URL override | backend default |
-| `log.max_tokens` | Daily diary max generation tokens | backend default |
+| Key                                      | Description                                                                                      | Default                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `vault.path`                             | Obsidian vault path                                                                              | `~/obsidian-vault/seCall`              |
+| `vault.git_remote`                       | Git remote URL                                                                                   | (none)                                 |
+| `vault.branch`                           | Git branch name                                                                                  | `main`                                 |
+| `search.tokenizer`                       | Tokenizer (`lindera` / `kiwi`)                                                                   | `lindera`                              |
+| `search.default_limit`                   | Search result count                                                                              | `10`                                   |
+| `embedding.backend`                      | Embedding backend (`ollama` / `ort` / `openai` / `openvino` / `ollama_cloud`)                    | `ollama`                               |
+| `embedding.ollama_model`                 | Ollama model name                                                                                | `qwen3-embedding:0.6b`                 |
+| `embedding.pool_size`                    | ORT session pool size (null = auto from RAM)                                                     | `null`                                 |
+| `embedding.cloud_host`                   | Ollama Cloud API host                                                                            | `https://ollama.com`                   |
+| `embedding.cloud_model`                  | Ollama Cloud embedding model name                                                                | `null`                                 |
+| `output.timezone`                        | Timezone (IANA)                                                                                  | `UTC`                                  |
+| `ingest.classification.default`          | Default session_type when no rule matches                                                        | `interactive`                          |
+| `ingest.classification.skip_embed_types` | Session types to skip vector embedding                                                           | `[]`                                   |
+| `graph.semantic_backend`                 | Semantic edge extraction backend (`ollama_cloud` / `ollama` / `lmstudio` / `anthropic` / `none`) | `none`                                 |
+| `graph.cloud_model`                      | Ollama Cloud semantic model                                                                      | `gemma4:31b-cloud`                     |
+| `graph.cloud_host`                       | Ollama Cloud API host                                                                            | `https://ollama.com`                   |
+| `graph.ollama_model`                     | Ollama / LM Studio semantic model                                                                | `gemma4:e4b` / `gemma-4-e4b-it`        |
+| `wiki.default_backend`                   | Wiki generation backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`)                   | `claude`                               |
+| `wiki.review_backend`                    | Wiki review backend (`anthropic` / `claude` / `codex` / `haiku` / `ollama` / `lmstudio`)         | falls back to `wiki.default_backend`   |
+| `wiki.review_model`                      | Wiki review model override                                                                       | `sonnet`                               |
+| `wiki.backends.<name>.api_url`           | Backend API endpoint                                                                             | (default)                              |
+| `wiki.backends.<name>.model`             | Model name for the backend                                                                       | (default)                              |
+| `wiki.backends.<name>.max_tokens`        | Max tokens to generate                                                                           | `4096`                                 |
+| `log.backend`                            | Daily diary backend (`claude` / `codex` / `haiku` / `ollama` / `lmstudio`)                       | falls back to `graph.semantic_backend` |
+| `log.model`                              | Daily diary model override                                                                       | backend default                        |
+| `log.api_url`                            | Daily diary API URL override                                                                     | backend default                        |
+| `log.max_tokens`                         | Daily diary max generation tokens                                                                | backend default                        |
 
 Config file location:
+
 - **macOS**: `~/Library/Application Support/secall/config.toml`
 - **Linux**: `~/.config/secall/config.toml`
 - **Windows**: `%APPDATA%\secall\config.toml`
 
 ## CLI Reference
 
-| Command | Description |
-|---|---|
-| `secall init` | Interactive onboarding (vault, tokenizer, embedding setup) |
-| `secall ingest [path] --auto [--auto-graph]` | Parse and index agent sessions (`--auto-graph` enables graph incremental, default disabled) |
-| `secall sync [--local-only] [--no-wiki] [--no-semantic] [--no-graph]` | Full sync: init → pull → reindex → ingest → wiki_update → graph → push (`--no-graph` skips the graph phase) |
-| `secall recall <query>` | Hybrid search (automated sessions excluded by default) |
-| `secall recall <query> --include-automated` | Search including automated sessions |
-| `secall get <id> [--full]` | Retrieve session details |
-| `secall status` | Index statistics + settings summary |
-| `secall embed [--all]` | Generate vector embeddings |
-| `secall classify [--dry-run]` | Backfill session types using config rules |
-| `secall lint` | Verify index/vault integrity |
-| `secall mcp [--http <addr>]` | Start MCP server |
-| `secall config show\|set\|path` | View/change settings |
-| `secall config llm show\|set\|where` | View/change only LLM-related settings |
-| `secall graph build\|stats\|export` | Knowledge graph management |
-| `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]` | Rebuild semantic graph (P37) — priority: `--session` > `--all` > `--retry-failed` > `--since` |
-| `secall wiki update [--backend claude\|codex\|haiku\|ollama\|lmstudio] [--review] [--review-backend <name>]` | Wiki generation with optional review |
-| `secall wiki status` | Wiki status |
-| `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]` | Generate a daily work log |
-| `secall serve [--port <port>] [--allow-config-edit]` | Start REST API + Web UI (`/settings` save requires the flag) |
-| `secall log [YYYY-MM-DD]` | Generate daily work diary |
-| `secall serve [--port <port>]` | Start REST API server (default: 8080) |
-| `secall model download\|info\|check` | ONNX model management |
-| `secall reindex --from-vault` | Rebuild DB from vault |
-| `secall migrate summary` | Backfill summary frontmatter |
+| Command                                                                                                      | Description                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `secall init`                                                                                                | Interactive onboarding (vault, tokenizer, embedding setup)                                                  |
+| `secall ingest [path] --auto [--auto-graph]`                                                                 | Parse and index agent sessions (`--auto-graph` enables graph incremental, default disabled)                 |
+| `secall sync [--local-only] [--no-wiki] [--no-semantic] [--no-graph]`                                        | Full sync: init → pull → reindex → ingest → wiki_update → graph → push (`--no-graph` skips the graph phase) |
+| `secall recall <query>`                                                                                      | Hybrid search (automated sessions excluded by default)                                                      |
+| `secall recall <query> --include-automated`                                                                  | Search including automated sessions                                                                         |
+| `secall get <id> [--full]`                                                                                   | Retrieve session details                                                                                    |
+| `secall status`                                                                                              | Index statistics + settings summary                                                                         |
+| `secall embed [--all]`                                                                                       | Generate vector embeddings                                                                                  |
+| `secall classify [--dry-run]`                                                                                | Backfill session types using config rules                                                                   |
+| `secall lint`                                                                                                | Verify index/vault integrity                                                                                |
+| `secall mcp [--http <addr>]`                                                                                 | Start MCP server                                                                                            |
+| `secall config show\|set\|path`                                                                              | View/change settings                                                                                        |
+| `secall config llm show\|set\|where`                                                                         | View/change only LLM-related settings                                                                       |
+| `secall graph build\|stats\|export`                                                                          | Knowledge graph management                                                                                  |
+| `secall graph rebuild [--since <date>\|--session <id>\|--all\|--retry-failed]`                               | Rebuild semantic graph (P37) — priority: `--session` > `--all` > `--retry-failed` > `--since`               |
+| `secall wiki update [--backend claude\|codex\|haiku\|ollama\|lmstudio] [--review] [--review-backend <name>]` | Wiki generation with optional review                                                                        |
+| `secall wiki status`                                                                                         | Wiki status                                                                                                 |
+| `secall log [YYYY-MM-DD] [--backend <name>] [--model <name>]`                                                | Generate a daily work log                                                                                   |
+| `secall serve [--port <port>] [--allow-config-edit]`                                                         | Start REST API + Web UI (`/settings` save requires the flag)                                                |
+| `secall log [YYYY-MM-DD]`                                                                                    | Generate daily work diary                                                                                   |
+| `secall serve [--port <port>]`                                                                               | Start REST API server (default: 8080)                                                                       |
+| `secall model download\|info\|check`                                                                         | ONNX model management                                                                                       |
+| `secall reindex --from-vault`                                                                                | Rebuild DB from vault                                                                                       |
+| `secall migrate summary`                                                                                     | Backfill summary frontmatter                                                                                |
 
 ## MCP Integration
 
@@ -755,13 +771,17 @@ For auto-sync on session start/end:
 ```json
 {
   "hooks": {
-    "SessionStart": [{
-      "matcher": "startup|resume",
-      "hooks": [{"type": "command", "command": "secall sync --local-only"}]
-    }],
-    "SessionEnd": [{
-      "hooks": [{"type": "command", "command": "secall sync"}]
-    }]
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [{ "type": "command", "command": "secall sync --local-only" }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [{ "type": "command", "command": "secall sync" }]
+      }
+    ]
   }
 }
 ```
@@ -774,19 +794,19 @@ For auto-sync on session start/end:
 
 ## Tech Stack
 
-| Category | Technology |
-|---|---|
-| Language | Rust 1.75+ (2021 edition) |
-| Database | SQLite with FTS5 (rusqlite, bundled) |
-| Korean NLP | Lindera ko-dic + Kiwi-rs morpheme analysis (macOS/Linux) |
-| Platforms | macOS, Windows (x86_64), Linux (CI) |
-| Embeddings | Ollama BGE-M3 (1024-dim) / ONNX Runtime (optional) |
-| ANN Index | usearch HNSW (macOS/Linux) |
-| MCP Server | rmcp (stdio + Streamable HTTP via axum) |
-| Vault | Obsidian-compatible Markdown |
-| REST API | axum (with CORS) |
-| Wiki Engine | Claude Code / Codex CLI / Ollama / LM Studio / Gemini (pluggable backends) |
-| Obsidian Plugin | obsidian-secall (TypeScript, esbuild) |
+| Category        | Technology                                                                 |
+| --------------- | -------------------------------------------------------------------------- |
+| Language        | Rust 1.75+ (2021 edition)                                                  |
+| Database        | SQLite with FTS5 (rusqlite, bundled)                                       |
+| Korean NLP      | Lindera ko-dic + Kiwi-rs morpheme analysis (macOS/Linux)                   |
+| Platforms       | macOS, Windows (x86_64), Linux (CI)                                        |
+| Embeddings      | Ollama BGE-M3 (1024-dim) / ONNX Runtime (optional)                         |
+| ANN Index       | usearch HNSW (macOS/Linux)                                                 |
+| MCP Server      | rmcp (stdio + Streamable HTTP via axum)                                    |
+| Vault           | Obsidian-compatible Markdown                                               |
+| REST API        | axum (with CORS)                                                           |
+| Wiki Engine     | Claude Code / Codex CLI / Ollama / LM Studio / Gemini (pluggable backends) |
+| Obsidian Plugin | obsidian-secall (TypeScript, esbuild)                                      |
 
 ## Acknowledgments
 
@@ -808,42 +828,42 @@ This project was developed using AI coding agents (Claude Code, Codex) orchestra
 
 ## Updates
 
-> NOTE: git tag (v0.x.x) is the SSOT. P34~P44 in the table below are internal phases of the v0.4.0 release, and P49~P56 are phases of v0.5.0.
+> NOTE: git tag (v0.x.x) is the SSOT. P34~~P44 in the table below are internal phases of the v0.4.0 release, and P49~~P56 are phases of v0.5.0.
 
-| Date | Version/Phase | Changes |
-|------|---------|---------|
-| 2026-07-03 | **v0.6.5** | Search-quality overhaul — loanword alias + OR/prefix FTS query (#118), default embedding → `qwen3-embedding:0.6b` (#120), wiki semantic query config-path fix (#121); zero-turn session healing (#115); web UI session delete (#108); dead-link cleanup (Closes #114). **v0.6.1–v0.6.4 and full details: [CHANGELOG.md](CHANGELOG.md).** |
-| 2026-05-15 | **v0.5.0** | Cumulative release (P49~P56) — TMPDIR/secall-prompt noise ingest filter (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian auto-hidden, breaking), `LlmBackend` trait + 4-backend unification (P50-B), wiki/ingest large-function decomposition (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4-backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target label fix (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` fields + claude CLI `haiku` alias (P56) |
-| 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` now auto-runs `auto_commit + pull` at startup, regenerates conflicted `wiki/*.md` pages from the union of both sides' `sources`, adds `--no-pull`, and removes body concatenation from `merge_with_existing()` |
-| 2026-05-09 | P43 (v0.4.0+) | Wiki review backend expansion: `wiki update --review` now supports `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic`, adds `[wiki].review_backend` + `--review-backend`, preserves user comments with `toml_edit` config saves, and adds `docs/reference/llm-config.md` |
-| 2026-05-09 | P41 (v0.4.0+) | LLM config integration: `secall log --backend/--model`, new `[log]` section, centralized default-model constants + warnings, `GET /api/config` / `PATCH /api/config/{section}`, web `/settings`, `secall config llm show\|set\|where` |
-| 2026-05-06 | P40 (v0.4.0) | Wiki search hybrid mode: `wiki_vectors` table (DB v9, page-level embeddings via bge-m3 + Ollama), `WikiIndexer` with SHA-256 content-hash for idempotent indexing and orphan cleanup, `do_wiki_search` extended with `mode={keyword\|semantic\|hybrid}` param (default `keyword` — backward compatible) and RRF (k=60) fusion for hybrid, automatic keyword fallback when Ollama is unavailable / embedding fails, new CLI `secall wiki vectorize [--force] [--model bge-m3] [--ollama-url ...]` for one-shot backfill, regression coverage in `tests/{db_migrations,wiki_indexer,wiki_search_modes}.rs` |
-| 2026-05-05 | P39 (v0.4.0) | wiki pipeline baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` now uses `git add -A` so SCHEMA.md / graph/ / log/ are all staged (`crates/secall-core/src/vault/git.rs:146`, 8 regression tests in `tests/vault_auto_commit.rs`), `secall` binary autoloads `.env` via `dotenvy::dotenv()` on startup (`crates/secall/src/main.rs:382` — Gemini/OpenAI keys injected automatically), 683-session sync baseline measurement (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` backfilled 28 sessions / 840 edges |
-| 2026-05-03 | P38 (v0.4.0) | test gap closure: `tests/rest_routes.rs` (REST 22-endpoint route-level regression, 45 tests) + `tests/session_repo_helpers.rs` (cumulative P32~P37 helper regression, 29 tests) — 74 new P38 tests in total, Insight TES-session_repo findings resolved |
-| 2026-05-03 | P37 (v0.4.0) | Graph Sync automation: DB schema v8 (`sessions.semantic_extracted_at` column tracks semantic-extraction state), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (with `extract_one_session_semantic` helper extracted, priority: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, integrated with the P33 single-queue + P36 cancellation), 4th "Graph Rebuild" card on the web UI Commands page + options dialog |
-| 2026-05-02 | P36 (v0.4.0) | Job Cancellation: `tokio_util::sync::CancellationToken` integration (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` trait method, sync/ingest/wiki adapter safe-point polling (between phases, file/session loop tops, before LLM calls), partial-result preservation, `POST /api/jobs/{id}/cancel` activated (200 idempotent / 404 unknown, final event `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI cancel button (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`) |
-| 2026-05-02 | P35 (v0.4.0) | Web UI Phase 3: `/api/tags` endpoint (with_counts option, removes 100-session heuristic), SessionList infinite scroll (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunks, initial entry JS ≤ 250 kB gzip) |
-| 2026-05-02 | P34 (v0.4.0) | Web UI Phase 2: semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7 |
-| 2026-05-02 | v0.4.0 | Web UI Phase 1 (P33): command triggers (Sync/Ingest/Wiki Update), SSE progress streaming (per phase), Job system (single queue + 7-day cleanup + interrupted recovery), global progress banner + toast, graph incremental (`secall ingest --auto-graph`, `secall sync --no-graph`), wiki body GET endpoint (`/api/wiki/{project}`), DB v6 (`jobs` table) |
-| 2026-04-15 | v0.3.2 | Gemini API backend (semantic graph + diary), Codex wiki backend (PR #29), REST API server (`secall serve`), Obsidian plugin (search/daily/graph views), daily work log (`secall log`), semantic edges (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), auto-disable graph semantic in BM25-only mode (#25) |
-| 2026-04-12 | v0.3.1 | `secall lint --fix` stale DB cleanup (#15), `wiki_search` created/updated fields (#13), P20 test coverage (+16 tests) |
-| 2026-04-12 | v0.3.0 | Session classification (regex rules, `secall classify`), wiki pluggable backends (Ollama, LM Studio), `--include-automated` flag |
-| 2026-04-10 | P17 | Interactive onboarding (`secall init` wizard), `secall config` CLI, git branch configuration |
-| 2026-04-10 | P16 | Knowledge Graph — deterministic graph extraction from frontmatter, `secall graph build/stats/export`, MCP `graph_query`, sync Phase 3.7 |
-| 2026-04-09 | P15 | Windows runtime fixes — Ollama NaN tolerance, cross-platform `command_exists`, sync conflict preflight |
-| 2026-04-09 | P14 | Search quality — independent vector execution, session-level result diversity |
-| 2026-04-09 | P13 | Windows build support — `x86_64-pc-windows-msvc` CI/Release, ORT DLL bundling |
-| 2026-04-09 | v0.2.3 | ChatGPT export parser — `conversations.json` (ZIP), mapping tree linearization |
-| 2026-04-08 | v0.2.2 | Timezone configuration — IANA timezone conversion for vault timestamps |
-| 2026-04-08 | v0.2.1 | `--force` re-ingest + Dataview `::` escaping + AGPL-3.0 LICENSE |
-| 2026-04-07 | P11 | Embedding performance — ORT session pool, batch inference, parallelism (49h → ~3-4h) |
-| 2026-04-07 | P10 | Session `summary` frontmatter — auto-generated from first user turn |
-| 2026-04-06 | P8 | Stabilization + GitHub Actions release workflow |
-| 2026-04-06 | P7 | `--min-turns`, `embed --all`, `wiki_search` MCP tool, `--no-wiki` |
-| 2026-04-05 | v0.2 | claude.ai export parser, ZIP auto-extraction |
-| 2026-04-05 | P6 | ANN index (usearch HNSW) |
-| 2026-04-04 | P5 | Multi-device vault Git sync, `secall sync`, `reindex --from-vault` |
-| 2026-03-31 | MVP | Initial release — Claude Code/Codex/Gemini parsers, BM25+vector search, MCP server, Obsidian vault |
+| Date       | Version/Phase | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-07-03 | **v0.6.5**    | Search-quality overhaul — loanword alias + OR/prefix FTS query (#118), default embedding → `qwen3-embedding:0.6b` (#120), wiki semantic query config-path fix (#121); zero-turn session healing (#115); web UI session delete (#108); dead-link cleanup (Closes #114). **v0.6.1–v0.6.4 and full details: [CHANGELOG.md](CHANGELOG.md).**                                                                                                                                                                                                                                                                           |
+| 2026-05-15 | **v0.5.0**    | Cumulative release (P49~P56) — TMPDIR/secall-prompt noise ingest filter (P49) + `raw/sessions/` → `raw/.sessions/` rename (obsidian auto-hidden, breaking), `LlmBackend` trait + 4-backend unification (P50-B), wiki/ingest large-function decomposition (P50-C/D/E), graph/log default `ollama_cloud` (P51, breaking), wiki 4-backend `generate()` 300s timeout — `kill_on_drop` (P52), wiki `--since` target label fix (P53), `secall lint --fix-orphan-vault` (P54), `ollama_cloud` wiki review/generation backend (P55), `WikiBackendConfig.cloud_*` fields + claude CLI `haiku` alias (P56)                   |
+| 2026-05-10 | P44 (v0.4.0+) | Wiki cross-host merge: `wiki update` now auto-runs `auto_commit + pull` at startup, regenerates conflicted `wiki/*.md` pages from the union of both sides' `sources`, adds `--no-pull`, and removes body concatenation from `merge_with_existing()`                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-05-09 | P43 (v0.4.0+) | Wiki review backend expansion: `wiki update --review` now supports `claude` / `codex` / `haiku` / `ollama` / `lmstudio` / `anthropic`, adds `[wiki].review_backend` + `--review-backend`, preserves user comments with `toml_edit` config saves, and adds `docs/reference/llm-config.md`                                                                                                                                                                                                                                                                                                                           |
+| 2026-05-09 | P41 (v0.4.0+) | LLM config integration: `secall log --backend/--model`, new `[log]` section, centralized default-model constants + warnings, `GET /api/config` / `PATCH /api/config/{section}`, web `/settings`, `secall config llm show\|set\|where`                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-05-06 | P40 (v0.4.0)  | Wiki search hybrid mode: `wiki_vectors` table (DB v9, page-level embeddings via bge-m3 + Ollama), `WikiIndexer` with SHA-256 content-hash for idempotent indexing and orphan cleanup, `do_wiki_search` extended with `mode={keyword\|semantic\|hybrid}` param (default `keyword` — backward compatible) and RRF (k=60) fusion for hybrid, automatic keyword fallback when Ollama is unavailable / embedding fails, new CLI `secall wiki vectorize [--force] [--model bge-m3] [--ollama-url ...]` for one-shot backfill, regression coverage in `tests/{db_migrations,wiki_indexer,wiki_search_modes}.rs`           |
+| 2026-05-05 | P39 (v0.4.0)  | wiki pipeline baseline + sync auto-commit fix + dotenv autoload: `VaultGit::auto_commit` now uses `git add -A` so SCHEMA.md / graph/ / log/ are all staged (`crates/secall-core/src/vault/git.rs:146`, 8 regression tests in `tests/vault_auto_commit.rs`), `secall` binary autoloads `.env` via `dotenvy::dotenv()` on startup (`crates/secall/src/main.rs:382` — Gemini/OpenAI keys injected automatically), 683-session sync baseline measurement (`docs/baseline/p39-wiki-baseline.md` / `p39-wiki-quality.md` / `p39-p40-decision.md`), `graph rebuild --since 2026-05-05` backfilled 28 sessions / 840 edges |
+| 2026-05-03 | P38 (v0.4.0)  | test gap closure: `tests/rest_routes.rs` (REST 22-endpoint route-level regression, 45 tests) + `tests/session_repo_helpers.rs` (cumulative P32~P37 helper regression, 29 tests) — 74 new P38 tests in total, Insight TES-session_repo findings resolved                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-05-03 | P37 (v0.4.0)  | Graph Sync automation: DB schema v8 (`sessions.semantic_extracted_at` column tracks semantic-extraction state), `secall graph rebuild [--since\|--session\|--all\|--retry-failed]` CLI (with `extract_one_session_semantic` helper extracted, priority: `--session` > `--all` > `--retry-failed` > `--since`), `POST /api/commands/graph-rebuild` REST (`JobKind::GraphRebuild`, integrated with the P33 single-queue + P36 cancellation), 4th "Graph Rebuild" card on the web UI Commands page + options dialog                                                                                                   |
+| 2026-05-02 | P36 (v0.4.0)  | Job Cancellation: `tokio_util::sync::CancellationToken` integration (`JobRegistry`/`JobExecutor`/`BroadcastSink`), `ProgressSink::is_cancelled()` trait method, sync/ingest/wiki adapter safe-point polling (between phases, file/session loop tops, before LLM calls), partial-result preservation, `POST /api/jobs/{id}/cancel` activated (200 idempotent / 404 unknown, final event `Failed { error: "cancelled by user" }` + status=`Interrupted`), web UI cancel button (`JobBanner`/`JobItem`, `useCancelJob` + `window.confirm`)                                                                            |
+| 2026-05-02 | P35 (v0.4.0)  | Web UI Phase 3: `/api/tags` endpoint (with_counts option, removes 100-session heuristic), SessionList infinite scroll (IntersectionObserver, page_size=100), Code-split (vendor react/query/radix/viz + per-route chunks, initial entry JS ≤ 250 kB gzip)                                                                                                                                                                                                                                                                                                                                                          |
+| 2026-05-02 | P34 (v0.4.0)  | Web UI Phase 2: semantic search mode, search-term highlighting, multi-tag + date quick range, keyboard shortcuts (`?`/`/`/`j`/`k`/`[`/`]`/`g d/w/s/c/g`/`f`/`e`), related sessions panel, graph visualization upgrade (dagre + node colors/icons + legend), session metadata mini-chart, user notes editor (`PATCH /api/sessions/{id}/notes`), DB schema v7                                                                                                                                                                                                                                                        |
+| 2026-05-02 | v0.4.0        | Web UI Phase 1 (P33): command triggers (Sync/Ingest/Wiki Update), SSE progress streaming (per phase), Job system (single queue + 7-day cleanup + interrupted recovery), global progress banner + toast, graph incremental (`secall ingest --auto-graph`, `secall sync --no-graph`), wiki body GET endpoint (`/api/wiki/{project}`), DB v6 (`jobs` table)                                                                                                                                                                                                                                                           |
+| 2026-04-15 | v0.3.2        | Gemini API backend (semantic graph + diary), Codex wiki backend (PR #29), REST API server (`secall serve`), Obsidian plugin (search/daily/graph views), daily work log (`secall log`), semantic edges (`fixes_bug`, `modifies_file`, `introduces_tech`, `discusses_topic`), auto-disable graph semantic in BM25-only mode (#25)                                                                                                                                                                                                                                                                                    |
+| 2026-04-12 | v0.3.1        | `secall lint --fix` stale DB cleanup (#15), `wiki_search` created/updated fields (#13), P20 test coverage (+16 tests)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2026-04-12 | v0.3.0        | Session classification (regex rules, `secall classify`), wiki pluggable backends (Ollama, LM Studio), `--include-automated` flag                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2026-04-10 | P17           | Interactive onboarding (`secall init` wizard), `secall config` CLI, git branch configuration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-04-10 | P16           | Knowledge Graph — deterministic graph extraction from frontmatter, `secall graph build/stats/export`, MCP `graph_query`, sync Phase 3.7                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-04-09 | P15           | Windows runtime fixes — Ollama NaN tolerance, cross-platform `command_exists`, sync conflict preflight                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2026-04-09 | P14           | Search quality — independent vector execution, session-level result diversity                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-09 | P13           | Windows build support — `x86_64-pc-windows-msvc` CI/Release, ORT DLL bundling                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-04-09 | v0.2.3        | ChatGPT export parser — `conversations.json` (ZIP), mapping tree linearization                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-04-08 | v0.2.2        | Timezone configuration — IANA timezone conversion for vault timestamps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2026-04-08 | v0.2.1        | `--force` re-ingest + Dataview `::` escaping + AGPL-3.0 LICENSE                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-07 | P11           | Embedding performance — ORT session pool, batch inference, parallelism (49h → ~3-4h)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-04-07 | P10           | Session `summary` frontmatter — auto-generated from first user turn                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2026-04-06 | P8            | Stabilization + GitHub Actions release workflow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-04-06 | P7            | `--min-turns`, `embed --all`, `wiki_search` MCP tool, `--no-wiki`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2026-04-05 | v0.2          | claude.ai export parser, ZIP auto-extraction                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2026-04-05 | P6            | ANN index (usearch HNSW)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2026-04-04 | P5            | Multi-device vault Git sync, `secall sync`, `reindex --from-vault`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2026-03-31 | MVP           | Initial release — Claude Code/Codex/Gemini parsers, BM25+vector search, MCP server, Obsidian vault                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ---
 
