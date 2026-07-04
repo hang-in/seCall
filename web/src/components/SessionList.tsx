@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useNavigate, useParams } from "react-router";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { SessionListItem } from "./SessionListItem";
@@ -129,34 +129,40 @@ export function SessionList({
     overscan: 8,
   });
   const virtualItems = virtualizer.getVirtualItems();
+  // virtualItems 는 매 렌더 새 배열 참조라 deps 에 직접 넣으면 effect 가 매 렌더 실행됨
+  // → 마지막 인덱스(primitive)만 추출해 안정적 의존성으로.
+  const lastItemIndex = virtualItems[virtualItems.length - 1]?.index;
 
   // 무한 스크롤 — 마지막 가상 아이템이 목록 끝에 도달하면 다음 페이지 fetch (sentinel 대체).
   useEffect(() => {
-    const last = virtualItems[virtualItems.length - 1];
     if (
-      last &&
-      last.index >= allItems.length - 1 &&
+      lastItemIndex !== undefined &&
+      lastItemIndex >= allItems.length - 1 &&
       keywordList.hasNextPage &&
       !keywordList.isFetchingNextPage
     ) {
       keywordList.fetchNextPage();
     }
   }, [
-    virtualItems,
+    lastItemIndex,
     allItems.length,
     keywordList.hasNextPage,
     keywordList.isFetchingNextPage,
     keywordList.fetchNextPage,
   ]);
 
-  // j/k 로 선택이 뷰포트 밖으로 나가면 스크롤해 보이게 함 (선택 id 변경 시에만).
+  // 선택된 세션이 뷰포트 밖이면 스크롤해 보이게 함. id 별로 한 번만(ref 가드) 스크롤하되
+  // allItems/virtualizer 도 구독 → 딥링크(/sessions/:id) 진입 시 allItems 가 나중에
+  // 채워져도 재시도되고, 이미 스크롤한 id 는 데이터 갱신 시 점프하지 않는다.
+  const scrolledIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!id) return;
+    if (!id || scrolledIdRef.current === id) return;
     const idx = allItems.findIndex((s) => s.id === id);
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
-    // allItems/virtualizer 제외 — 데이터 갱신 시 스크롤 점프 방지, 선택(id) 변경 시에만 실행.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+    if (idx >= 0) {
+      virtualizer.scrollToIndex(idx, { align: "auto" });
+      scrolledIdRef.current = id;
+    }
+  }, [id, allItems, virtualizer]);
 
   if (useSemantic) {
     if (semanticList.isLoading) {
@@ -272,6 +278,7 @@ export function SessionList({
       >
         {virtualItems.map((vi) => {
           const s = allItems[vi.index];
+          if (!s) return null;
           return (
             <div
               key={s.id}
