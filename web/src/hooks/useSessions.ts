@@ -118,10 +118,64 @@ export function useDeleteSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.deleteSession(id),
-    onSuccess: () => {
+    // 낙관적 삭제 — 백엔드 응답을 기다리지 않고 캐시에서 즉시 제거해 UI "멈춤" 체감을 없앤다.
+    // (백엔드 delete_session_full 의 turns_fts 풀스캔 지연은 별건으로 근본 수정 예정.)
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ["sessions"] });
+      await qc.cancelQueries({ queryKey: ["recall"] });
+      const prev = [
+        ...qc.getQueriesData({ queryKey: ["sessions"] }),
+        ...qc.getQueriesData({ queryKey: ["recall"] }),
+      ];
+      // 무한 스크롤 리스트: pages[].items 에서 제거
+      qc.setQueriesData(
+        { queryKey: ["sessions", "infinite"] },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (old: any) =>
+          old?.pages
+            ? {
+                ...old,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                pages: old.pages.map((p: any) => ({
+                  ...p,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  items: p.items.filter((s: any) => s.id !== id),
+                })),
+              }
+            : old,
+      );
+      // 단일 리스트: items 에서 제거
+      qc.setQueriesData(
+        { queryKey: ["sessions", "list"] },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (old: any) =>
+          old?.items
+            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              { ...old, items: old.items.filter((s: any) => s.id !== id) }
+            : old,
+      );
+      // 시맨틱 결과: results 에서 제거
+      qc.setQueriesData(
+        { queryKey: ["recall"] },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (old: any) =>
+          old?.results
+            ? {
+                ...old,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                results: old.results.filter((r: any) => r.session_id !== id),
+              }
+            : old,
+      );
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      // 실패 시 스냅샷 롤백
+      ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
+      // 서버 상태와 최종 동기화
       qc.invalidateQueries({ queryKey: ["sessions"] });
-      // 시맨틱 검색 결과(["recall","semantic",...])도 무효화 — 시맨틱 모드에서
-      // 삭제 시 목록에서 즉시 사라지도록.
       qc.invalidateQueries({ queryKey: ["recall"] });
     },
   });
