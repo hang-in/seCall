@@ -9,7 +9,7 @@ seCall 의 현재 기준 사실(SSOT) 문서 인덱스. 모든 항목은 "지금
 새 세션에서 컨텍스트를 파악할 때 다음 순서로 읽으면 충분하다.
 
 1. 프로젝트 루트 [`CLAUDE.md`](../../CLAUDE.md) — 프로젝트 전체 규약과 현재 상태 요약
-2. [handoff_2026-07-03.md](handoff_2026-07-03.md) — 최신 세션 핸드오프 (현재 작업 맥락)
+2. [handoff_2026-07-05.md](handoff_2026-07-05.md) — 최신 세션 핸드오프 (현재 작업 맥락)
 3. [core-backlog.md](core-backlog.md) / [web-backlog.md](web-backlog.md) — 현 우선순위와 백로그
 4. 작업 영역별 reference (LLM 설정이면 `llm-config.md`, Wiki 작업이면 `wiki-setup.md` 등)
 5. (필요 시) 관련 [plans](../plans/index.md) / [prompts](../prompts/index.md)
