@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useIsDark } from "@/lib/useIsDark";
 
 /**
@@ -23,12 +23,14 @@ export function MermaidBlock({ code }: { code: string }) {
   const dark = useIsDark();
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const idRef = useRef(`mermaid-${(seq += 1)}`);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setSvg(null);
+    // 렌더 시도마다 고유 ID — code 가 빠르게 바뀌면(스트리밍/타이핑) 이전 렌더가 끝나기
+    // 전에 새 render 가 같은 ID 로 동시 실행돼 mermaid 내부 캐시가 오염되는 레이스를 방지.
+    const renderId = `mermaid-${(seq += 1)}`;
     loadMermaid()
       .then(({ default: mermaid }) => {
         mermaid.initialize({
@@ -36,7 +38,7 @@ export function MermaidBlock({ code }: { code: string }) {
           theme: dark ? "dark" : "default",
           securityLevel: "strict",
         });
-        return mermaid.render(idRef.current, code);
+        return mermaid.render(renderId, code);
       })
       .then((res) => {
         if (!cancelled) setSvg(res.svg);

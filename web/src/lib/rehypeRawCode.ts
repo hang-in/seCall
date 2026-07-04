@@ -35,6 +35,7 @@ export function rehypeRawCode() {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function collectText(node: any): string {
+  if (!node) return "";
   if (node.type === "text") return node.value ?? "";
   if (Array.isArray(node.children))
     return node.children.map(collectText).join("");
