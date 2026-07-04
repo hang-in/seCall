@@ -123,11 +123,14 @@ export function useDeleteSession() {
     onMutate: async (id: string) => {
       await qc.cancelQueries({ queryKey: ["sessions"] });
       await qc.cancelQueries({ queryKey: ["recall"] });
+      // 낙관 업데이트 대상 쿼리만 정밀 백업 — ["sessions"] 전체는 detail 쿼리까지
+      // 잡아 롤백 시 무관한 상세 변경이 유실될 수 있어 제외.
       const prev = [
-        ...qc.getQueriesData({ queryKey: ["sessions"] }),
+        ...qc.getQueriesData({ queryKey: ["sessions", "infinite"] }),
+        ...qc.getQueriesData({ queryKey: ["sessions", "list"] }),
         ...qc.getQueriesData({ queryKey: ["recall"] }),
       ];
-      // 무한 스크롤 리스트: pages[].items 에서 제거
+      // 무한 스크롤 리스트: pages[].items 제거 + total 차감(카운트/끝 표시 정합).
       qc.setQueriesData(
         { queryKey: ["sessions", "infinite"] },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,36 +139,38 @@ export function useDeleteSession() {
             ? {
                 ...old,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                pages: old.pages.map((p: any) => ({
-                  ...p,
+                pages: old.pages.map((p: any) => {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  items: p.items.filter((s: any) => s.id !== id),
-                })),
+                  const items = p.items.filter((s: any) => s.id !== id);
+                  const removed = p.items.length - items.length;
+                  return { ...p, items, total: Math.max(0, p.total - removed) };
+                }),
               }
             : old,
       );
-      // 단일 리스트: items 에서 제거
+      // 단일 리스트: items 제거 + total 차감.
       qc.setQueriesData(
         { queryKey: ["sessions", "list"] },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (old: any) =>
-          old?.items
-            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              { ...old, items: old.items.filter((s: any) => s.id !== id) }
-            : old,
+        (old: any) => {
+          if (!old?.items) return old;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const items = old.items.filter((s: any) => s.id !== id);
+          const removed = old.items.length - items.length;
+          return { ...old, items, total: Math.max(0, (old.total ?? 0) - removed) };
+        },
       );
-      // 시맨틱 결과: results 에서 제거
+      // 시맨틱 결과: results 제거 + count 차감.
       qc.setQueriesData(
         { queryKey: ["recall"] },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (old: any) =>
-          old?.results
-            ? {
-                ...old,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                results: old.results.filter((r: any) => r.session_id !== id),
-              }
-            : old,
+        (old: any) => {
+          if (!old?.results) return old;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const results = old.results.filter((r: any) => r.session_id !== id);
+          const removed = old.results.length - results.length;
+          return { ...old, results, count: Math.max(0, (old.count ?? 0) - removed) };
+        },
       );
       return { prev };
     },
