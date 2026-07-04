@@ -1,9 +1,9 @@
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useState, type RefObject } from "react";
 import { useNavigate, useParams } from "react-router";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { SessionListItem } from "./SessionListItem";
-import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { useListHotkeys } from "@/hooks/useListHotkeys";
 import {
   useDeleteSession,
@@ -23,6 +23,8 @@ interface Props {
   filters: SessionFilterState;
   /** 디폴트 100. 무한 스크롤은 Phase 1. */
   pageSize?: number;
+  /** keyword 리스트 가상화용 스크롤 컨테이너(SessionsRoute 소유). */
+  scrollParentRef: RefObject<HTMLDivElement | null>;
 }
 
 /**
@@ -57,7 +59,13 @@ function recallToSessions(items: RecallResultItem[]): Session[] {
   return out;
 }
 
-export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
+export function SessionList({
+  query,
+  mode,
+  filters,
+  pageSize = 100,
+  scrollParentRef,
+}: Props) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const trimmed = query.trim();
@@ -112,13 +120,43 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
     navigate(`/sessions/${encodeURIComponent(sid)}`),
   );
 
-  // P35 Task 02 — sentinel(= 리스트 끝) 진입 시 다음 페이지 prefetch.
-  // hasNextPage가 false면 observer 자체가 attach되지 않는다.
-  const sentinelRef = useInfiniteScroll({
-    onIntersect: () => keywordList.fetchNextPage(),
-    hasMore: keywordList.hasNextPage ?? false,
-    enabled: !keywordList.isFetchingNextPage,
+  // keyword 리스트 DOM 가상화 (@tanstack/react-virtual). semantic 경로는 단발 30개라 미가상화.
+  // Rules of Hooks: early return 위에서 항상 호출 (semantic 모드에서도 무해, count 만 다름).
+  const virtualizer = useVirtualizer({
+    count: allItems.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => 96,
+    overscan: 8,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+
+  // 무한 스크롤 — 마지막 가상 아이템이 목록 끝에 도달하면 다음 페이지 fetch (sentinel 대체).
+  useEffect(() => {
+    const last = virtualItems[virtualItems.length - 1];
+    if (
+      last &&
+      last.index >= allItems.length - 1 &&
+      keywordList.hasNextPage &&
+      !keywordList.isFetchingNextPage
+    ) {
+      keywordList.fetchNextPage();
+    }
+  }, [
+    virtualItems,
+    allItems.length,
+    keywordList.hasNextPage,
+    keywordList.isFetchingNextPage,
+    keywordList.fetchNextPage,
+  ]);
+
+  // j/k 로 선택이 뷰포트 밖으로 나가면 스크롤해 보이게 함 (선택 id 변경 시에만).
+  useEffect(() => {
+    if (!id) return;
+    const idx = allItems.findIndex((s) => s.id === id);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
+    // allItems/virtualizer 제외 — 데이터 갱신 시 스크롤 점프 방지, 선택(id) 변경 시에만 실행.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (useSemantic) {
     if (semanticList.isLoading) {
@@ -159,7 +197,7 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
             업데이트 중…
           </div>
         )}
-        <div className="divide-y divide-hairline">
+        <div>
           {sessions.map((s, idx) => {
             const score = data.results[idx]?.score;
             return (
@@ -225,20 +263,41 @@ export function SessionList({ query, mode, filters, pageSize = 100 }: Props) {
           업데이트 중…
         </div>
       )}
-      <div className="divide-y divide-hairline">
-        {allItems.map((s) => (
-          <SessionListItem
-            key={s.id}
-            session={s}
-            query={query}
-            selected={s.id === id}
-            onSelect={() => navigate(`/sessions/${encodeURIComponent(s.id)}`)}
-            onDelete={() => setPendingDelete(s)}
-          />
-        ))}
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          position: "relative",
+          width: "100%",
+        }}
+      >
+        {virtualItems.map((vi) => {
+          const s = allItems[vi.index];
+          return (
+            <div
+              key={s.id}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${vi.start}px)`,
+              }}
+            >
+              <SessionListItem
+                session={s}
+                query={query}
+                selected={s.id === id}
+                onSelect={() =>
+                  navigate(`/sessions/${encodeURIComponent(s.id)}`)
+                }
+                onDelete={() => setPendingDelete(s)}
+              />
+            </div>
+          );
+        })}
       </div>
-
-      <div ref={sentinelRef} className="h-10" aria-hidden />
 
       {keywordList.isFetchingNextPage && (
         <div className="p-ds-3 text-t-meta text-text-3 text-center border-t border-hairline flex items-center justify-center gap-ds-2">

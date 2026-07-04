@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Outlet } from "react-router";
 import { CollapsibleFilter } from "@/components/CollapsibleFilter";
 import { SessionFilters } from "@/components/SessionFilters";
@@ -16,6 +16,7 @@ export default function SessionsRoute() {
   const query = useUi((s) => s.query);
   const globalMode = useUi((s) => s.searchMode);
   const [filters, setFilters] = useState<SessionFilterState>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // wiki 모드(`hybrid`)가 store 에 남아 있으면 sessions 에선 keyword 로 폴백.
   const mode: SearchMode =
@@ -26,8 +27,13 @@ export default function SessionsRoute() {
   return (
     <div className="grid grid-cols-[var(--list-w)_1fr] h-full">
       <div className="border-r border-hairline bg-[var(--surface)] flex flex-col overflow-hidden min-h-0">
-        <div className="flex-1 overflow-auto">
-          <SessionList query={query} mode={mode} filters={filters} />
+        <div ref={scrollRef} className="flex-1 overflow-auto">
+          <SessionList
+            query={query}
+            mode={mode}
+            filters={filters}
+            scrollParentRef={scrollRef}
+          />
         </div>
         <CollapsibleFilter filters={filters} resultCount={null}>
           <SessionFilters value={filters} onChange={setFilters} />
