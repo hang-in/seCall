@@ -21,7 +21,7 @@ interface Props {
 
 export function SessionAside({ sessionId, detail }: Props) {
   return (
-    <aside className="w-full max-w-[300px] shrink-0 space-y-ds-4">
+    <aside className="w-full max-w-[300px] shrink-0 space-y-ds-4 lg:sticky lg:top-ds-6 lg:self-start">
       <MetaCard detail={detail} />
       <MiniChartCard detail={detail} />
       <RelatedCard sessionId={sessionId} />

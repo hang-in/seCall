@@ -687,17 +687,18 @@ impl Database {
     /// Returns: (id, project, summary, turn_count, tools_used, session_type)
     pub fn get_sessions_for_date(
         &self,
-        date: &str, // "YYYY-MM-DD"
+        date: &str,         // "YYYY-MM-DD" (요청자 로컬 날짜)
+        tz_offset_min: i64, // 로컬 - UTC (분). 한국=540. UTC start_time 을 로컬로 이동해 날짜 비교.
     ) -> Result<Vec<DailySessionRow>> {
-        let pattern = format!("{}%", date);
+        let modifier = format!("{} minutes", tz_offset_min);
         let mut stmt = self.conn().prepare(
             "SELECT id, project, summary, turn_count, tools_used, session_type
              FROM sessions
-             WHERE start_time LIKE ?1
+             WHERE DATE(start_time, ?1) = ?2
              ORDER BY start_time",
         )?;
         let rows = stmt
-            .query_map([pattern], |row| {
+            .query_map(rusqlite::params![modifier, date], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,

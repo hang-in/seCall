@@ -166,10 +166,10 @@ export const api = {
 
   status: () => jfetch<StatusResponse>("/api/status"),
 
-  daily: (date?: string) =>
+  daily: (date?: string, tzOffset?: number) =>
     jfetch<unknown>("/api/daily", {
       method: "POST",
-      body: JSON.stringify({ date }),
+      body: JSON.stringify({ date, tz_offset: tzOffset }),
     }),
 
   configGet: () => jfetch<AppConfig>("/api/config"),

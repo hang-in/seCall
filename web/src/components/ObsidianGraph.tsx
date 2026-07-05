@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   forceCenter,
   forceCollide,
@@ -123,7 +123,8 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
     return { adjacency: adj, degree: deg };
   }, [fEdges]);
 
-  // d3-force simulation: 마운트 시 한 번 ticking 한 뒤 좌표 고정
+  // 노드/링크 구성만 (좌표는 랜덤 시작 — 실제 배치는 아래 live 시뮬이 애니메이션).
+  // 링크 필터는 id Set 으로 O(E) (이전 some×some = O(E×N) 제거).
   const positioned = useMemo(() => {
     if (fNodes.length === 0) return { nodes: [] as SimNode[], edges: [] as SimLink[] };
     const simNodes: SimNode[] = fNodes.map((n) => ({
@@ -133,14 +134,22 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
       x: (Math.random() - 0.5) * 100,
       y: (Math.random() - 0.5) * 100,
     }));
+    const idSet = new Set(simNodes.map((n) => n.id));
     const simLinks: SimLink[] = fEdges
-      .filter((e) => simNodes.some((n) => n.id === e.source) && simNodes.some((n) => n.id === e.target))
+      .filter((e) => idSet.has(e.source) && idSet.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
+    return { nodes: simNodes, edges: simLinks };
+  }, [fNodes, fEdges]);
 
-    const sim: Simulation<SimNode, SimLink> = forceSimulation(simNodes)
+  // live d3-force 시뮬레이션 — 메인스레드 동기 300-tick(freeze) 대신 rAF 애니메이션.
+  // 노드가 랜덤 시작점에서 퍼지며 순차 등장(Obsidian 거동). alpha 가 식으면 스스로 정지.
+  const [tick, bumpTick] = useReducer((c: number) => c + 1, 0);
+  useEffect(() => {
+    if (positioned.nodes.length === 0) return;
+    const sim: Simulation<SimNode, SimLink> = forceSimulation(positioned.nodes)
       .force(
         "link",
-        forceLink<SimNode, SimLink>(simLinks)
+        forceLink<SimNode, SimLink>(positioned.edges)
           .id((d) => d.id)
           .distance(70)
           .strength(0.35),
@@ -148,12 +157,12 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
       .force("charge", forceManyBody().strength(-180))
       .force("center", forceCenter(0, 0).strength(0.06))
       .force("collide", forceCollide<SimNode>().radius((d) => baseRadius(d.type) + 6))
-      .stop();
-
-    // pre-tick to settle
-    for (let i = 0; i < 300; i++) sim.tick();
-    return { nodes: simNodes, edges: simLinks };
-  }, [fNodes, fEdges]);
+      .on("tick", bumpTick);
+    // 필터 토글 등으로 positioned 가 새로 만들어지면 이전 시뮬 정지(타이머 누수 방지).
+    return () => {
+      sim.stop();
+    };
+  }, [positioned]);
 
   const radius = (n: SimNode): number => {
     const d = degree.get(n.id) ?? 0;
@@ -179,7 +188,8 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
       w: Math.max(200, maxX - minX + pad * 2),
       h: Math.max(200, maxY - minY + pad * 2),
     };
-  }, [positioned.nodes]);
+    // tick 을 deps 에 포함 — 시뮬 애니메이션 중 노드가 움직이면 viewBox 도 따라 갱신.
+  }, [positioned.nodes, tick]);
 
   const isLit = (id: string): boolean =>
     !!hover && (id === hover || (adjacency.get(hover)?.has(id) ?? false));

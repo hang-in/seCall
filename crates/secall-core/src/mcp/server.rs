@@ -886,13 +886,13 @@ impl SeCallMcpServer {
         }))
     }
 
-    pub fn do_daily(&self, date: &str) -> anyhow::Result<serde_json::Value> {
+    pub fn do_daily(&self, date: &str, tz_offset_min: i64) -> anyhow::Result<serde_json::Value> {
         let db = self
             .db
             .lock()
             .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
 
-        let sessions = db.get_sessions_for_date(date)?;
+        let sessions = db.get_sessions_for_date(date, tz_offset_min)?;
         let total_sessions = sessions.len();
 
         // 자동화/노이즈 세션 필터링: 최소 2턴, automated 제외

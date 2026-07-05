@@ -76,13 +76,11 @@ export function SessionList({
   const confirmDelete = () => {
     if (!pendingDelete) return;
     const deletingId = pendingDelete.id;
-    deleteMutation.mutate(deletingId, {
-      onSuccess: () => {
-        setPendingDelete(null);
-        // 삭제한 세션이 현재 열려 있으면 목록으로 이동.
-        if (id === deletingId) navigate("/sessions");
-      },
-    });
+    // 낙관적 삭제(useDeleteSession onMutate)로 목록에서 즉시 사라지므로,
+    // 서버 응답을 기다리지 않고 모달을 닫고 라우팅한다 (UI 멈춤 제거).
+    setPendingDelete(null);
+    if (id === deletingId) navigate("/sessions");
+    deleteMutation.mutate(deletingId);
   };
 
   // 시맨틱 모드 + 비어있지 않은 query에서만 recall 호출. 그 외엔 keyword 리스트.

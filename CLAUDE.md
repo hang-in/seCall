@@ -33,18 +33,21 @@
 ## 3. Documentation Rules
 
 ### File Naming
+
 - Short, 2-4 core tokens (camelCase)
 - Reference: stable names without dates (e.g., `implementationStatus.md`)
 - Plan: `featureNamePlan.md` or `featureNamePlan_YYYY-MM-DD.md`
 - Prompt: `docs/prompts/YYYY-MM-DD/short_name.md`
 
 ### Document Metadata
+
 - Top of every document: `type`, `status`, `updated_at`
 - Status values: `draft` → `in_progress` → `done` → `archived`
 - Reference docs: update same file (no date-based duplication)
 - Plans/prompts: new documents per task allowed (must update index.md)
 
 ### Versioning
+
 - Use `status: archived` + `superseded_by` instead of deletion
 - Brainstorm/comparison docs: mark `canonical: false`
 
@@ -53,16 +56,19 @@
 ## 4. Coding Rules
 
 ### Language
+
 - Respond in the language the user uses (match user's message language)
 - Code, paths, identifiers: keep in original language
 
 ### Code Quality
+
 - Only modify what was requested. Do not clean up surrounding code
 - Error handling: minimize silent fallbacks during development
 - No speculative abstractions or future-proofing
 - Modify one path at a time → verify → proceed to next
 
 ### Testing
+
 - Verify existing tests pass after changes
 - Consider unit tests for new logic
 
@@ -90,6 +96,7 @@
 ## 7. Current Status
 
 ### Completed
+
 - P18 Rev.2 — 세션 분류 regex 사전 컴파일 및 에러 전파
 - P22 Rev.2 — Wiki 파이프라인 (Haiku 생성, lint, review + auto-retry)
 - Semantic graph extraction — 694세션 완료 (348 skipped, 0 failed)
@@ -107,10 +114,12 @@
 - CodeRabbit 자동 PR 리뷰 도입 — Gemini Code Assist 2026-07-17 종료 대체 (공개 레포 무료). PR #117 로 동작 검증 (CodeRabbit + Gemini 둘 다 동일 SSE 오류 잡음). **P3 해결.**
 
 ### In Progress
+
 - (없음) — Open PR 없음. 다음 우선순위는 §8 참고.
   (P26 Gemini API 백엔드는 폐기 — PR #110 에서 dead doc 잔재까지 제거됨)
 
 ### Known Issues
+
 - 기존 DB에 FTS 중복 잔존 (--force reingest로 세션별 정리 가능)
 - Issue #26 — Codex wiki 백엔드 추가 (외부 기여 PR 요청 중)
 

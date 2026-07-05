@@ -1,0 +1,31 @@
+// seCall 문서 lint 설정 — 규칙 근거는 docs/reference/docConventions.md §9
+// 대상: 공개 문서(README 4종 · CLAUDE.md)만.
+// docs/reference·plans·insight 등 내부 WIP/아카이브성 문서는 CI 강제 제외(가이드로 준수).
+{
+  "config": {
+    "default": true,
+    "MD013": false, // 줄 길이 강제 안 함 (§9.7, prettier prose-wrap preserve)
+    "MD033": false, // 인라인 HTML 허용 (README 배지/가운데 정렬, §9.7)
+    "MD041": false, // 첫 줄 최상위 헤딩 강제 안 함 (README 상단 언어 스위처)
+    "MD024": { "siblings_only": true }, // 같은 계층 내에서만 중복 헤딩 금지 (Step 반복 등 허용)
+    "MD004": { "style": "dash" }, // unordered 목록 마커 '-' (§9.2)
+    "MD029": { "style": "ordered" }, // ordered 목록 1. 2. 3. (§9.2)
+    "MD060": false, // 테이블 파이프(CJK 폭) 정렬 강제 안 함 (§9.4)
+    "MD036": false, // 강조를 헤딩 대용으로 쓰는 것 허용(내부 backlog/troubleshooting 라벨)
+    "MD040": true, // fenced code 언어 지정 필수 (§9.3)
+    "MD012": false // 연속 빈 줄 허용(문서 가독성 여지)
+  },
+  "globs": [
+    "README.md",
+    "README.en.md",
+    "README.ja.md",
+    "README.zh.md",
+    "CLAUDE.md"
+  ],
+  "ignores": [
+    "**/node_modules/**",
+    "target/**",
+    "web/**",
+    "obsidian-secall/**"
+  ]
+}

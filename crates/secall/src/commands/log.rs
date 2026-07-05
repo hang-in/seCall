@@ -19,19 +19,28 @@ pub async fn run(
     let config = Config::load_or_default();
     let db = Database::open(&get_default_db_path())?;
 
-    // 날짜 결정 (기본: 오늘)
+    // 날짜 결정 (기본: 오늘) — config timezone 기준
+    let tz = config.timezone();
     let target_date = match date {
         Some(d) => d,
-        None => {
-            let tz = config.timezone();
-            chrono::Utc::now()
-                .with_timezone(&tz)
-                .format("%Y-%m-%d")
-                .to_string()
-        }
+        None => chrono::Utc::now()
+            .with_timezone(&tz)
+            .format("%Y-%m-%d")
+            .to_string(),
     };
+    // config tz 의 UTC 오프셋(분) — get_sessions_for_date 가 UTC start_time 을 이 tz 로
+    // 이동해 날짜를 비교(target_date 와 동일 tz 기준으로 일관).
+    use chrono::Offset;
+    let tz_offset_min = i64::from(
+        chrono::Utc::now()
+            .with_timezone(&tz)
+            .offset()
+            .fix()
+            .local_minus_utc()
+            / 60,
+    );
 
-    let sessions = db.get_sessions_for_date(&target_date)?;
+    let sessions = db.get_sessions_for_date(&target_date, tz_offset_min)?;
     if sessions.is_empty() {
         eprintln!("No sessions found for {}", target_date);
         return Ok(());

@@ -2,14 +2,20 @@ import { Fragment, type ReactNode, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
+import remarkMath from "remark-math";
 import { remarkObsidianCallouts } from "@/lib/remarkObsidianCallouts";
-// remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize: 외부 plugin.
+// remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize / rehype-katex: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { NavLink } from "react-router";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
+import { rehypeRawCode } from "@/lib/rehypeRawCode";
+import { MermaidBlock } from "@/components/MermaidBlock";
+import { HtmlPreview } from "@/components/HtmlPreview";
 import { highlightTerms, tokenizeQuery } from "@/lib/highlight";
 
 interface Props {
@@ -47,7 +53,17 @@ export function MarkdownView({ content, query, className }: Props) {
       li: ({ node: _n, children, ...rest }) => (
         <li {...rest}>{wrapChildren(children, terms)}</li>
       ),
-      code: ({ node: _n, children, className: cls, ...rest }) => {
+      code: ({ node, children, className: cls, ...rest }) => {
+        const lang =
+          typeof cls === "string" ? /language-(\w+)/.exec(cls)?.[1] : undefined;
+        // rehypeRawCode 가 mermaid/html 원본을 properties.dataRaw 로 보존(highlight 이전 텍스트).
+        const dataRaw = node?.properties?.dataRaw as string | undefined;
+        if (lang === "mermaid" && typeof dataRaw === "string") {
+          return <MermaidBlock code={dataRaw.replace(/\n$/, "")} />;
+        }
+        if (lang === "html" && typeof dataRaw === "string") {
+          return <HtmlPreview html={dataRaw} />;
+        }
         // rehype-highlight 가 코드블록 (pre > code) 에 hljs / language-* 클래스를 부여.
         // 검색 하이라이트는 inline code 만 적용 (코드블록은 highlight.js 가 점유).
         const isBlock = typeof cls === "string" && cls.includes("language-");
@@ -97,6 +113,8 @@ export function MarkdownView({ content, query, className }: Props) {
       // 위에 sources/tags 가 노출됐다.
       remarkFrontmatter,
       remarkGfm,
+      // remark-math: `$…$` / `$$…$$` 를 math 노드로 (rehype-katex 가 렌더).
+      remarkMath,
       // remarkObsidianCallouts: vault session md 의 `> [!tool]- Title` 같은
       // Obsidian callout 을 `<details class="callout callout-tool">` 로 변환.
       // claude-code session md 의 thinking/tool 블록이 폴딩 가능한 박스로
@@ -143,15 +161,24 @@ export function MarkdownView({ content, query, className }: Props) {
         ],
         span: [
           ...((defaultSchema.attributes ?? {}).span ?? []),
-          ["className", /^hljs-/],
+          // hljs-* (highlight) + math* (remark-math 중간 노드 → rehype-katex seam).
+          ["className", /^hljs-/, "math", "math-inline", "math-display"],
         ],
       },
     };
+    // 순서가 load-bearing:
+    //   rehypeRaw → rehypeSanitize → rehypeRawCode(mermaid/html 원본 보존) →
+    //   rehypeKatex(sanitize 뒤라 katex 출력이 스트립되지 않음) → rehypeHighlight.
     // unified 의 PluggableList 타입이 tuple form ([plugin, options]) 을 정확히
-    // 매칭하지 못해 cast. plugin/option 호환성은 rehype-sanitize 의 런타임 시그
-    // 니처와 일치.
+    // 매칭하지 못해 cast.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return [rehypeRaw, [rehypeSanitize, schema], rehypeHighlight] as any;
+    return [
+      rehypeRaw,
+      [rehypeSanitize, schema],
+      rehypeRawCode,
+      rehypeKatex,
+      rehypeHighlight,
+    ] as any;
   }, []);
 
   return (
