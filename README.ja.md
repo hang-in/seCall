@@ -98,7 +98,7 @@ seCallはAIエージェントの会話に特化したローカルファースト
 
 Obsidian互換マークダウンボールト (2層構造):
 
-```
+```text
 vault/
 ├── raw/.sessions/   # 不変セッション原本 (dot-prefix → obsidianで自動非表示、v0.5.0+)
 │   └── YYYY-MM-DD/  # 日付別整理
@@ -431,7 +431,7 @@ secall graph rebuild --all                       # 全体再構築 (既存結果
 
 #### Phase 分離 (sync の例)
 
-```
+```text
 sync = init → pull → reindex → ingest → wiki_update → graph → push
 ```
 

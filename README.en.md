@@ -99,7 +99,7 @@ Parse and normalize sessions from multiple AI coding agents into a unified forma
 
 Obsidian-compatible markdown vault with two layers:
 
-```
+```text
 vault/
 ├── raw/.sessions/   # Immutable session transcripts (dot-prefix → obsidian auto-hidden, v0.5.0+)
 │   └── YYYY-MM-DD/  # Organized by date
@@ -432,7 +432,7 @@ Command triggers (sync/ingest/wiki update) run as background jobs:
 
 #### Phase Breakdown (sync example)
 
-```
+```text
 sync = init → pull → reindex → ingest → wiki_update → graph → push
 ```
 

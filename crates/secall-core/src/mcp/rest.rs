@@ -77,6 +77,8 @@ impl From<RestGetParams> for GetParams {
 #[derive(Debug, Deserialize)]
 struct RestDailyParams {
     date: Option<String>, // "YYYY-MM-DD", 기본 오늘
+    #[serde(default)]
+    tz_offset: i64, // 요청자 로컬 - UTC (분). 미전달 시 0(UTC 기준 매칭).
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,7 +312,7 @@ async fn api_daily(
     let date = p
         .date
         .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
-    match s.do_daily(&date) {
+    match s.do_daily(&date, p.tz_offset) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

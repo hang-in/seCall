@@ -1,0 +1,31 @@
+name: docs-lint
+
+# 공개 문서(README 4종 · CLAUDE.md) markdown lint.
+# 규칙/범위는 .markdownlint-cli2.jsonc, 근거는 docs/reference/docConventions.md §9.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/markdownlint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.md"
+      - ".markdownlint-cli2.jsonc"
+      - ".github/workflows/markdownlint.yml"
+
+jobs:
+  markdownlint:
+    name: markdownlint (README · CLAUDE.md)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 로컬 검증과 동일 버전 고정 (재현성)
+      - run: npx --yes markdownlint-cli2@0.23.0
