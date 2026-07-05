@@ -39,7 +39,7 @@ export function SessionListItem({
   const project = session.project ?? null;
 
   return (
-    <div className="relative group">
+    <div className="relative group border-b border-hairline">
       <button
       type="button"
       onClick={onSelect}
