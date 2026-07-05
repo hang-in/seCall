@@ -751,10 +751,16 @@ mod tests {
     #[test]
     fn test_cosine_distance_pre_matches_original() {
         // ① 최적화: query_norm 사전계산 버전이 원본과 동일 결과(무손실)인지 검증.
+        // len 4: SIMD chunk 없이 remainder 경로만
         let a = vec![1.0f32, 2.0, 3.0, 4.0];
         let b = vec![2.0f32, 1.0, 0.5, 3.0];
         let qn = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((cosine_distance(&a, &b) - cosine_distance_pre(&a, qn, &b)).abs() < 1e-6);
+        // len 20: SIMD 8-wide chunk 2개 + remainder 4개 경로 모두 커버
+        let a2: Vec<f32> = (1..=20).map(|i| i as f32 * 0.3).collect();
+        let b2: Vec<f32> = (1..=20).map(|i| (21 - i) as f32 * 0.17).collect();
+        let qn2 = a2.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((cosine_distance(&a2, &b2) - cosine_distance_pre(&a2, qn2, &b2)).abs() < 1e-5);
         // edge: 빈 벡터 / 길이 불일치 → 1.0 (원본과 동일 방어)
         assert_eq!(cosine_distance_pre(&a, qn, &[]), 1.0);
         assert_eq!(cosine_distance_pre(&a, qn, &[1.0]), 1.0);

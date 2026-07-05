@@ -211,10 +211,25 @@ pub(crate) fn cosine_distance_pre(query: &[f32], query_norm: f32, vec: &[f32]) -
     if query.len() != vec.len() || vec.is_empty() {
         return 1.0;
     }
-    let (dot, vec_norm_sq) = query
-        .iter()
-        .zip(vec.iter())
-        .fold((0.0f32, 0.0f32), |(d, n), (&q, &v)| (d + q * v, n + v * v));
+    // 8-wide SIMD 로 dot 과 벡터 norm² 을 동시 누적 (wide crate, 크로스플랫폼).
+    use wide::f32x8;
+    let mut dot_v = f32x8::ZERO;
+    let mut nsq_v = f32x8::ZERO;
+    let mut q_chunks = query.chunks_exact(8);
+    let mut v_chunks = vec.chunks_exact(8);
+    for (q, v) in q_chunks.by_ref().zip(v_chunks.by_ref()) {
+        let qv = f32x8::new(q.try_into().unwrap());
+        let vv = f32x8::new(v.try_into().unwrap());
+        dot_v += qv * vv;
+        nsq_v += vv * vv;
+    }
+    let mut dot = dot_v.reduce_add();
+    let mut vec_norm_sq = nsq_v.reduce_add();
+    // 8 배수가 아닌 나머지 (임베딩 차원이 8 배수면 없음).
+    for (&q, &v) in q_chunks.remainder().iter().zip(v_chunks.remainder()) {
+        dot += q * v;
+        vec_norm_sq += v * v;
+    }
     let vec_norm = vec_norm_sq.sqrt();
     if query_norm == 0.0 || vec_norm == 0.0 {
         return 1.0;

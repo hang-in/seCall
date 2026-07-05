@@ -46,6 +46,7 @@ sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 usearch = "2"
+wide = "0.7"
 gethostname = "0.4"
 serde_yaml = "0.9"
 zip = { version = "=2.3.0", default-features = false, features = ["deflate"] }
