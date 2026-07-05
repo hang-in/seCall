@@ -126,11 +126,13 @@ impl VectorRepo for Database {
             collected
         };
 
+        // query norm 은 벡터마다 불변 → 루프 밖 1회 계산 (기존엔 행마다 재계산했다).
+        let query_norm: f32 = query_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         let mut scored: Vec<(f32, VectorRow)> = rows
             .into_iter()
             .map(|(id, session_id, turn_index, chunk_seq, bytes)| {
                 let embedding = bytes_to_floats(&bytes);
-                let distance = cosine_distance(query_embedding, &embedding);
+                let distance = cosine_distance_pre(query_embedding, query_norm, &embedding);
                 (
                     distance,
                     VectorRow {
@@ -200,6 +202,24 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         return 1.0;
     }
     1.0 - (dot / (norm_a * norm_b))
+}
+
+/// query norm 을 미리 받아 벡터별 재계산을 피하는 코사인 거리 (대량 스캔용).
+/// dot 과 벡터 norm² 을 한 pass 로 함께 누적해 캐시 효율을 높인다.
+/// query_norm 은 호출자가 `query.map(x*x).sum().sqrt()` 로 1회 계산해 전달한다.
+pub(crate) fn cosine_distance_pre(query: &[f32], query_norm: f32, vec: &[f32]) -> f32 {
+    if query.len() != vec.len() || vec.is_empty() {
+        return 1.0;
+    }
+    let (dot, vec_norm_sq) = query
+        .iter()
+        .zip(vec.iter())
+        .fold((0.0f32, 0.0f32), |(d, n), (&q, &v)| (d + q * v, n + v * v));
+    let vec_norm = vec_norm_sq.sqrt();
+    if query_norm == 0.0 || vec_norm == 0.0 {
+        return 1.0;
+    }
+    1.0 - (dot / (query_norm * vec_norm))
 }
 
 // ─── Additional Database methods (vector domain) ─────────────────────────────

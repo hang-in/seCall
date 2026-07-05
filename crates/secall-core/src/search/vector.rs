@@ -634,7 +634,7 @@ fn default_model_path() -> std::path::PathBuf {
 mod tests {
     use super::*;
     use crate::store::db::Database;
-    use crate::store::vector_repo::{bytes_to_floats, cosine_distance};
+    use crate::store::vector_repo::{bytes_to_floats, cosine_distance, cosine_distance_pre};
 
     #[test]
     fn test_vector_indexer_with_trait_object() {
@@ -746,6 +746,18 @@ mod tests {
 
         let c = vec![0.0, 1.0];
         assert!((cosine_distance(&a, &c) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_distance_pre_matches_original() {
+        // ① 최적화: query_norm 사전계산 버전이 원본과 동일 결과(무손실)인지 검증.
+        let a = vec![1.0f32, 2.0, 3.0, 4.0];
+        let b = vec![2.0f32, 1.0, 0.5, 3.0];
+        let qn = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!((cosine_distance(&a, &b) - cosine_distance_pre(&a, qn, &b)).abs() < 1e-6);
+        // edge: 빈 벡터 / 길이 불일치 → 1.0 (원본과 동일 방어)
+        assert_eq!(cosine_distance_pre(&a, qn, &[]), 1.0);
+        assert_eq!(cosine_distance_pre(&a, qn, &[1.0]), 1.0);
     }
 
     fn make_meta(is_archived: bool) -> SessionMeta {
