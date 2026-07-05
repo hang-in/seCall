@@ -276,7 +276,6 @@ Windows에서는 일부 기능이 fallback으로 동작합니다.
 
 기능| Windows 동작
 HNSW ANN 인덱스| "usearch" 미사용, BLOB 코사인 스캔 fallback
-Kiwi-rs| 미지원, Lindera ko-dic fallback
 
 ---
 

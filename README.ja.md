@@ -264,7 +264,6 @@ brew install hang-in/tap/secall
 > **Windowsユーザー**: コア機能 (パース、BM25検索、vault、MCP) は同じように動作します。以下の機能はMSVC非対応のため無効化されます:
 >
 > - **HNSW ANNインデックス** (`usearch`) — BLOBコサインスキャンへフォールバック
-> - **Kiwi-rs形態素解析** — Lindera ko-dic へフォールバック
 
 ### Step 2. 初期化
 
@@ -777,7 +776,7 @@ Claude Code 設定 (`~/.claude/settings.json`) に追加:
 | ------------------- | ---------------------------------------------------------------------------------- |
 | 言語                | Rust 1.75+ (2021 edition)                                                          |
 | データベース        | SQLite + FTS5 (rusqlite, bundled)                                                  |
-| 韓国語 NLP          | Lindera ko-dic + Kiwi-rs 形態素解析 (macOS/Linux)                                  |
+| 韓国語 NLP          | Lindera ko-dic + Kiwi-rs 形態素解析                                  |
 | プラットフォーム    | macOS, Windows (x86_64), Linux (CI)                                                |
 | エンベディング      | Ollama BGE-M3 (1024次元) / ONNX Runtime (オプション)                               |
 | ANN インデックス    | usearch HNSW (macOS/Linux)                                                         |

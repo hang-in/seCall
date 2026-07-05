@@ -264,7 +264,6 @@ brew install hang-in/tap/secall
 > **Windows 用户**: 核心功能（解析、BM25 搜索、vault、MCP）行为一致。以下功能因 MSVC 不支持而禁用:
 >
 > - **HNSW ANN 索引** (`usearch`) — 退化为 BLOB 余弦扫描
-> - **Kiwi-rs 形态素分析** — 退化为 Lindera ko-dic
 
 ### Step 2. 初始化
 
@@ -777,7 +776,7 @@ secall serve --port 8080 --allow-config-edit
 | ------------- | ------------------------------------------------------------------- |
 | 语言          | Rust 1.75+（2021 edition）                                          |
 | 数据库        | SQLite + FTS5 (rusqlite, bundled)                                   |
-| 韩语 NLP      | Lindera ko-dic + Kiwi-rs 形态素分析 (macOS/Linux)                   |
+| 韩语 NLP      | Lindera ko-dic + Kiwi-rs 形态素分析                   |
 | 平台          | macOS、Windows (x86_64)、Linux (CI)                                 |
 | 嵌入          | Ollama BGE-M3（1024 维）/ ONNX Runtime（可选）                      |
 | ANN 索引      | usearch HNSW (macOS/Linux)                                          |

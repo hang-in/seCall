@@ -265,7 +265,6 @@ brew install hang-in/tap/secall
 > **Windows users**: Core features (parsing, BM25 search, vault, MCP) work identically. The following are disabled due to MSVC limitations:
 >
 > - **HNSW ANN index** (`usearch`) — falls back to BLOB cosine scan
-> - **Kiwi-rs morpheme analysis** — falls back to Lindera ko-dic
 
 ### Step 2. Initialize
 
@@ -798,7 +797,7 @@ For auto-sync on session start/end:
 | --------------- | -------------------------------------------------------------------------- |
 | Language        | Rust 1.75+ (2021 edition)                                                  |
 | Database        | SQLite with FTS5 (rusqlite, bundled)                                       |
-| Korean NLP      | Lindera ko-dic + Kiwi-rs morpheme analysis (macOS/Linux)                   |
+| Korean NLP      | Lindera ko-dic + Kiwi-rs morpheme analysis                                 |
 | Platforms       | macOS, Windows (x86_64), Linux (CI)                                        |
 | Embeddings      | Ollama BGE-M3 (1024-dim) / ONNX Runtime (optional)                         |
 | ANN Index       | usearch HNSW (macOS/Linux)                                                 |
