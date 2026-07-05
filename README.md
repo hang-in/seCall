@@ -19,16 +19,46 @@ Claude Code, Codex CLI, Gemini CLI, claude.ai, ChatGPT 세션을 수집해 Obsid
 
 ---
 
+## 목차
+
+- [seCall이 필요한 이유](#secall이-필요한-이유)
+- [주요 기능](#주요-기능)
+- [지원하는 세션 형식](#지원하는-세션-형식)
+- [빠른 시작](#빠른-시작)
+  - [1. 설치](#1-설치)
+  - [2. 초기화](#2-초기화)
+  - [3. 세션 수집](#3-세션-수집)
+  - [4. 검색](#4-검색)
+- [Web UI](#web-ui)
+- [MCP 서버](#mcp-서버)
+- [볼트 구조](#볼트-구조)
+- [검색 구조](#검색-구조)
+- [Knowledge Graph](#knowledge-graph)
+- [Wiki 생성](#wiki-생성)
+- [작업 일기](#작업-일기)
+- [멀티 기기 동기화](#멀티-기기-동기화)
+- [데이터 무결성 검사](#데이터-무결성-검사)
+- [설정](#설정)
+- [CLI 레퍼런스](#cli-레퍼런스)
+- [개발](#개발)
+- [아키텍처](#아키텍처)
+- [기술 스택](#기술-스택)
+- [참고한 프로젝트와 아이디어](#참고한-프로젝트와-아이디어)
+- [업데이트 이력](#업데이트-이력)
+- [라이선스](#라이선스)
+
+---
+
 ## seCall이 필요한 이유
 
 AI 에이전트를 오래 쓰다 보면 중요한 작업 기록이 여러 위치에 흩어집니다.
 
-* Claude Code / Codex / Gemini 세션 로그
-* ChatGPT / claude.ai export 파일
-* 디버깅 과정
-* 아키텍처 결정
-* 임시 설계 메모
-* “지난번에 어떻게 해결했더라?” 싶은 대화
+- Claude Code / Codex / Gemini 세션 로그
+- ChatGPT / claude.ai export 파일
+- 디버깅 과정
+- 아키텍처 결정
+- 임시 설계 메모
+- “지난번에 어떻게 해결했더라?” 싶은 대화
 
 seCall은 이 기록을 로컬에 모으고, 원본 transcript를 보존한 뒤, 그 위에 AI가 정리한 위키를 얹습니다.
 
@@ -88,10 +118,10 @@ cargo install --path crates/secall --no-default-features
 
 웹 UI까지 포함해 직접 빌드하려면 다음 도구가 필요합니다.
 
-* Rust 1.75+
-* Node 22
-* pnpm 9
-* just
+- Rust 1.75+
+- Node 22
+- pnpm 9
+- just
 
 ```bash
 git clone https://github.com/hang-in/seCall.git
@@ -701,13 +731,13 @@ interfaces
 
 ## 참고한 프로젝트와 아이디어
 
-* [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM으로 원본 자료에서 점진적 지식 베이스를 만드는 패턴
-* [qmd](https://github.com/tobi/qmd) — Markdown 파일용 로컬 검색 엔진
-* [graphify](https://github.com/safishamsi/graphify) — 파일 폴더를 Knowledge Graph로 변환하는 접근
+- [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM으로 원본 자료에서 점진적 지식 베이스를 만드는 패턴
+- [qmd](https://github.com/tobi/qmd) — Markdown 파일용 로컬 검색 엔진
+- [graphify](https://github.com/safishamsi/graphify) — 파일 폴더를 Knowledge Graph로 변환하는 접근
 
 **관련 프로젝트** (참고한 게 아니라 같은 패턴을 독립적으로 구현한 이웃 작업):
 
-* [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) — 같은 LLM Wiki 패턴을 독립 구현한 풀 데스크톱 앱(Tauri): source 추적 · 지식그래프 · 시맨틱 검색 · MCP · Obsidian 호환. seCall 과 소스 관계는 없고, 동일 패턴을 다르게 적용한 사례(데스크톱 앱 ↔ seCall 의 세션 로그 CLI/MCP).
+- [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) — 같은 LLM Wiki 패턴을 독립 구현한 풀 데스크톱 앱(Tauri): source 추적 · 지식그래프 · 시맨틱 검색 · MCP · Obsidian 호환. seCall 과 소스 관계는 없고, 동일 패턴을 다르게 적용한 사례(데스크톱 앱 ↔ seCall 의 세션 로그 CLI/MCP).
 
 seCall은 AI 코딩 에이전트인 Claude Code와 Codex를 [tunaFlow](https://github.com/hang-in/tunaFlow) 멀티에이전트 워크플로우로 오케스트레이션하여 개발되었습니다.
 
