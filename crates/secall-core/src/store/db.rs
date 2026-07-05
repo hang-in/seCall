@@ -628,11 +628,11 @@ mod tests {
         }];
         db.insert_session(&s2).unwrap();
 
-        let rows = db.get_sessions_for_date("2026-04-10").unwrap();
+        let rows = db.get_sessions_for_date("2026-04-10", 0).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "date-001");
 
-        let empty = db.get_sessions_for_date("2026-04-12").unwrap();
+        let empty = db.get_sessions_for_date("2026-04-12", 0).unwrap();
         assert!(empty.is_empty());
     }
 
