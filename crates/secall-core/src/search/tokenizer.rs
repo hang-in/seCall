@@ -106,15 +106,20 @@ impl Tokenizer for LinderaKoTokenizer {
 mod kiwi_impl {
     use super::*;
 
-    /// libkiwi release tag this build's kiwi-rs ABI (the 7-field / 48-byte
-    /// `KiwiAnalyzeOption` layout) is verified against. `Kiwi::init()` would
-    /// otherwise auto-download `latest`; a future libkiwi that appends more
-    /// fields to `kiwi_analyze_option_t` would then desync from the compiled
-    /// struct and reintroduce the by-value ABI SIGSEGV fixed in PR #143.
-    /// Bump deliberately on each Kiwi upgrade after re-checking `capi.h`.
-    /// (Only affects the auto-download fallback — an already-installed libkiwi
-    /// discovered via `KIWI_LIBRARY_PATH`/cache is used as-is by `Kiwi::new()`.)
-    pub(super) const KIWI_LIBKIWI_TAG: &str = "v0.23.2";
+    /// libkiwi release tag pinned for kiwi-rs's auto-download fallback. This is
+    /// the version VERIFIED to work with the pinned kiwi-rs fork's FFI binding.
+    ///
+    /// WARNING: do NOT bump to v0.23.x. libkiwi >= 0.23 currently SIGSEGVs in
+    /// `Kiwi::new()` (the kiwi builder/init path) with this binding, even though
+    /// the standalone `kiwi-cli` 0.23.x tokenizes fine with the same lib+model.
+    /// PR #143 fixed the analyze-path `KiwiAnalyzeOption` ABI, but a separate
+    /// init-path 0.23 incompatibility remains and needs upstream kiwi-rs work.
+    /// Verified empirically: 0.22.2 tokenizes; 0.23.2 crashes in init.
+    ///
+    /// Only affects the auto-download fallback. An already-installed libkiwi
+    /// found via `KIWI_LIBRARY_PATH` or default discovery is used as-is by
+    /// `Kiwi::new()`, so a user who manually installed 0.23.x can still crash.
+    pub(super) const KIWI_LIBKIWI_TAG: &str = "v0.22.2";
 
     /// Newtype wrapper so we can impl Send without Sync.
     /// kiwi_rs::Kiwi contains *mut c_void + RefCell internals — not Sync.
