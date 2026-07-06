@@ -146,7 +146,7 @@ fn print_related_sessions(related: &[RelatedSession]) {
         }
         println!(
             "      → secall get {}",
-            &r.session_id[..r.session_id.len().min(8)]
+            r.session_id.chars().take(8).collect::<String>()
         );
         println!();
     }

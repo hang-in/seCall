@@ -43,7 +43,10 @@ enum GeminiWebContent {
 
 #[derive(Debug, Deserialize)]
 struct GeminiWebPart {
-    text: String,
+    // 이미지/thought/function 등 text 가 없는 파트도 있으므로 lenient.
+    // 필드가 없거나 non-text 파트여도 전체 대화가 드롭되지 않도록 Option 처리한다.
+    #[serde(default)]
+    text: Option<String>,
 }
 
 // ── 변환 함수 ──────────────────────────────────────────────────────────────────
@@ -80,7 +83,8 @@ fn json_to_session(export: GeminiWebExport) -> Session {
                 GeminiWebContent::Text(s) => s,
                 GeminiWebContent::Parts(parts) => parts
                     .into_iter()
-                    .map(|p| p.text)
+                    .filter_map(|p| p.text)
+                    .filter(|t| !t.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n"),
             };
@@ -254,6 +258,54 @@ mod tests {
         assert_eq!(session.turns[0].content, "내일 날씨 알려줘");
         assert_eq!(session.turns[1].role, Role::Assistant);
         assert_eq!(session.model, Some("2.5 Flash".to_string()));
+    }
+
+    // 이미지/thought/function 등 text 가 없는 파트를 포함한 대화.
+    // 이전에는 GeminiWebPart.text 가 필수라서 serde 역직렬화가 실패하고
+    // 대화 전체가 조용히 드롭됐다.
+    const SAMPLE_JSON_NONTEXT_PART: &str = r#"{
+  "sessionId": "deadbeefcafef00d",
+  "title": "이미지 포함 세션",
+  "startTime": "2025-07-26T10:00:00.000Z",
+  "lastUpdated": "2025-07-26T10:00:10.000Z",
+  "kind": "main",
+  "projectHash": "gemini-web",
+  "messages": [
+    {
+      "id": "msg-0",
+      "timestamp": "2025-07-26T10:00:00.000Z",
+      "type": "user",
+      "content": [
+        { "inlineData": { "mimeType": "image/png", "data": "AAAA" } },
+        { "text": "이 이미지 설명해줘" }
+      ]
+    },
+    {
+      "id": "msg-1",
+      "timestamp": "2025-07-26T10:00:05.000Z",
+      "type": "gemini",
+      "content": [
+        { "thought": true },
+        { "text": "고양이 사진입니다." }
+      ],
+      "model": "2.5 Flash"
+    }
+  ]
+}"#;
+
+    #[test]
+    fn test_json_to_session_nontext_part_kept() {
+        // 비-text 파트가 있어도 대화가 드롭되지 않고 text 메시지는 유지되어야 한다.
+        let export: GeminiWebExport = serde_json::from_str(SAMPLE_JSON_NONTEXT_PART)
+            .expect("non-text part should not fail deserialization");
+        let session = json_to_session(export);
+
+        assert_eq!(session.id, "deadbeefcafef00d");
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.turns[0].role, Role::User);
+        assert_eq!(session.turns[0].content, "이 이미지 설명해줘");
+        assert_eq!(session.turns[1].role, Role::Assistant);
+        assert_eq!(session.turns[1].content, "고양이 사진입니다.");
     }
 
     #[test]

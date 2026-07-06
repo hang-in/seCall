@@ -96,13 +96,13 @@ pub async fn run_semantic(
     let mut failed = 0usize;
 
     for (i, (session_id, vault_path)) in sessions.iter().enumerate() {
-        let short = &session_id[..8.min(session_id.len())];
+        let short = session_id.chars().take(8).collect::<String>();
         let md_path = config.vault.path.join(vault_path);
 
         let content = match std::fs::read_to_string(&md_path) {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(session = short, "cannot read vault file: {}", e);
+                tracing::warn!(session = %short, "cannot read vault file: {}", e);
                 skipped += 1;
                 continue;
             }
@@ -111,7 +111,7 @@ pub async fn run_semantic(
         let fm = match parse_session_frontmatter(&content) {
             Ok(f) => f,
             Err(e) => {
-                tracing::warn!(session = short, "cannot parse frontmatter: {}", e);
+                tracing::warn!(session = %short, "cannot parse frontmatter: {}", e);
                 skipped += 1;
                 continue;
             }
@@ -354,9 +354,9 @@ pub async fn run_rebuild(
                 outcome.edges_added += n;
                 // 성공 시에만 timestamp 갱신
                 if let Err(e) = db.update_semantic_extracted_at(id, now_secs) {
-                    let short = &id[..8.min(id.len())];
+                    let short = id.chars().take(8).collect::<String>();
                     tracing::warn!(
-                        session = short,
+                        session = %short,
                         error = %e,
                         "failed to update semantic_extracted_at"
                     );

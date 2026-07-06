@@ -14,6 +14,14 @@ fn format_token_count(n: u64) -> String {
     }
 }
 
+/// 세션 id 표시용 8글자 prefix.
+///
+/// byte-slice (`&id[..8]`) 는 멀티바이트 세션 id 에서
+/// "byte index 8 is not a char boundary" panic 을 내므로 char 단위로 자른다.
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 pub fn print_search_results(results: &[SearchResult], format: &OutputFormat) {
     match format {
         OutputFormat::Text => {
@@ -50,10 +58,7 @@ pub fn print_ingest_result(
 ) {
     match format {
         OutputFormat::Text => {
-            println!(
-                "✓ Ingested session: {}",
-                &session.id[..session.id.len().min(8)]
-            );
+            println!("✓ Ingested session: {}", short_id(&session.id));
             println!(
                 "  Project: {}",
                 session.project.as_deref().unwrap_or("unknown")
@@ -76,5 +81,27 @@ pub fn print_ingest_result(
             // run()에서 단일 summary JSON을 출력하여 top-level JSON 문서가 하나만 나오도록 함.
             let _ = (session, vault_path, stats);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_id;
+
+    #[test]
+    fn short_id_ascii() {
+        assert_eq!(short_id("0123456789abcdef"), "01234567");
+        assert_eq!(short_id("abc"), "abc");
+    }
+
+    #[test]
+    fn short_id_multibyte_no_panic() {
+        // 멀티바이트 세션 id 를 byte-slice (`&id[..8]`) 로 자르면
+        // "byte index 8 is not a char boundary" 로 panic 한다.
+        // char 단위로 자르면 안전하게 앞 8글자를 반환해야 한다.
+        let id = "한글세션식별자입니다";
+        let short = short_id(id);
+        assert_eq!(short.chars().count(), 8);
+        assert_eq!(short, "한글세션식별자입");
     }
 }

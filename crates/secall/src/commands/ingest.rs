@@ -524,17 +524,17 @@ fn compile_classification_rules(config: &Config) -> Result<Vec<CompiledRule>> {
 
 /// 1:1 파서 fast-dedup 힌트 키.
 ///
-/// CodexParser 는 `rollout-<uuid>.jsonl` 파일명에서 `rollout-` prefix 를 벗겨
-/// session id 로 저장한다(secall_core::ingest::codex `parse_codex_jsonl` 참조).
-/// 따라서 dedup 힌트도 동일하게 정규화하지 않으면 stem != stored id 가 되어
-/// codex 세션의 중복/오픈 세션 감지가 조용히 실패하고 매번 재인제스트된다.
-/// `rollout-` prefix 가 없는 다른 1:1 파서 파일명은 그대로 유지된다.
-fn fast_dedup_key(session_path: &Path) -> &str {
+/// CodexParser 는 `rollout-<timestamp>-<uuid>.jsonl` 파일명에서 후행 uuid 만
+/// session id 로 저장한다. dedup 힌트도 동일 규칙을 써야 stem != stored id 로
+/// codex 세션 중복/오픈 감지가 빗나가 매번 재인제스트되는 것을 막는다. 그래서
+/// codex 의 `fallback_session_id`(rollout- prefix + trailing uuid 정규화)를 그대로
+/// 공유한다. uuid 형태가 아닌 다른 1:1 파서 파일명은 그대로 유지된다.
+fn fast_dedup_key(session_path: &Path) -> String {
     session_path
         .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.strip_prefix("rollout-").unwrap_or(s))
-        .unwrap_or("")
+        .map(secall_core::ingest::codex::fallback_session_id)
+        .unwrap_or_default()
 }
 
 /// 세션 ID 의 앞 8자를 char 경계 안전하게 잘라 반환한다.
@@ -648,7 +648,8 @@ fn ingest_path(
     // 1:1 파서: filename-stem 힌트로 빠른 중복 체크 (--force 시 스킵)
     // codex 는 `rollout-` prefix 를 벗긴 id 로 저장되므로 힌트도 정규화한다.
     if !force {
-        let session_id_hint = fast_dedup_key(session_path);
+        let session_id_owned = fast_dedup_key(session_path);
+        let session_id_hint = session_id_owned.as_str();
 
         match db.session_exists(session_id_hint) {
             Ok(true) => {
@@ -1357,17 +1358,22 @@ mod tests {
 
     #[test]
     fn test_fast_dedup_key_strips_codex_rollout_prefix() {
-        // codex 파일명은 `rollout-<uuid>.jsonl`; 저장 id 는 `<uuid>` 이므로
-        // dedup 힌트도 prefix 를 벗겨 stored id 와 일치해야 한다.
-        let p = Path::new("/home/u/.codex/sessions/rollout-abc-123.jsonl");
-        assert_eq!(fast_dedup_key(p), "abc-123");
+        // codex 파일명 `rollout-<timestamp>-<uuid>.jsonl` → 저장 id 는 후행 uuid.
+        // dedup 힌트도 동일 규칙(fallback_session_id 공유)으로 uuid 만 취해야 한다.
+        let p = Path::new(
+            "/home/u/.codex/sessions/rollout-2026-02-15T09-20-58-12345678-1234-1234-1234-123456789abc.jsonl",
+        );
+        assert_eq!(
+            fast_dedup_key(p).as_str(),
+            "12345678-1234-1234-1234-123456789abc"
+        );
     }
 
     #[test]
     fn test_fast_dedup_key_keeps_non_codex_stem() {
-        // prefix 가 없는 다른 1:1 파서 파일명은 그대로 유지된다.
+        // uuid 형태가 아닌 다른 1:1 파서 파일명은 그대로 유지된다.
         let p = Path::new("/home/u/sessions/session-xyz.jsonl");
-        assert_eq!(fast_dedup_key(p), "session-xyz");
+        assert_eq!(fast_dedup_key(p).as_str(), "session-xyz");
     }
 
     #[test]

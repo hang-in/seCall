@@ -51,12 +51,12 @@ pub async fn run_backfill(dry_run: bool) -> Result<()> {
             &classification.default,
         );
 
-        let short_id = &session_id[..8.min(session_id.len())];
+        let short_id = session_id.chars().take(8).collect::<String>();
         if dry_run {
             eprintln!("  [dry-run] {} → {}", short_id, new_type);
         } else {
             db.update_session_type(session_id, &new_type)?;
-            tracing::debug!(session = short_id, session_type = new_type, "classified");
+            tracing::debug!(session = %short_id, session_type = new_type, "classified");
         }
         updated += 1;
     }

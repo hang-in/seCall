@@ -515,13 +515,22 @@ async fn process_haiku_incremental(
             if !safe.is_empty() {
                 format!("projects/{}.md", safe)
             } else {
-                format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+                format!(
+                    "sessions/{}.md",
+                    full_id.chars().take(8).collect::<String>()
+                )
             }
         } else {
-            format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+            format!(
+                "sessions/{}.md",
+                full_id.chars().take(8).collect::<String>()
+            )
         }
     } else {
-        format!("sessions/{}.md", &full_id[..full_id.len().min(8)])
+        format!(
+            "sessions/{}.md",
+            full_id.chars().take(8).collect::<String>()
+        )
     };
 
     let vault_paths = collect_vault_paths(&db, &session_ids);
@@ -1027,7 +1036,7 @@ fn build_haiku_batch_prompt(
                 .collect();
             prompt.push_str(&format!(
                 "#### {} ({}, {}턴, {})\n{}\n\n",
-                &s.id[..8.min(s.id.len())],
+                s.id.chars().take(8).collect::<String>(),
                 date,
                 s.turn_count,
                 s.agent,
@@ -1101,7 +1110,7 @@ fn resolve_session_id(db: &Database, prefix: &str) -> Result<String> {
 /// (CLI stderr 측) 양쪽에서 사용 — 중복 제거 + format 통일 (모두 `session {}`).
 fn build_target_label(session: Option<&str>, since: Option<&str>) -> String {
     if let Some(sid) = session {
-        format!("session {}", &sid[..sid.len().min(8)])
+        format!("session {}", sid.chars().take(8).collect::<String>())
     } else if let Some(s) = since {
         format!("sessions since {s}")
     } else {
@@ -1359,7 +1368,7 @@ fn build_haiku_single_project_prompt(
             .collect();
         prompt.push_str(&format!(
             "### {} ({}, {}턴, {})\n{}\n\n",
-            &s.id[..8.min(s.id.len())],
+            s.id.chars().take(8).collect::<String>(),
             date,
             s.turn_count,
             s.agent,
@@ -1404,7 +1413,7 @@ fn build_review_source(db: &Database, session_ids: &[String]) -> String {
         if let Ok((meta, turns)) = db.get_session_with_turns(sid) {
             summary.push_str(&format!(
                 "### Session {} ({})\n- Agent: {}\n- Summary: {}\n",
-                &sid[..sid.len().min(8)],
+                sid.chars().take(8).collect::<String>(),
                 &meta.start_time[..10.min(meta.start_time.len())],
                 meta.agent,
                 meta.summary.as_deref().unwrap_or("N/A"),

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 
-use super::types::{AgentKind, Role, Session, TokenUsage, Turn};
+use super::types::{Action, AgentKind, Role, Session, TokenUsage, Turn};
 use super::SessionParser;
 
 pub struct OpenCodeParser;
@@ -86,6 +86,21 @@ struct OpenCodePart {
     part_type: String,
     #[serde(default)]
     text: Option<String>,
+    // tool parts (type == "tool")
+    #[serde(default)]
+    tool: Option<String>,
+    #[serde(rename = "callID", default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    state: Option<OpenCodeToolState>,
+}
+
+#[derive(Deserialize)]
+struct OpenCodeToolState {
+    #[serde(default)]
+    input: Option<serde_json::Value>,
+    #[serde(default)]
+    output: Option<serde_json::Value>,
 }
 
 // ─── Parser ───────────────���───────────────────────────────���──────────────────
@@ -94,6 +109,16 @@ fn ms_to_datetime(ms: u64) -> Option<DateTime<Utc>> {
     let secs = (ms / 1000) as i64;
     let nsecs = ((ms % 1000) * 1_000_000) as u32;
     Utc.timestamp_opt(secs, nsecs).single()
+}
+
+/// tool state.input / state.output 을 요약 문자열로 변환한다.
+/// 문자열이면 그대로, null 이면 빈 문자열, 그 외(객체/배열 등)는 JSON 직렬화.
+fn value_to_summary(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 pub fn parse_opencode_json(path: &Path) -> Result<Session> {
@@ -133,7 +158,34 @@ pub fn parse_opencode_json(path: &Path) -> Result<Session> {
             .collect::<Vec<_>>()
             .join("\n");
 
-        if content.is_empty() {
+        // tool parts (type == "tool") → Action::ToolUse
+        // state.input 에서 명령/입력, state.output 에서 출력을 추출한다.
+        let mut actions: Vec<Action> = Vec::new();
+        for part in &msg.parts {
+            if part.part_type != "tool" {
+                continue;
+            }
+            let name = part.tool.clone().unwrap_or_else(|| "unknown".to_string());
+            let (input_summary, output_summary) = part
+                .state
+                .as_ref()
+                .map(|s| {
+                    (
+                        s.input.as_ref().map(value_to_summary).unwrap_or_default(),
+                        s.output.as_ref().map(value_to_summary).unwrap_or_default(),
+                    )
+                })
+                .unwrap_or_default();
+            actions.push(Action::ToolUse {
+                name,
+                input_summary,
+                output_summary,
+                tool_use_id: part.call_id.clone(),
+            });
+        }
+
+        // tool 파트만 있는 assistant 메시지도 실제 턴으로 취급한다.
+        if content.is_empty() && actions.is_empty() {
             continue;
         }
 
@@ -149,7 +201,7 @@ pub fn parse_opencode_json(path: &Path) -> Result<Session> {
             role,
             timestamp,
             content,
-            actions: Vec::new(),
+            actions,
             tokens: None,
             thinking: None,
             is_sidechain: false,
@@ -317,5 +369,59 @@ mod tests {
         let session = parse_opencode_json(f.path()).unwrap();
         assert_eq!(session.turns.len(), 2);
         assert_eq!(session.turns[1].content, "Done!");
+    }
+
+    #[test]
+    fn test_opencode_tool_only_assistant_turn() {
+        // 실제 opencode export 형식: parts[type == "tool"] + 중첩 state.input / state.output.
+        // 텍스트 없이 tool 파트만 있는 assistant 메시지도 실제 턴으로 보존되어야 한다.
+        let json = r#"{
+            "info": {
+                "id": "ses_toolonly",
+                "time": { "created": 1777090810040 }
+            },
+            "messages": [
+                {
+                    "info": { "role": "user", "time": { "created": 1777090810253 } },
+                    "parts": [{ "type": "text", "text": "Run ls" }]
+                },
+                {
+                    "info": { "role": "assistant", "time": { "created": 1777090820000 } },
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "tool": "bash",
+                            "callID": "call_001",
+                            "state": {
+                                "status": "completed",
+                                "input": { "command": "ls -la" },
+                                "output": "total 0\nfile.txt"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let f = make_opencode_file(json);
+        let session = parse_opencode_json(f.path()).unwrap();
+        assert_eq!(session.turns.len(), 2);
+        let asst = &session.turns[1];
+        assert_eq!(asst.role, Role::Assistant);
+        assert!(asst.content.is_empty());
+        assert_eq!(asst.actions.len(), 1);
+        match &asst.actions[0] {
+            Action::ToolUse {
+                name,
+                input_summary,
+                output_summary,
+                tool_use_id,
+            } => {
+                assert_eq!(name, "bash");
+                assert!(input_summary.contains("ls -la"));
+                assert_eq!(output_summary, "total 0\nfile.txt");
+                assert_eq!(tool_use_id.as_deref(), Some("call_001"));
+            }
+            _ => panic!("expected ToolUse action"),
+        }
     }
 }

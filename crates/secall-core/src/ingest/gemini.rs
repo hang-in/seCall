@@ -127,6 +127,7 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut turn_idx: u32 = 0;
     let mut session_model: Option<String> = None;
+    let mut total_tokens = TokenUsage::default();
 
     for msg in &gs.messages {
         // 턴 타임스탬프
@@ -174,11 +175,17 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
                     }
                 });
 
-                // tokens
-                let tokens = msg.tokens.as_ref().map(|t| TokenUsage {
-                    input: t.input,
-                    output: t.output,
-                    cached: t.cached,
+                // tokens — 턴별 사용량을 세션 total_tokens 에 누적 (claude.rs 미러)
+                let tokens = msg.tokens.as_ref().map(|t| {
+                    // saturating: 비현실적 대용량 합에서 overflow wrap/panic 방지(리뷰 반영).
+                    total_tokens.input = total_tokens.input.saturating_add(t.input);
+                    total_tokens.output = total_tokens.output.saturating_add(t.output);
+                    total_tokens.cached = total_tokens.cached.saturating_add(t.cached);
+                    TokenUsage {
+                        input: t.input,
+                        output: t.output,
+                        cached: t.cached,
+                    }
                 });
 
                 // toolCalls → actions
@@ -238,11 +245,14 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
         ));
     }
 
+    // startTime 이 없거나 파싱 불가하면 가장 이른 턴 타임스탬프로 폴백한다.
+    // (Utc::now() 로 바로 떨어지면 세션 날짜 귀속이 인제스트 시각으로 오염됨 — #12)
     let start_time = gs
         .start_time
         .as_deref()
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|| turns.iter().filter_map(|t| t.timestamp).min())
         .unwrap_or_else(Utc::now);
 
     let end_time = gs
@@ -262,7 +272,7 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
         start_time,
         end_time,
         turns,
-        total_tokens: Default::default(),
+        total_tokens,
         session_type: "interactive".to_string(),
         archived: false,
         archived_at: None,
@@ -491,5 +501,44 @@ mod tests {
 
         let path2 = Path::new("/no/gemini/path/session.json");
         assert_eq!(extract_project_id(path2), None);
+    }
+
+    #[test]
+    fn test_gemini_missing_start_time_uses_first_turn_ts() {
+        // startTime 필드가 없으면 Utc::now() 로 떨어지지 않고
+        // 가장 이른 턴 타임스탬프(첫 메시지 ts)로 폴백해야 한다 (#12).
+        let json = r#"{
+            "sessionId": "s-no-start",
+            "messages": [
+                {"id":"m1","timestamp":"2026-04-05T10:00:01Z","type":"user","content":[{"text":"안녕"}]},
+                {"id":"m2","timestamp":"2026-04-05T10:00:02Z","type":"gemini","content":"안녕하세요","tokens":{"input":10,"output":5,"cached":0,"thoughts":0,"tool":0,"total":15}}
+            ]
+        }"#;
+        let f = make_gemini_file(json);
+        let session = parse_gemini_json(f.path()).unwrap();
+        let expected = DateTime::parse_from_rfc3339("2026-04-05T10:00:01Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(session.start_time, expected);
+    }
+
+    #[test]
+    fn test_gemini_total_tokens_summed() {
+        // 여러 gemini 턴의 per-turn 토큰이 세션 total_tokens 로 누적되어야 한다 (#21).
+        let json = r#"{
+            "sessionId": "s-total",
+            "startTime": "2026-04-05T10:00:00Z",
+            "messages": [
+                {"id":"m1","timestamp":"2026-04-05T10:00:01Z","type":"user","content":[{"text":"q1"}]},
+                {"id":"m2","timestamp":"2026-04-05T10:00:02Z","type":"gemini","content":"a1","tokens":{"input":100,"output":50,"cached":10,"thoughts":0,"tool":0,"total":160}},
+                {"id":"m3","timestamp":"2026-04-05T10:00:03Z","type":"user","content":[{"text":"q2"}]},
+                {"id":"m4","timestamp":"2026-04-05T10:00:04Z","type":"gemini","content":"a2","tokens":{"input":200,"output":30,"cached":5,"thoughts":0,"tool":0,"total":235}}
+            ]
+        }"#;
+        let f = make_gemini_file(json);
+        let session = parse_gemini_json(f.path()).unwrap();
+        assert_eq!(session.total_tokens.input, 300);
+        assert_eq!(session.total_tokens.output, 80);
+        assert_eq!(session.total_tokens.cached, 15);
     }
 }

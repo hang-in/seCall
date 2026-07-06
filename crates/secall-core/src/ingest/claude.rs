@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
+use regex::Regex;
 use serde_json::Value;
 
 use super::types::{Action, AgentKind, Role, Session, TokenUsage, Turn};
@@ -141,6 +143,24 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                                     }
                                 }
                             }
+                        }
+
+                        // A user message can carry BOTH tool_result blocks and
+                        // free-text blocks (e.g. the user typed something while the
+                        // tools were still resolving). Still surface that text as a
+                        // User turn instead of dropping it along with the results.
+                        let text = extract_user_text(content_val);
+                        if !text.is_empty() {
+                            turns.push(Turn {
+                                index: turns.len() as u32,
+                                role: Role::User,
+                                timestamp: ts,
+                                content: text,
+                                actions: Vec::new(),
+                                tokens: None,
+                                thinking: None,
+                                is_sidechain,
+                            });
                         }
                         continue;
                     }
@@ -339,12 +359,10 @@ fn extract_user_text(content: &Value) -> String {
 }
 
 fn extract_tool_result_content(content: &Value) -> String {
-    if content.is_string() {
-        return content.as_str().unwrap_or("").to_string();
-    }
-    if let Some(arr) = content.as_array() {
-        let parts: Vec<String> = arr
-            .iter()
+    let raw = if content.is_string() {
+        content.as_str().unwrap_or("").to_string()
+    } else if let Some(arr) = content.as_array() {
+        arr.iter()
             .filter_map(|item| {
                 if item["type"].as_str() == Some("text") {
                     item["text"].as_str().map(String::from)
@@ -352,10 +370,36 @@ fn extract_tool_result_content(content: &Value) -> String {
                     None
                 }
             })
-            .collect();
-        return parts.join("\n");
-    }
-    String::new()
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
+
+    // Tool output (PowerShell/Bash) frequently carries ANSI color/cursor escapes
+    // and stray control bytes. Strip them before the content is stored/truncated.
+    strip_ansi(&raw)
+}
+
+fn re_ansi() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // CSI sequences (colors/cursor): ESC [ params intermediates final
+        // OSC sequences (titles etc.): ESC ] ... (BEL | ST)
+        // Other Fe two-char escapes: ESC + 0x40..0x5F (excluding [ which starts CSI)
+        Regex::new(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\x5c-\x5f])")
+            .unwrap()
+    })
+}
+
+/// Strip ANSI escape sequences and stray C0 control bytes (keeping only
+/// newline and tab) from a string.
+fn strip_ansi(s: &str) -> String {
+    let no_esc = re_ansi().replace_all(s, "");
+    no_esc
+        .chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect()
 }
 
 fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
@@ -581,5 +625,73 @@ mod tests {
             out_b.contains("BBB"),
             "expected BBB in b's output, got {out_b:?}"
         );
+    }
+
+    #[test]
+    fn test_user_message_tool_result_plus_text_keeps_text() {
+        // A user message can carry BOTH a tool_result and a free-text block.
+        // The text must NOT be dropped along with the tool_result handling.
+        let lines = &[
+            r#"{"type":"user","message":{"role":"user","content":"Run it"},"timestamp":"2026-04-05T10:00:00Z","sessionId":"mix1","cwd":"/tmp","gitBranch":"main","version":"1.0"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_1","model":"claude","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":5,"output_tokens":3}},"timestamp":"2026-04-05T10:00:01Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"file1.txt","is_error":false},{"type":"text","text":"actually stop and do X instead"}]},"timestamp":"2026-04-05T10:00:02Z"}"#,
+        ];
+        let f = write_jsonl(lines);
+        let session = parse_claude_jsonl(f.path()).unwrap();
+
+        // The free-text alongside the tool_result must surface as a User turn.
+        let user_texts: Vec<&str> = session
+            .turns
+            .iter()
+            .filter(|t| t.role == Role::User)
+            .map(|t| t.content.as_str())
+            .collect();
+        assert!(
+            user_texts
+                .iter()
+                .any(|t| t.contains("actually stop and do X instead")),
+            "user text alongside tool_result must not be dropped, got {user_texts:?}"
+        );
+
+        // The tool_result is still attached to the owning assistant action.
+        if let Action::ToolUse { output_summary, .. } = &session.turns[1].actions[0] {
+            assert!(output_summary.contains("file1.txt"));
+        } else {
+            panic!("expected tool use action");
+        }
+    }
+
+    #[test]
+    fn test_tool_output_ansi_escapes_stripped() {
+        // Tool output with ANSI color codes must be stored with the escapes removed.
+        let lines = &[
+            r#"{"type":"user","message":{"role":"user","content":"color"},"timestamp":"2026-04-05T10:00:00Z","sessionId":"ansi1","cwd":"/tmp","gitBranch":"main","version":"1.0"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_1","model":"claude","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo hi"}}],"usage":{"input_tokens":5,"output_tokens":3}},"timestamp":"2026-04-05T10:00:01Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"\u001b[32mhello\u001b[0m","is_error":false}]},"timestamp":"2026-04-05T10:00:02Z"}"#,
+        ];
+        let f = write_jsonl(lines);
+        let session = parse_claude_jsonl(f.path()).unwrap();
+        if let Action::ToolUse { output_summary, .. } = &session.turns[1].actions[0] {
+            assert_eq!(
+                output_summary, "hello",
+                "ANSI escapes must be stripped, got {output_summary:?}"
+            );
+        } else {
+            panic!("expected tool use action");
+        }
+    }
+
+    #[test]
+    fn test_strip_ansi_helper() {
+        // Simple color codes.
+        assert_eq!(strip_ansi("\x1b[32mhello\x1b[0m"), "hello");
+        // Multiple SGR params.
+        assert_eq!(strip_ansi("a\x1b[1;31mb\x1b[0mc"), "abc");
+        // OSC title sequence terminated by BEL.
+        assert_eq!(strip_ansi("\x1b]0;title\x07done"), "done");
+        // Stray control bytes dropped, but newline/tab preserved.
+        assert_eq!(strip_ansi("x\ry\n\tz\x07"), "xy\n\tz");
+        // Plain text untouched.
+        assert_eq!(strip_ansi("plain text 123"), "plain text 123");
     }
 }

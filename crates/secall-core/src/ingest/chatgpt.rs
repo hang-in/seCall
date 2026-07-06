@@ -179,13 +179,15 @@ fn extract_message_content(message: &GptMessage) -> (String, Option<String>) {
         .unwrap_or("text");
 
     let text = match content_type {
-        "text" | "code" | "multimodal_text" => message
+        "text" | "multimodal_text" => message
             .content
             .get("parts")
             .and_then(|v| v.as_array())
             .map(|parts| extract_parts(parts))
             .unwrap_or_default(),
-        "execution_output" => message
+        // ChatGPT stores "code" payload under a `text` STRING field (no `parts`),
+        // so route it to the text reader instead of the parts-only arm.
+        "code" | "execution_output" => message
             .content
             .get("text")
             .and_then(|v| v.as_str())
@@ -339,7 +341,11 @@ fn conversation_to_session(conv: &GptConversation) -> crate::error::Result<Sessi
         cwd: None,
         git_branch: None,
         host: Some(gethostname::gethostname().to_string_lossy().to_string()),
-        start_time: epoch_to_datetime(conv.create_time).unwrap_or_else(Utc::now),
+        start_time: epoch_to_datetime(conv.create_time)
+            // When the conversation has no create_time, fall back to the earliest
+            // available message timestamp (chain is chronological) before import time.
+            .or_else(|| chain.iter().find_map(|m| epoch_to_datetime(m.create_time)))
+            .unwrap_or_else(Utc::now),
         end_time,
         turns,
         total_tokens: TokenUsage::default(),
@@ -707,6 +713,37 @@ mod tests {
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].turns.len(), 2);
+    }
+
+    #[test]
+    fn test_code_content_reads_text_field() {
+        // ChatGPT "code" payload lives in a `text` STRING field (no `parts`).
+        let message = GptMessage {
+            id: "code-1".to_string(),
+            author: GptAuthor {
+                role: "assistant".to_string(),
+            },
+            content: serde_json::json!({
+                "content_type": "code",
+                "language": "python",
+                "text": "print('hello')"
+            }),
+            create_time: Some(1711234568.0),
+            metadata: Some(serde_json::json!({})),
+        };
+
+        let (content, thinking) = extract_message_content(&message);
+        assert_eq!(content, "print('hello')");
+        assert!(thinking.is_none());
+    }
+
+    #[test]
+    fn test_start_time_falls_back_to_earliest_message() {
+        let mut conv = sample_conversation();
+        conv.create_time = None;
+        let session = conversation_to_session(&conv).unwrap();
+        // Earliest message in the chain (system-1) has create_time 1711234567.123.
+        assert_eq!(session.start_time.timestamp(), 1711234567);
     }
 
     #[test]
