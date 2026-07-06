@@ -246,8 +246,23 @@ impl SeCallMcpServer {
                 );
             }
             if params.full.unwrap_or(false) {
-                let content = if let Some(vault_path) = &meta.vault_path {
-                    std::fs::read_to_string(vault_path).ok()
+                let content = if let Some(rel) = &meta.vault_path {
+                    // vault_path 는 vault 루트 기준 상대경로 → self.vault_path 와 결합해야 한다.
+                    // (CLI get.rs 와 동일. 기존엔 상대경로를 직접 읽어 항상 실패 → 조용히 DB
+                    //  폴백으로 흘러 tool-use 턴이 빈 "## assistant" 헤더로만 렌더됐다.)
+                    let abs = self.vault_path.join(rel);
+                    match std::fs::read_to_string(&abs) {
+                        Ok(c) => Some(c),
+                        Err(e) => {
+                            tracing::warn!(
+                                session = %session_id,
+                                path = %abs.display(),
+                                error = %e,
+                                "vault md read 실패 → DB turns 폴백"
+                            );
+                            None
+                        }
+                    }
                 } else {
                     None
                 };
