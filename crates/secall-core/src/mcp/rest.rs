@@ -24,7 +24,7 @@ use super::tools::{
 use crate::jobs::{BroadcastSink, JobExecutor, JobKind, ProgressEvent};
 use crate::search::hybrid::SearchEngine;
 use crate::store::db::Database;
-use crate::store::session_repo::SessionListFilter;
+use crate::store::session_repo::{SessionListFilter, SessionSort, SortOrder};
 
 // ── REST 간소화 DTO ─────────────────────────────────────────
 // MCP 스키마를 직접 노출하지 않고 REST 클라이언트에 친화적인 형태로 받아서 변환
@@ -145,6 +145,8 @@ pub fn rest_router(server: SeCallMcpServer, executor: Arc<JobExecutor>) -> Route
         .route("/api/config", get(api_config_get))
         .route("/api/config/{section}", patch(api_config_patch))
         .route("/api/sessions", get(api_list_sessions))
+        // Phase 3 — 달력 날짜별 세션 수. static path 라 `/api/sessions/{id}` 와 충돌 없음.
+        .route("/api/sessions/calendar", get(api_sessions_calendar))
         .route("/api/projects", get(api_list_projects))
         .route("/api/agents", get(api_list_agents))
         .route("/api/tags", get(api_list_tags))
@@ -419,6 +421,12 @@ struct SessionListQuery {
     tags: Option<Vec<String>>,
     favorite: Option<bool>,
     q: Option<String>,
+    /// Phase 1 — 정렬 기준(date|turns|project|agent). 미지정 시 date.
+    sort: Option<String>,
+    /// Phase 1 — 정렬 방향(asc|desc). 미지정 시 desc (현행 동작 보존).
+    order: Option<String>,
+    /// Phase 2 — true 면 automated 세션 포함. 미지정 시 false(현행 제외).
+    include_automated: Option<bool>,
 }
 
 impl From<SessionListQuery> for SessionListFilter {
@@ -446,6 +454,14 @@ impl From<SessionListQuery> for SessionListFilter {
             page: q.page.unwrap_or(1),
             page_size: q.page_size.unwrap_or(30),
             include_archived: false,
+            // 미지정/미인식 값은 enum parse 가 기본값(date/desc)으로 폴백 → 현행 보존.
+            sort: q
+                .sort
+                .as_deref()
+                .map(SessionSort::parse)
+                .unwrap_or_default(),
+            order: q.order.as_deref().map(SortOrder::parse).unwrap_or_default(),
+            include_automated: q.include_automated.unwrap_or(false),
         }
     }
 }
@@ -473,6 +489,74 @@ async fn api_list_sessions(
     axum_extra::extract::Query(q): axum_extra::extract::Query<SessionListQuery>,
 ) -> impl IntoResponse {
     match s.do_list_sessions(q.into()) {
+        Ok(json) => (StatusCode::OK, Json(json)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Phase 3 — `GET /api/sessions/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD&tz_offset=<min>`.
+/// 응답: `[{ "date": "YYYY-MM-DD", "count": N }]` (로컬 날짜 기준, automated/archived 제외).
+/// 리스트와 동일한 필터(project/agent/tag/favorite/q/include_automated)를 받아 배지
+/// 카운트가 실제 필터된 리스트와 일치하게 한다.
+#[derive(Debug, Deserialize, Default)]
+struct CalendarQuery {
+    from: Option<String>,
+    to: Option<String>,
+    /// 요청자 로컬 - UTC (분). 미전달 시 0(UTC 기준 매칭).
+    #[serde(default)]
+    tz_offset: i64,
+    project: Option<String>,
+    agent: Option<String>,
+    tag: Option<String>,
+    /// 반복(`?tags=a&tags=b`) 또는 콤마 구분(`?tags=a,b`) 모두 수용.
+    tags: Option<Vec<String>>,
+    favorite: Option<bool>,
+    q: Option<String>,
+    include_automated: Option<bool>,
+}
+
+impl CalendarQuery {
+    /// 내용 필터만 담은 `SessionListFilter`. 날짜/페이지/정렬은 달력에서 미사용이라
+    /// 기본값이며 `session_calendar_counts` 가 무시한다.
+    fn to_filter(&self) -> SessionListFilter {
+        let tags: Vec<String> = self
+            .tags
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        SessionListFilter {
+            project: self.project.clone(),
+            agent: self.agent.clone(),
+            date_from: None,
+            date_to: None,
+            tag: self.tag.clone(),
+            tags,
+            favorite: self.favorite,
+            q: self.q.clone(),
+            page: 1,
+            page_size: 30,
+            include_archived: false,
+            sort: SessionSort::default(),
+            order: SortOrder::default(),
+            include_automated: self.include_automated.unwrap_or(false),
+        }
+    }
+}
+
+async fn api_sessions_calendar(
+    State(s): State<Arc<SeCallMcpServer>>,
+    // 반복 tags 파라미터 수용을 위해 axum_extra Query 사용 (리스트와 동일).
+    axum_extra::extract::Query(q): axum_extra::extract::Query<CalendarQuery>,
+) -> impl IntoResponse {
+    let filter = q.to_filter();
+    match s.do_sessions_calendar(&filter, q.from.as_deref(), q.to.as_deref(), q.tz_offset) {
         Ok(json) => (StatusCode::OK, Json(json)).into_response(),
         Err(e) => error_response(e),
     }

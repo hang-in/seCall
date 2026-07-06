@@ -64,6 +64,19 @@ export function remarkObsidianCallouts() {
         }
       }
 
+      // R1 — 본문 없는 thinking 콜아웃만 숨김: claude-code 의 redacted/빈 thinking
+      // (`> [!thinking]- Thinking` + 빈 본문)은 펼쳐도 볼 게 없어 노이즈다. summary
+      // 제거 후 body 가 공백뿐이면 blockquote 자체를 제거한다.
+      // ⚠ thinking 으로 한정한다 — 제목만 있는 tool/warning 등 다른 콜아웃까지
+      //   지우면 헤더(제목) 정보가 통째로 사라지는 content-loss 회귀가 된다.
+      if (
+        type.toLowerCase() === "thinking" &&
+        !hasVisibleContent(node.children as RootContent[])
+      ) {
+        parent.children.splice(index, 1);
+        return [SKIP, index];
+      }
+
       const openAttr = open ? " open" : "";
       const openHtml: Html = {
         type: "html",
@@ -84,6 +97,40 @@ export function remarkObsidianCallouts() {
       return [SKIP, index + replacement.length];
     });
   };
+}
+
+/**
+ * mdast 노드 배열에 렌더링될 실제 콘텐츠가 있는지 검사.
+ * text/inlineCode/code/html 값이 공백이 아니거나, image/break 등 시각적
+ * 콘텐츠가 있으면 true. 그 외 컨테이너 노드는 children 을 재귀 검사.
+ * R1 의 "본문 없음" 판정에 사용.
+ */
+function hasVisibleContent(nodes: RootContent[]): boolean {
+  for (const n of nodes) {
+    switch (n.type) {
+      case "text":
+      case "inlineCode":
+      case "code":
+      case "html":
+        if ((n.value ?? "").trim() !== "") return true;
+        break;
+      case "image":
+      case "imageReference":
+      case "break":
+        return true;
+      default:
+        if (
+          "children" in n &&
+          Array.isArray((n as { children?: unknown }).children) &&
+          hasVisibleContent(
+            (n as unknown as { children: RootContent[] }).children,
+          )
+        ) {
+          return true;
+        }
+    }
+  }
+  return false;
 }
 
 function capitalize(s: string): string {

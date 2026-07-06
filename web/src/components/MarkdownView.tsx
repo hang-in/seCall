@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkMath from "remark-math";
 import { remarkObsidianCallouts } from "@/lib/remarkObsidianCallouts";
+import { remarkHideTurnHeadings } from "@/lib/remarkHideTurnHeadings";
 // remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize / rehype-katex: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
@@ -26,6 +27,12 @@ interface Props {
    */
   query?: string;
   className?: string;
+  /**
+   * R2 — Turn 구분 heading(`## Turn N — Role` / `### Turn N (HH:MM)`) 표시 여부.
+   * 기본 false(숨김) → 본문만 자연스럽게 이어짐. 세션 상세의 "턴 구분 표시"
+   * 토글이 제어. true 면 remarkHideTurnHeadings 를 빼서 헤더를 그대로 노출.
+   */
+  showTurnHeaders?: boolean;
 }
 
 /**
@@ -41,7 +48,12 @@ interface Props {
  * react-markdown components override는 `p / li / code` 의 children에서만 동작.
  * heading / link 안 매칭은 acceptable한 누락 (Risks 참조).
  */
-export function MarkdownView({ content, query, className }: Props) {
+export function MarkdownView({
+  content,
+  query,
+  className,
+  showTurnHeaders = false,
+}: Props) {
   const terms = useMemo(() => tokenizeQuery(query ?? ""), [query]);
 
   const components = useMemo<Components>(() => {
@@ -121,6 +133,9 @@ export function MarkdownView({ content, query, className }: Props) {
       // 표시되도록 한다. P49 의 `### Turn N` (같은 role 연속) 강등과 결합되어
       // 본문이 turn 별 callout 묶음으로 자연스럽게 펼침/접힘.
       remarkObsidianCallouts,
+      // R2 — 기본은 Turn 구분 heading 숨김. 토글 ON(showTurnHeaders) 이면
+      // 제거 플러그인을 빼서 헤더가 그대로 렌더된다.
+      ...(showTurnHeaders ? [] : [remarkHideTurnHeadings]),
       [
         remarkWikiLink,
         {
@@ -130,7 +145,7 @@ export function MarkdownView({ content, query, className }: Props) {
         },
       ],
     ],
-    [],
+    [showTurnHeaders],
   );
 
   const rehypePlugins = useMemo(() => {

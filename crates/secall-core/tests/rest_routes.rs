@@ -467,6 +467,131 @@ async fn test_list_sessions_filter_by_since() {
     assert_eq!(body_past["total"], 1, "past since filter must yield all");
 }
 
+/// Phase 1 — `?sort=turns&order=asc` 정렬 파라미터가 라우트를 통해 파싱/적용되는지.
+/// 미인식/미지정 값은 기본(date desc)로 폴백하므로 여기선 200 + items 배열 형태만 회귀.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_sessions_sort_query_param() {
+    let env = make_test_env().await;
+    {
+        let db = env.db.lock().unwrap();
+        insert_minimal_session(&db, "sess-sort-1");
+    }
+
+    let (status, body) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions?sort=turns&order=asc",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body={body}");
+    assert!(body["items"].is_array(), "items must be array: {body}");
+    assert_eq!(body["total"], 1);
+}
+
+/// Phase 3 — `GET /api/sessions/calendar` 라우트 회귀. 빈 DB → 빈 배열.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sessions_calendar_route_returns_array() {
+    let env = make_test_env().await;
+
+    let (status, body) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=540",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body={body}");
+    assert!(
+        body.is_array(),
+        "calendar response must be a JSON array: {body}"
+    );
+    assert_eq!(body.as_array().unwrap().len(), 0, "empty DB → no days");
+}
+
+/// #9 — 달력 route 를 실데이터로 검증: 날짜별 집계 카운트 + `tz_offset` 로컬 날짜
+/// 경계 이동 + 신규 필터(project) 배선. 빈 DB 테스트만으로는 파라미터 전달·집계가
+/// 검증되지 않는다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sessions_calendar_route_populated_and_filters() {
+    let env = make_test_env().await;
+    {
+        let db = env.db.lock().unwrap();
+        // insert_minimal_session: start_time = 2026-05-01T00:00:00Z, project = test-proj.
+        insert_minimal_session(&db, "cal-1");
+        insert_minimal_session(&db, "cal-2");
+    }
+
+    // KST(+540): 2026-05-01T00:00Z → 로컬 2026-05-01 → 그 날짜에 2건.
+    let (status, body) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=540",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body={body}");
+    let day = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["date"] == "2026-05-01")
+        .cloned()
+        .unwrap_or_else(|| panic!("expected 2026-05-01 in {body}"));
+    assert_eq!(day["count"], 2, "KST 05-01 에 2건: {body}");
+
+    // UTC-12(-720): 2026-05-01T00:00Z → 로컬 2026-04-30 (날짜 경계 이동 검증).
+    let (_s, body_neg) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=-720",
+        None,
+    )
+    .await;
+    assert!(
+        body_neg
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["date"] == "2026-04-30" && d["count"] == 2),
+        "tz_offset=-720 은 로컬 날짜를 2026-04-30 으로 이동해야 함: {body_neg}"
+    );
+
+    // 신규 필터 배선 — project=test-proj → 2건, 없는 project → 빈 배열.
+    let (_s, body_proj) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=540&project=test-proj",
+        None,
+    )
+    .await;
+    assert_eq!(
+        body_proj
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["count"].as_i64().unwrap_or(0))
+            .sum::<i64>(),
+        2,
+        "project=test-proj → 2건: {body_proj}"
+    );
+
+    let (_s, body_none) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=540&project=nonexistent",
+        None,
+    )
+    .await;
+    assert_eq!(
+        body_none.as_array().unwrap().len(),
+        0,
+        "없는 project → 빈 배열: {body_none}"
+    );
+}
+
 // ── 1.9 GET /api/projects ────────────────────────────────────────────────────
 
 /// 빈 DB → projects 빈 배열.

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { format, startOfMonth, startOfWeek } from "date-fns";
-import { Star, X } from "lucide-react";
+import { Bot, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -264,16 +264,32 @@ export function SessionFilters({ value, onChange }: Props) {
       </div>
 
       <div className="flex items-center justify-between">
-        <Button
-          type="button"
-          variant={value.favorite ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 px-2 text-xs gap-1"
-          onClick={() => set("favorite", value.favorite ? undefined : true)}
-        >
-          <Star className={`size-3.5 ${value.favorite ? "fill-status-warn text-status-warn" : ""}`} />
-          즐겨찾기만
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant={value.favorite ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 px-2 text-xs gap-1"
+            onClick={() => set("favorite", value.favorite ? undefined : true)}
+          >
+            <Star className={`size-3.5 ${value.favorite ? "fill-status-warn text-status-warn" : ""}`} />
+            즐겨찾기만
+          </Button>
+          {/* Phase 2 — automated 세션 포함 토글 (기본 제외). */}
+          <Button
+            type="button"
+            variant={value.include_automated ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 px-2 text-xs gap-1"
+            onClick={() =>
+              set("include_automated", value.include_automated ? undefined : true)
+            }
+            title="automated(자동화) 세션 포함"
+          >
+            <Bot className="size-3.5" />
+            자동화 포함
+          </Button>
+        </div>
         {hasAny && (
           <Button
             type="button"

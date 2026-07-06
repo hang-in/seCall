@@ -998,6 +998,23 @@ impl SeCallMcpServer {
         Ok(serde_json::to_value(page)?)
     }
 
+    /// Phase 3 — 달력 뷰 날짜별 세션 수. `[{date, count}]` 배열을 반환.
+    /// `tz_offset_min` 은 브라우저 로컬 - UTC (분), #131 데일리와 동일 방식.
+    pub fn do_sessions_calendar(
+        &self,
+        filter: &crate::store::session_repo::SessionListFilter,
+        from: Option<&str>,
+        to: Option<&str>,
+        tz_offset_min: i64,
+    ) -> anyhow::Result<serde_json::Value> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        let days = db.session_calendar_counts(filter, from, to, tz_offset_min)?;
+        Ok(serde_json::to_value(days)?)
+    }
+
     pub fn do_list_projects(&self) -> anyhow::Result<serde_json::Value> {
         let db = self
             .db

@@ -897,20 +897,25 @@ impl Database {
 
     // ─── REST listing / mutation (P32 Task 02) ─────────────────────────────
 
-    /// 세션 리스트 조회 (페이지네이션 + 다중 필터).
-    pub fn list_sessions_filtered(
-        &self,
+    /// 리스트/달력이 공유하는 세션 필터 술어를 `conditions`/`params` 에 lockstep 으로 push.
+    ///
+    /// automated/archived 제외 규칙과 project/agent/tag/favorite/q 를 **동일하게** 적용해
+    /// 두 뷰(세션 리스트·달력 배지)의 카운트가 조용히 발산하지 않게 한다. 날짜 범위는
+    /// 리스트(start_time lexical)와 달력(DATE(start_time, tz) 로컬 날짜)이 의미가 달라
+    /// 여기 포함하지 않고 호출 측에서 각각 처리한다.
+    fn push_content_conditions(
         f: &SessionListFilter,
-    ) -> crate::error::Result<SessionListPage> {
-        let mut conditions: Vec<String> = vec![
-            // automated session_type은 기본 제외 — recall과 일관성
-            "session_type != 'automated'".to_string(),
-        ];
+        conditions: &mut Vec<String>,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) {
+        // automated session_type은 기본 제외 — recall과 일관성.
+        // Phase 2: include_automated 토글 시에만 포함 (기본 false → 현행 동작 보존).
+        if !f.include_automated {
+            conditions.push("session_type != 'automated'".to_string());
+        }
         if !f.include_archived {
             conditions.push("is_archived = 0".to_string());
         }
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
         if let Some(p) = &f.project {
             conditions.push("project = ?".to_string());
             params.push(Box::new(p.clone()));
@@ -918,15 +923,6 @@ impl Database {
         if let Some(a) = &f.agent {
             conditions.push("agent = ?".to_string());
             params.push(Box::new(a.clone()));
-        }
-        if let Some(d) = &f.date_from {
-            // start_time은 RFC3339. "YYYY-MM-DD" 비교는 prefix LIKE — 단순히 lex 비교 사용
-            conditions.push("start_time >= ?".to_string());
-            params.push(Box::new(format!("{d}T00:00:00")));
-        }
-        if let Some(d) = &f.date_to {
-            conditions.push("start_time <= ?".to_string());
-            params.push(Box::new(format!("{d}T23:59:59")));
         }
         if let Some(t) = &f.tag {
             // tags는 JSON 배열 문자열. "rust" → '%"rust"%' 패턴 LIKE.
@@ -950,8 +946,46 @@ impl Database {
             params.push(Box::new(pat.clone()));
             params.push(Box::new(pat));
         }
+    }
 
-        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+    /// 세션 리스트 조회 (페이지네이션 + 다중 필터).
+    pub fn list_sessions_filtered(
+        &self,
+        f: &SessionListFilter,
+    ) -> crate::error::Result<SessionListPage> {
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        // 리스트/달력 공통 필터(automated/archived 제외 + project/agent/tag/favorite/q).
+        Self::push_content_conditions(f, &mut conditions, &mut params);
+
+        // 날짜 범위 — 리스트 전용(start_time RFC3339 문자열 lexical 비교).
+        if let Some(d) = &f.date_from {
+            conditions.push("start_time >= ?".to_string());
+            params.push(Box::new(format!("{d}T00:00:00")));
+        }
+        if let Some(d) = &f.date_to {
+            conditions.push("start_time <= ?".to_string());
+            params.push(Box::new(format!("{d}T23:59:59")));
+        }
+
+        // include_automated + include_archived 가 모두 true 이고 다른 필터가 없으면
+        // conditions 가 비어 `WHERE ` 만 남는 것을 방지 (기본 경로는 항상 ≥1 조건).
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // ORDER BY — 화이트리스트 컬럼/방향만 (SQL 인젝션 방지). 사용자 입력은
+        // enum(SessionSort/SortOrder)으로만 들어오고, 여기서 고정 문자열로 매핑된다.
+        let (sort_col, needs_tiebreak) = f.sort.order_column();
+        let dir = f.order.sql_keyword();
+        let order_clause = if needs_tiebreak {
+            // project/agent/turns 는 동률이 흔해 start_time DESC 로 페이지네이션 안정화.
+            format!("ORDER BY {sort_col} {dir}, start_time DESC")
+        } else {
+            format!("ORDER BY {sort_col} {dir}")
+        };
 
         let page = f.page.max(1);
         let page_size = f.page_size.clamp(1, 100);
@@ -969,7 +1003,7 @@ impl Database {
         let sql = format!(
             "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes, is_archived, archived_at
              FROM sessions {where_clause}
-             ORDER BY start_time DESC
+             {order_clause}
              LIMIT ? OFFSET ?"
         );
         let mut stmt = self.conn().prepare(&sql)?;
@@ -1030,6 +1064,63 @@ impl Database {
             page,
             page_size,
         })
+    }
+
+    /// Phase 3 — 달력 뷰용 날짜별 세션 수.
+    ///
+    /// `DATE(start_time, tz)` 로 UTC start_time 을 요청자 로컬 날짜로 이동한 뒤
+    /// 그 로컬 날짜(YYYY-MM-DD)로 GROUP BY 한다 (#131 데일리와 동일 tz offset 방식).
+    /// automated/archived 는 리스트 기본 동작과 동일하게 제외.
+    ///
+    /// `from`/`to`(YYYY-MM-DD, 로컬 날짜)가 주어지면 그 로컬 날짜 범위로 제한한다.
+    pub fn session_calendar_counts(
+        &self,
+        filter: &SessionListFilter,
+        from: Option<&str>,
+        to: Option<&str>,
+        tz_offset_min: i64, // 로컬 - UTC (분). 한국=540.
+    ) -> Result<Vec<CalendarDayCount>> {
+        // SQLite DATE modifier 는 `±NNN minutes` 형태를 기대하므로 부호를 명시한다
+        // (`{:+}` → "+540"/"-720"). 부호 없는 양수도 대개 동작하나 호환성 위해 명시(리뷰 반영).
+        let modifier = format!("{:+} minutes", tz_offset_min);
+
+        // `?` 순서에 맞춰 params 를 lockstep 으로 구성한다. SELECT 의 DATE(start_time, ?)
+        // 가 첫 ? 이므로 modifier 를 먼저 bind한 뒤, 리스트와 동일한 필터 술어(공유 헬퍼)를
+        // 얹어 배지 카운트가 필터된 리스트와 일치하게 한다. from/to 도 conditions 로 합쳐
+        // 필터가 모두 비었을 때 `WHERE` 없이 `AND` 만 남는 구문오류를 방지한다.
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(modifier.clone())];
+        Self::push_content_conditions(filter, &mut conditions, &mut params);
+        if let Some(f) = from {
+            conditions.push("DATE(start_time, ?) >= ?".to_string());
+            params.push(Box::new(modifier.clone()));
+            params.push(Box::new(f.to_string()));
+        }
+        if let Some(t) = to {
+            conditions.push("DATE(start_time, ?) <= ?".to_string());
+            params.push(Box::new(modifier.clone()));
+            params.push(Box::new(t.to_string()));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT DATE(start_time, ?) AS d, COUNT(*) AS c FROM sessions \
+             {where_clause} GROUP BY d ORDER BY d"
+        );
+
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
+            Ok(CalendarDayCount {
+                date: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     /// 세션 태그 갱신. 정규화 후 반환된 태그를 응답에 사용.
@@ -1324,6 +1415,85 @@ pub struct SessionListFilter {
     pub page_size: usize,
     /// P45 — true 면 archived 세션 포함. 기본 false (제외).
     pub include_archived: bool,
+    /// Phase 1 — 정렬 기준. 기본 `Date`(= 기존 start_time 정렬).
+    pub sort: SessionSort,
+    /// Phase 1 — 정렬 방향. 기본 `Desc`(= 기존 최신순).
+    pub order: SortOrder,
+    /// Phase 2 — true 면 automated 세션 포함. 기본 false (현행 동작 보존).
+    pub include_automated: bool,
+}
+
+/// Phase 1 — 세션 리스트 정렬 기준. 컬럼명은 `order_column()`에서 화이트리스트
+/// 고정 문자열로만 매핑되어 SQL 인젝션이 불가능하다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionSort {
+    /// start_time (기본)
+    #[default]
+    Date,
+    /// turn_count
+    Turns,
+    /// project
+    Project,
+    /// agent
+    Agent,
+}
+
+impl SessionSort {
+    /// 쿼리스트링 값 → enum. 미인식 값은 기본값(Date)으로 폴백해 항상 안전.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "turns" | "turn_count" => Self::Turns,
+            "project" => Self::Project,
+            "agent" => Self::Agent,
+            _ => Self::Date,
+        }
+    }
+
+    /// (정렬 컬럼, start_time 2차 정렬 필요 여부). 컬럼은 고정 문자열(화이트리스트).
+    pub fn order_column(self) -> (&'static str, bool) {
+        match self {
+            Self::Date => ("start_time", false),
+            Self::Turns => ("turn_count", true),
+            Self::Project => ("project", true),
+            Self::Agent => ("agent", true),
+        }
+    }
+}
+
+/// Phase 1 — 정렬 방향. `sql_keyword()`가 고정 문자열만 반환.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    Asc,
+    /// 기본 — 최신/큰 값 우선 (기존 동작 보존)
+    #[default]
+    Desc,
+}
+
+impl SortOrder {
+    /// 쿼리스트링 값 → enum. 미인식 값은 기본값(Desc)으로 폴백.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "asc" => Self::Asc,
+            _ => Self::Desc,
+        }
+    }
+
+    fn sql_keyword(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+/// Phase 3 — 달력 뷰용 날짜별 세션 수. `DATE(start_time, tz)` 로컬 날짜 기준 그룹.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CalendarDayCount {
+    /// "YYYY-MM-DD" (요청자 로컬 날짜)
+    pub date: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1394,7 +1564,7 @@ pub struct GraphRebuildFilter {
 mod tests {
     use crate::ingest::markdown::SessionFrontmatter;
     use crate::store::db::Database;
-    use crate::store::session_repo::SessionListFilter;
+    use crate::store::session_repo::{SessionListFilter, SessionSort, SortOrder};
 
     fn make_fm(session_id: &str, archived: Option<bool>) -> SessionFrontmatter {
         SessionFrontmatter {
@@ -1597,6 +1767,277 @@ mod tests {
             )
             .unwrap();
         assert_eq!(is_archived_after, 1);
+    }
+
+    // Phase 1 — sort/order 화이트리스트 정렬. 기본은 date desc(현행 보존).
+    #[test]
+    fn test_list_sessions_sort_by_turns_and_default() {
+        let db = Database::open_memory().unwrap();
+        let mut lo = make_fm("s-turns-lo", None);
+        lo.turns = Some(2);
+        lo.start_time = "2026-05-11T10:00:00+00:00".to_string();
+        let mut hi = make_fm("s-turns-hi", None);
+        hi.turns = Some(9);
+        hi.start_time = "2026-05-10T10:00:00+00:00".to_string(); // 더 과거
+        db.insert_session_from_vault(&lo, "body", "raw/sessions/lo.md")
+            .unwrap();
+        db.insert_session_from_vault(&hi, "body", "raw/sessions/hi.md")
+            .unwrap();
+
+        // 기본값(date desc) — 최신 start_time(lo=05-11) 먼저.
+        let def = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            ..Default::default()
+        };
+        let p = db.list_sessions_filtered(&def).unwrap();
+        assert_eq!(p.items[0].id, "s-turns-lo", "기본 정렬은 date desc 여야 함");
+
+        // turns asc — 낮은 turn_count(2) 먼저.
+        let asc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Turns,
+            order: SortOrder::Asc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&asc).unwrap().items[0].id,
+            "s-turns-lo"
+        );
+
+        // turns desc — 높은 turn_count(9) 먼저.
+        let desc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Turns,
+            order: SortOrder::Desc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&desc).unwrap().items[0].id,
+            "s-turns-hi"
+        );
+    }
+
+    // Phase 3 — 달력 날짜별 세션 수, tz offset 로컬 날짜 GROUP BY.
+    #[test]
+    fn test_session_calendar_counts_groups_by_local_date() {
+        let db = Database::open_memory().unwrap();
+        let mut a = make_fm("cal-a", None);
+        a.start_time = "2026-05-12T10:00:00+00:00".to_string(); // KST 05-12 19:00
+        let mut b = make_fm("cal-b", None);
+        b.start_time = "2026-05-11T20:00:00+00:00".to_string(); // KST 05-12 05:00
+        let mut c = make_fm("cal-c", None);
+        c.start_time = "2026-05-12T16:00:00+00:00".to_string(); // KST 05-13 01:00
+        db.insert_session_from_vault(&a, "body", "raw/sessions/ca.md")
+            .unwrap();
+        db.insert_session_from_vault(&b, "body", "raw/sessions/cb.md")
+            .unwrap();
+        db.insert_session_from_vault(&c, "body", "raw/sessions/cc.md")
+            .unwrap();
+
+        let all = SessionListFilter::default();
+        let days = db.session_calendar_counts(&all, None, None, 540).unwrap();
+        let map: std::collections::HashMap<&str, i64> =
+            days.iter().map(|d| (d.date.as_str(), d.count)).collect();
+        assert_eq!(map.get("2026-05-12"), Some(&2), "KST 05-12 에 a,b 2건");
+        assert_eq!(map.get("2026-05-13"), Some(&1), "KST 05-13 에 c 1건");
+
+        // from/to 범위 제한 — 05-13 만.
+        let ranged = db
+            .session_calendar_counts(&all, Some("2026-05-13"), Some("2026-05-13"), 540)
+            .unwrap();
+        assert_eq!(ranged.len(), 1);
+        assert_eq!(ranged[0].date, "2026-05-13");
+        assert_eq!(ranged[0].count, 1);
+    }
+
+    // #6 회귀 — 달력 카운트가 리스트와 동일한 필터(automated/archived 제외 + project)를
+    // 적용하는지. list 와 별개 하드코딩 WHERE 로 조용히 발산하지 않도록 공유 헬퍼 검증.
+    #[test]
+    fn test_session_calendar_counts_respects_filters() {
+        let db = Database::open_memory().unwrap();
+        // 같은 로컬 날짜(KST 05-12)에 interactive(secall)/automated/archived/다른 project.
+        let mut a = make_fm("cf-a", None);
+        a.project = Some("secall".to_string());
+        a.start_time = "2026-05-12T02:00:00+00:00".to_string();
+        let mut b = make_fm("cf-auto", None);
+        b.project = Some("secall".to_string());
+        b.start_time = "2026-05-12T03:00:00+00:00".to_string();
+        let mut c = make_fm("cf-arc", Some(true));
+        c.project = Some("secall".to_string());
+        c.start_time = "2026-05-12T04:00:00+00:00".to_string();
+        let mut d = make_fm("cf-other", None);
+        d.project = Some("other".to_string());
+        d.start_time = "2026-05-12T05:00:00+00:00".to_string();
+        db.insert_session_from_vault(&a, "body", "raw/sessions/cf-a.md")
+            .unwrap();
+        db.insert_session_from_vault(&b, "body", "raw/sessions/cf-auto.md")
+            .unwrap();
+        db.insert_session_from_vault(&c, "body", "raw/sessions/cf-arc.md")
+            .unwrap();
+        db.insert_session_from_vault(&d, "body", "raw/sessions/cf-other.md")
+            .unwrap();
+        // insert 경로가 session_type 을 안 넣으므로 automated 는 직접 지정.
+        db.conn()
+            .execute(
+                "UPDATE sessions SET session_type = 'automated' WHERE id = 'cf-auto'",
+                [],
+            )
+            .unwrap();
+
+        // 기본: automated(cf-auto)/archived(cf-arc) 제외 → a + other = 2.
+        let all = SessionListFilter::default();
+        let total: i64 = db
+            .session_calendar_counts(&all, None, None, 540)
+            .unwrap()
+            .iter()
+            .map(|x| x.count)
+            .sum();
+        assert_eq!(total, 2, "automated/archived 제외 → 2건");
+
+        // project=secall: other 제외 → a 만 1 (배지가 리스트와 일치해야 함).
+        let secall = SessionListFilter {
+            project: Some("secall".to_string()),
+            ..Default::default()
+        };
+        let total_secall: i64 = db
+            .session_calendar_counts(&secall, None, None, 540)
+            .unwrap()
+            .iter()
+            .map(|x| x.count)
+            .sum();
+        assert_eq!(total_secall, 1, "달력 배지는 project 필터를 반영해야 함");
+
+        // include_automated=true: a + auto + other = 3 (archived 만 제외).
+        let with_auto = SessionListFilter {
+            include_automated: true,
+            ..Default::default()
+        };
+        let total_auto: i64 = db
+            .session_calendar_counts(&with_auto, None, None, 540)
+            .unwrap()
+            .iter()
+            .map(|x| x.count)
+            .sum();
+        assert_eq!(total_auto, 3, "include_automated=true → automated 포함");
+    }
+
+    // #7 — 정렬 tiebreak: 동률(turn_count) 시 start_time DESC 로 안정 정렬되는지.
+    #[test]
+    fn test_list_sessions_sort_tiebreak_by_start_time() {
+        let db = Database::open_memory().unwrap();
+        let mut older = make_fm("tb-older", None);
+        older.turns = Some(5);
+        older.start_time = "2026-05-10T10:00:00+00:00".to_string();
+        let mut newer = make_fm("tb-newer", None);
+        newer.turns = Some(5); // 동일 turn_count → tiebreak 발동
+        newer.start_time = "2026-05-12T10:00:00+00:00".to_string();
+        db.insert_session_from_vault(&older, "body", "raw/sessions/tb-o.md")
+            .unwrap();
+        db.insert_session_from_vault(&newer, "body", "raw/sessions/tb-n.md")
+            .unwrap();
+
+        let asc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Turns,
+            order: SortOrder::Asc,
+            ..Default::default()
+        };
+        let items = db.list_sessions_filtered(&asc).unwrap().items;
+        assert_eq!(
+            items[0].id, "tb-newer",
+            "동률 turn_count 는 start_time DESC 로 tiebreak → 최신 먼저"
+        );
+        assert_eq!(items[1].id, "tb-older");
+    }
+
+    // #8 — sort=project / sort=agent 컬럼 매핑(화이트리스트) 검증.
+    #[test]
+    fn test_list_sessions_sort_by_project_and_agent() {
+        let db = Database::open_memory().unwrap();
+        let mut p1 = make_fm("sp-1", None);
+        p1.project = Some("alpha".to_string());
+        p1.agent = "gemini-cli".to_string();
+        let mut p2 = make_fm("sp-2", None);
+        p2.project = Some("zeta".to_string());
+        p2.agent = "claude-code".to_string();
+        db.insert_session_from_vault(&p1, "body", "raw/sessions/sp1.md")
+            .unwrap();
+        db.insert_session_from_vault(&p2, "body", "raw/sessions/sp2.md")
+            .unwrap();
+
+        let proj_asc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Project,
+            order: SortOrder::Asc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&proj_asc).unwrap().items[0]
+                .project
+                .as_deref(),
+            Some("alpha"),
+            "sort=project asc → alpha 먼저"
+        );
+
+        let agent_asc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Agent,
+            order: SortOrder::Asc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&agent_asc).unwrap().items[0].agent,
+            "claude-code",
+            "sort=agent asc → claude-code 먼저"
+        );
+    }
+
+    // #11 — include_automated + include_archived 모두 true 이고 다른 필터가 없으면
+    // conditions 가 비어 WHERE 절이 생략되는 경로. SQL 오류 없이 전체를 반환해야 한다
+    // (리스트·달력 공통 경로).
+    #[test]
+    fn test_list_sessions_all_included_empty_where() {
+        let db = Database::open_memory().unwrap();
+        let a = make_fm("ew-a", None);
+        let arc = make_fm("ew-arc", Some(true));
+        db.insert_session_from_vault(&a, "body", "raw/sessions/ew-a.md")
+            .unwrap();
+        db.insert_session_from_vault(&arc, "body", "raw/sessions/ew-arc.md")
+            .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE sessions SET session_type = 'automated' WHERE id = 'ew-a'",
+                [],
+            )
+            .unwrap();
+
+        let all = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            include_automated: true,
+            include_archived: true,
+            ..Default::default()
+        };
+        let page = db.list_sessions_filtered(&all).unwrap();
+        assert_eq!(
+            page.total, 2,
+            "필터 전부 해제 시 automated+archived 포함 전체"
+        );
+
+        // 달력도 동일한 빈 WHERE 경로에서 SQL 오류 없이 동작해야 한다.
+        let cal_total: i64 = db
+            .session_calendar_counts(&all, None, None, 540)
+            .unwrap()
+            .iter()
+            .map(|x| x.count)
+            .sum();
+        assert_eq!(cal_total, 2);
     }
 
     // P89 (#100, Gemini PR #101): 재인덱싱 시 turn_count 가 frontmatter 값으로

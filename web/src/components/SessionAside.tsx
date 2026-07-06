@@ -21,7 +21,7 @@ interface Props {
 
 export function SessionAside({ sessionId, detail }: Props) {
   return (
-    <aside className="w-full max-w-[300px] shrink-0 space-y-ds-4 lg:sticky lg:top-ds-6 lg:self-start">
+    <aside className="w-full space-y-ds-4 lg:sticky lg:top-ds-6 lg:self-start">
       <MetaCard detail={detail} />
       <MiniChartCard detail={detail} />
       <RelatedCard sessionId={sessionId} />
@@ -40,7 +40,7 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-hairline bg-[var(--surface)] p-ds-3">
+    <section className="rounded-lg border border-hairline bg-[var(--surface)] p-ds-3 shadow-ds-1 transition-shadow duration-base ease-ds hover:shadow-ds-2">
       <div className="flex items-center justify-between mb-ds-2">
         <div className="eyebrow">{title}</div>
         {hint}

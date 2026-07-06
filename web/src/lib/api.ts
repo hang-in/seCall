@@ -1,4 +1,5 @@
 import type {
+  CalendarDay,
   GraphRebuildArgs,
   IngestArgs,
   JobStartResponse,
@@ -7,6 +8,8 @@ import type {
   RecallResponse,
   SessionDetail,
   SessionListPage,
+  SessionSort,
+  SortOrder,
   SyncArgs,
   TagsResponse,
   WikiPage,
@@ -117,6 +120,12 @@ export const api = {
       tags: string[];
       favorite: boolean;
       q: string;
+      /** Phase 1 — 정렬 기준(date|turns|project|agent). 미지정 시 서버 기본 date. */
+      sort: SessionSort;
+      /** Phase 1 — 정렬 방향(asc|desc). 미지정 시 서버 기본 desc. */
+      order: SortOrder;
+      /** Phase 2 — true 면 automated 세션 포함. 미지정 시 기본 제외. */
+      include_automated: boolean;
     }>,
   ) => {
     const qs = new URLSearchParams();
@@ -129,6 +138,39 @@ export const api = {
       }
     });
     return jfetch<SessionListPage>(`/api/sessions?${qs}`);
+  },
+
+  /**
+   * Phase 3 — 날짜별 세션 수 (달력 배지용).
+   * `from`/`to` 는 로컬 날짜(YYYY-MM-DD), `tzOffset` 은 로컬-UTC(분).
+   */
+  sessionsCalendar: (opts: {
+    from?: string;
+    to?: string;
+    tzOffset?: number;
+    // 리스트와 동일한 필터 — 배지 카운트를 필터된 리스트와 일치시키기 위함.
+    project?: string;
+    agent?: string;
+    tag?: string;
+    tags?: string[];
+    favorite?: boolean;
+    include_automated?: boolean;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set("from", opts.from);
+    if (opts.to) qs.set("to", opts.to);
+    if (typeof opts.tzOffset === "number")
+      qs.set("tz_offset", String(opts.tzOffset));
+    if (opts.project) qs.set("project", opts.project);
+    if (opts.agent) qs.set("agent", opts.agent);
+    if (opts.tag) qs.set("tag", opts.tag);
+    if (opts.tags && opts.tags.length > 0) qs.set("tags", opts.tags.join(","));
+    if (typeof opts.favorite === "boolean")
+      qs.set("favorite", String(opts.favorite));
+    if (opts.include_automated) qs.set("include_automated", "true");
+    if (opts.q) qs.set("q", opts.q);
+    return jfetch<CalendarDay[]>(`/api/sessions/calendar?${qs}`);
   },
 
   listProjects: () => jfetch<{ projects: string[] }>("/api/projects"),

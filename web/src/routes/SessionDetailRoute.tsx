@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useOutletContext, useParams } from "react-router";
 import { MarkdownView } from "@/components/MarkdownView";
@@ -19,6 +20,30 @@ export default function SessionDetailRoute() {
   const outletCtx = useOutletContext<SessionsOutletContext | undefined>();
   const query = outletCtx?.query ?? "";
   const { data, isLoading, error } = useSession(id, true);
+
+  // R2 — "턴 구분 표시" 토글. 기본 OFF, localStorage 에 저장해 세션 이동해도 유지.
+  // Safari "모든 쿠키 차단"/프라이빗 모드 등에서는 localStorage 접근 자체가
+  // SecurityError 를 던지므로 try-catch 로 감싸 렌더 크래시를 막는다(리뷰 반영).
+  const [showTurnHeaders, setShowTurnHeaders] = useState<boolean>(() => {
+    try {
+      return (
+        typeof window !== "undefined" &&
+        window.localStorage.getItem("secall.showTurnHeaders") === "1"
+      );
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "secall.showTurnHeaders",
+        showTurnHeaders ? "1" : "0",
+      );
+    } catch {
+      // 저장소 접근 차단 환경 — 무시 (토글은 세션 내에서만 유지).
+    }
+  }, [showTurnHeaders]);
 
   if (isLoading) {
     return (
@@ -43,7 +68,24 @@ export default function SessionDetailRoute() {
       <div className="min-w-0">
         <SessionDetailHead id={id} detail={data} />
         {body ? (
-          <MarkdownView content={body} query={query} />
+          <>
+            <div className="flex justify-end mb-ds-3">
+              <label className="inline-flex items-center gap-ds-2 text-t-meta text-text-3 cursor-pointer select-none hover:text-text transition-colors duration-fast ease-ds">
+                <input
+                  type="checkbox"
+                  checked={showTurnHeaders}
+                  onChange={(e) => setShowTurnHeaders(e.target.checked)}
+                  className="size-3.5 accent-brand cursor-pointer"
+                />
+                턴 구분 표시
+              </label>
+            </div>
+            <MarkdownView
+              content={body}
+              query={query}
+              showTurnHeaders={showTurnHeaders}
+            />
+          </>
         ) : (
           <div className="text-t-small text-text-3 italic">
             본문이 비어 있습니다. (vault 파일 없음 · turns 없음)
