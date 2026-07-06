@@ -127,7 +127,12 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
   // 링크 필터는 id Set 으로 O(E) (이전 some×some = O(E×N) 제거).
   const positioned = useMemo(() => {
     if (fNodes.length === 0) return { nodes: [] as SimNode[], edges: [] as SimLink[] };
-    const simNodes: SimNode[] = fNodes.map((n) => ({
+    // 고립/저차수 topic 노드 제외 — degree < 2 인 topic 은 레이아웃에 거의 기여하지 않으면서
+    // 매 tick SVG+라벨 렌더 비용만 유발한다(5000+ → 수백). session/project/agent/tool 은 유지.
+    const visible = fNodes.filter(
+      (n) => n.type !== "topic" || (degree.get(n.id) ?? 0) >= 2,
+    );
+    const simNodes: SimNode[] = visible.map((n) => ({
       id: n.id,
       type: n.type,
       label: n.label,
@@ -139,7 +144,7 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
       .filter((e) => idSet.has(e.source) && idSet.has(e.target))
       .map((e) => ({ source: e.source, target: e.target }));
     return { nodes: simNodes, edges: simLinks };
-  }, [fNodes, fEdges]);
+  }, [fNodes, fEdges, degree]);
 
   // live d3-force 시뮬레이션 — 메인스레드 동기 300-tick(freeze) 대신 rAF 애니메이션.
   // 노드가 랜덤 시작점에서 퍼지며 순차 등장(Obsidian 거동). alpha 가 식으면 스스로 정지.
@@ -147,6 +152,10 @@ export function ObsidianGraph({ nodes, edges, hiddenTypes, onSessionClick }: Pro
   useEffect(() => {
     if (positioned.nodes.length === 0) return;
     const sim: Simulation<SimNode, SimLink> = forceSimulation(positioned.nodes)
+      // 조기 수렴: alpha 를 빨리 식혀 ~300 tick → ~60 tick 에 정지. 매 tick 재렌더 횟수와
+      // 탭 이탈 시 시뮬이 아직 도는 확률을 줄인다.
+      .alphaMin(0.05)
+      .alphaDecay(0.06)
       .force(
         "link",
         forceLink<SimNode, SimLink>(positioned.edges)
