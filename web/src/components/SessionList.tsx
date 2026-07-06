@@ -197,7 +197,7 @@ export function SessionList({
     return (
       <div>
         {semanticList.isFetching && (
-          <div className="px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline">
+          <div className="sticky top-0 z-10 bg-surface px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline shadow-ds-1">
             업데이트 중…
           </div>
         )}
@@ -263,7 +263,7 @@ export function SessionList({
   return (
     <div>
       {keywordList.isFetching && !keywordList.isFetchingNextPage && (
-        <div className="px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline">
+        <div className="sticky top-0 z-10 bg-surface px-ds-3 py-ds-1 text-t-caption text-text-3 border-b border-hairline shadow-ds-1">
           업데이트 중…
         </div>
       )}

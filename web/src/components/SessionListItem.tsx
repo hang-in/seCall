@@ -44,10 +44,10 @@ export function SessionListItem({
       type="button"
       onClick={onSelect}
       className={[
-        "w-full text-left block px-ds-4 py-ds-3 border-l-2 transition-colors duration-fast ease-ds",
+        "w-full text-left block px-ds-4 py-ds-3 border-l-2 transition-colors duration-base ease-ds",
         selected
-          ? "border-l-brand bg-surface-2"
-          : "border-l-transparent hover:bg-surface-2",
+          ? "border-l-brand bg-brand-soft"
+          : "border-l-transparent hover:bg-surface-2 hover:border-l-hairline",
       ].join(" ")}
     >
       {/* head */}
@@ -122,7 +122,7 @@ export function SessionListItem({
             onDelete();
           }}
           aria-label="세션 삭제"
-          className="absolute right-ds-2 top-ds-2 flex size-6 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity hover:bg-surface-3 hover:text-status-danger focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-danger group-hover:opacity-100"
+          className="absolute right-ds-2 top-ds-2 flex size-6 items-center justify-center rounded-md text-text-4 opacity-0 transition-opacity duration-fast ease-ds hover:bg-surface-3 hover:text-status-danger focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-danger group-hover:opacity-100"
         >
           <X className="size-3.5" />
         </button>
