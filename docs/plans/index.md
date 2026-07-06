@@ -1,3 +1,9 @@
+---
+type: reference
+status: in_progress
+updated_at: 2026-07-06
+---
+
 # Plans
 
 Plan document index. Register new plans here.

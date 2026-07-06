@@ -140,7 +140,10 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
 /// workflow artifacts (journal.jsonl / agent-*.jsonl) that would otherwise be
 /// mis-ingested as spurious sessions; `.git` / `node_modules` are noise.
 fn is_pruned_dir(entry: &walkdir::DirEntry) -> bool {
-    entry.file_type().is_dir()
+    // depth 0 = walk 루트 자체. 루트가 우연히 subagents/.git 등으로 명명돼도
+    // prune 하면 전체 탐색이 즉시 중단되므로, 루트는 항상 제외(리뷰 반영).
+    entry.depth() > 0
+        && entry.file_type().is_dir()
         && entry
             .file_name()
             .to_str()
