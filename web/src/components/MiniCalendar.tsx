@@ -8,7 +8,7 @@ import {
   startOfMonth,
 } from "date-fns";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
-import { useSessionCalendar } from "@/hooks/useSessions";
+import { useSessionCalendar, type CalendarFilters } from "@/hooks/useSessions";
 
 /**
  * Phase 3 — 좌측 패널 상단 접이식 미니 캘린더.
@@ -20,20 +20,22 @@ import { useSessionCalendar } from "@/hooks/useSessions";
  * - index.css 디자인 토큰만 사용 → 다크/라이트 자동 대응.
  */
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-// 브라우저 로컬 tz 오프셋(분, 로컬-UTC). getTimezoneOffset 은 UTC-로컬이라 부호 반전 (useDaily 와 동일).
-const TZ_OFFSET_MIN = -new Date().getTimezoneOffset();
 
 interface Props {
   /** 현재 date 필터가 단일 날짜(date_from===date_to)면 그 값. 셀 하이라이트용. */
   selectedDate?: string;
   /** 날짜 선택/해제 콜백. undefined 면 필터 해제 의도. */
   onSelectDate: (date: string | undefined) => void;
+  /** 리스트와 동일한 활성 필터(project/agent/tag/favorite/include_automated/q).
+   *  배지 카운트를 필터된 리스트와 일치시킨다. date_from/date_to 는 제외. */
+  filters?: CalendarFilters;
   defaultOpen?: boolean;
 }
 
 export function MiniCalendar({
   selectedDate,
   onSelectDate,
+  filters,
   defaultOpen = false,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
@@ -43,8 +45,19 @@ export function MiniCalendar({
   const from = format(cursor, "yyyy-MM-dd");
   const to = format(monthEnd, "yyyy-MM-dd");
   const today = format(new Date(), "yyyy-MM-dd");
+  // tz 오프셋(분, 로컬-UTC)을 '표시 중인 월 중순' 기준으로 계산한다. 모듈 로드 시
+  // 1회 고정하면 DST 지역에서 다른 DST 구간의 월에 잘못된 오프셋을 보내므로,
+  // cursor 가 바뀔 때마다 그 월에 맞는 오프셋을 다시 구한다. getTimezoneOffset 은
+  // UTC-로컬이라 부호 반전 (useDaily 와 동일).
+  const tzOffset = useMemo(
+    () =>
+      -new Date(cursor.getFullYear(), cursor.getMonth(), 15).getTimezoneOffset(),
+    [cursor],
+  );
 
-  const { data } = useSessionCalendar(from, to, TZ_OFFSET_MIN, { enabled: open });
+  const { data } = useSessionCalendar(from, to, tzOffset, filters ?? {}, {
+    enabled: open,
+  });
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();

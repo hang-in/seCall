@@ -246,8 +246,33 @@ impl SeCallMcpServer {
                 );
             }
             if params.full.unwrap_or(false) {
-                let content = if let Some(vault_path) = &meta.vault_path {
-                    std::fs::read_to_string(vault_path).ok()
+                let content = if let Some(rel) = &meta.vault_path {
+                    // vault_path 는 vault 루트 기준 상대경로. resolve_session_file 로 해석해야
+                    // `\`/`/` 혼재나 legacy(raw/sessions) 경로도 통일 처리된다(CodeRabbit 반영).
+                    // (직접 상대경로를 읽으면 서버 CWD 기준이라 대개 실패 → 조용히 DB 폴백 →
+                    //  tool-use 턴이 빈 "## assistant" 헤더로만 렌더되는 회귀가 발생한다.)
+                    match crate::vault::resolve_session_file(&self.vault_path, rel, &session_id) {
+                        Ok(abs) => match std::fs::read_to_string(&abs) {
+                            Ok(c) => Some(c),
+                            Err(e) => {
+                                tracing::warn!(
+                                    session = %session_id,
+                                    path = %abs.display(),
+                                    error = %e,
+                                    "vault md read 실패 → DB turns 폴백"
+                                );
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(
+                                session = %session_id,
+                                error = %e,
+                                "세션 md 경로 해석 실패 → DB turns 폴백"
+                            );
+                            None
+                        }
+                    }
                 } else {
                     None
                 };
@@ -977,6 +1002,7 @@ impl SeCallMcpServer {
     /// `tz_offset_min` 은 브라우저 로컬 - UTC (분), #131 데일리와 동일 방식.
     pub fn do_sessions_calendar(
         &self,
+        filter: &crate::store::session_repo::SessionListFilter,
         from: Option<&str>,
         to: Option<&str>,
         tz_offset_min: i64,
@@ -985,7 +1011,7 @@ impl SeCallMcpServer {
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        let days = db.session_calendar_counts(from, to, tz_offset_min)?;
+        let days = db.session_calendar_counts(filter, from, to, tz_offset_min)?;
         Ok(serde_json::to_value(days)?)
     }
 

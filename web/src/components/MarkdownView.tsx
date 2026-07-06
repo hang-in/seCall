@@ -4,8 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkMath from "remark-math";
 import { remarkObsidianCallouts } from "@/lib/remarkObsidianCallouts";
-import { visit, SKIP } from "unist-util-visit";
-import type { Root, Heading, Text as MdastText } from "mdast";
+import { remarkHideTurnHeadings } from "@/lib/remarkHideTurnHeadings";
 // remark-wiki-link / rehype-raw / rehype-highlight / rehype-sanitize / rehype-katex: 외부 plugin.
 import remarkWikiLink from "remark-wiki-link";
 import rehypeRaw from "rehype-raw";
@@ -229,33 +228,6 @@ export function MarkdownView({
       </ReactMarkdown>
     </div>
   );
-}
-
-/**
- * R2 — `## Turn N — Role` / `### Turn N (HH:MM)` 형태의 Turn 구분 heading 을
- * 트리에서 제거해 본문만 자연스럽게 이어지게 한다. showTurnHeaders 가 false 일
- * 때만 remarkPlugins 에 포함된다. Turn 판정: heading 텍스트가 `Turn <숫자>`
- * 로 시작하는 경우.
- */
-function remarkHideTurnHeadings() {
-  return (tree: Root) => {
-    visit(tree, "heading", (node: Heading, index, parent) => {
-      if (!parent || typeof index !== "number") return;
-      if (/^turn\s+\d+/i.test(headingText(node).trim())) {
-        parent.children.splice(index, 1);
-        // 노드를 제거했으므로 같은 index(다음 sibling)에서 계속.
-        return [SKIP, index];
-      }
-    });
-  };
-}
-
-function headingText(node: Heading): string {
-  let out = "";
-  visit(node, "text", (t: MdastText) => {
-    out += t.value;
-  });
-  return out;
 }
 
 function normalizeWikiName(name: string): string {

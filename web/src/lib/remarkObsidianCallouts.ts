@@ -64,11 +64,15 @@ export function remarkObsidianCallouts() {
         }
       }
 
-      // R1 — 본문 없는 콜아웃 숨김: summary(헤더) 라인을 제거한 뒤 남은 body 가
-      // 공백뿐이면(claude-code 의 redacted/빈 thinking 등) 콜아웃 노드를 만들지
-      // 않고 blockquote 자체를 제거한다. 모든 타입 공통. tool 콜아웃은 보통
-      // 명령/Output 본문이 있어 영향 없음.
-      if (!hasVisibleContent(node.children as RootContent[])) {
+      // R1 — 본문 없는 thinking 콜아웃만 숨김: claude-code 의 redacted/빈 thinking
+      // (`> [!thinking]- Thinking` + 빈 본문)은 펼쳐도 볼 게 없어 노이즈다. summary
+      // 제거 후 body 가 공백뿐이면 blockquote 자체를 제거한다.
+      // ⚠ thinking 으로 한정한다 — 제목만 있는 tool/warning 등 다른 콜아웃까지
+      //   지우면 헤더(제목) 정보가 통째로 사라지는 content-loss 회귀가 된다.
+      if (
+        type.toLowerCase() === "thinking" &&
+        !hasVisibleContent(node.children as RootContent[])
+      ) {
         parent.children.splice(index, 1);
         return [SKIP, index];
       }

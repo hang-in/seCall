@@ -74,6 +74,18 @@ export default function SessionsRoute() {
             <MiniCalendar
               selectedDate={selectedDate}
               onSelectDate={handleSelectDate}
+              // date_from/date_to 는 제외 — 달력은 월 전체를 보여주되 나머지
+              // 활성 필터(project/agent/tag/favorite/include_automated/q)로 카운트를
+              // 리스트와 일치시킨다.
+              filters={{
+                project: filters.project,
+                agent: filters.agent,
+                tag: filters.tag,
+                tags: filters.tags,
+                favorite: filters.favorite,
+                include_automated: filters.include_automated,
+                q: query.trim() || undefined,
+              }}
             />
             <SessionSortControl
               sort={sort}

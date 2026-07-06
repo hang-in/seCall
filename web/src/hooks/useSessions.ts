@@ -56,15 +56,22 @@ export function useInfiniteSessions(
  * `from`/`to` 는 표시 중인 월의 로컬 날짜 경계. `enabled`(기본 true)로 달력이
  * 접혀 있을 때 호출을 막을 수 있다. query key 에 인자가 포함돼 월 이동 시 자동 refetch.
  */
+export type CalendarFilters = Pick<
+  SessionsListParams,
+  "project" | "agent" | "tag" | "tags" | "favorite" | "include_automated" | "q"
+>;
+
 export function useSessionCalendar(
   from: string,
   to: string,
   tzOffset: number,
+  filters: CalendarFilters = {},
   opts: { enabled?: boolean } = {},
 ) {
   return useQuery({
-    queryKey: ["sessions", "calendar", from, to, tzOffset],
-    queryFn: () => api.sessionsCalendar({ from, to, tzOffset }),
+    // filters 를 key 에 포함 → 필터 변경 시 배지 카운트 자동 refetch (리스트와 동기화).
+    queryKey: ["sessions", "calendar", from, to, tzOffset, filters],
+    queryFn: () => api.sessionsCalendar({ from, to, tzOffset, ...filters }),
     enabled: opts.enabled ?? true,
     staleTime: 60_000,
     placeholderData: (prev) => prev,

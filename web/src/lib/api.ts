@@ -148,12 +148,28 @@ export const api = {
     from?: string;
     to?: string;
     tzOffset?: number;
+    // 리스트와 동일한 필터 — 배지 카운트를 필터된 리스트와 일치시키기 위함.
+    project?: string;
+    agent?: string;
+    tag?: string;
+    tags?: string[];
+    favorite?: boolean;
+    include_automated?: boolean;
+    q?: string;
   }) => {
     const qs = new URLSearchParams();
     if (opts.from) qs.set("from", opts.from);
     if (opts.to) qs.set("to", opts.to);
     if (typeof opts.tzOffset === "number")
       qs.set("tz_offset", String(opts.tzOffset));
+    if (opts.project) qs.set("project", opts.project);
+    if (opts.agent) qs.set("agent", opts.agent);
+    if (opts.tag) qs.set("tag", opts.tag);
+    if (opts.tags && opts.tags.length > 0) qs.set("tags", opts.tags.join(","));
+    if (typeof opts.favorite === "boolean")
+      qs.set("favorite", String(opts.favorite));
+    if (opts.include_automated) qs.set("include_automated", "true");
+    if (opts.q) qs.set("q", opts.q);
     return jfetch<CalendarDay[]>(`/api/sessions/calendar?${qs}`);
   },
 
