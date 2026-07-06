@@ -74,11 +74,14 @@ struct ResponsePayload {
 }
 
 pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
-    // Extract session ID from filename: rollout-<uuid>.jsonl → uuid
+    // Extract session ID from filename. Real codex files are named
+    // `rollout-<timestamp>-<uuid>.jsonl` and the timestamp itself contains
+    // hyphens (e.g. `2026-02-15T09-20-58`), so a bare `strip_prefix("rollout-")`
+    // would leave the timestamp glued to the uuid — see fallback_session_id.
     let session_id = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.strip_prefix("rollout-").unwrap_or(s).to_string())
+        .map(fallback_session_id)
         .ok_or_else(|| anyhow!("invalid codex session filename: {}", path.display()))?;
 
     let file = std::fs::File::open(path)?;
@@ -146,6 +149,13 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
 
                         let content = extract_content(&rp.content);
                         if role == Role::User && content.is_empty() {
+                            continue;
+                        }
+                        // codex는 실제 프롬프트 앞에 role:user 로 합성 컨텍스트
+                        // (AGENTS.md 지침, <environment_context>, <user_instructions>,
+                        // <permissions ...>)를 주입한다. developer 프롬프트와 동일하게
+                        // 이런 주입 컨텍스트는 건너뛴다.
+                        if role == Role::User && is_injected_context(&content) {
                             continue;
                         }
 
@@ -305,6 +315,46 @@ fn ensure_assistant_turn(
     });
     *turn_idx += 1;
     turns.len() - 1
+}
+
+/// Detect codex-injected `role: user` context that is not genuine user text.
+///
+/// Codex prepends synthetic context messages (AGENTS.md project instructions,
+/// `<environment_context>`, `<user_instructions>`, `<permissions ...>` blocks)
+/// as `role: user` items before the human's real prompt. These pollute the
+/// first user turn (summary/noise heuristics key on it), so we skip them the
+/// same way `role == "developer"` is skipped. Conservative: only messages that
+/// *begin* with a known injected marker match, so genuine user text that merely
+/// mentions one of these tags is preserved.
+fn is_injected_context(content: &str) -> bool {
+    let trimmed = content.trim_start();
+    trimmed.starts_with("<environment_context>")
+        || trimmed.starts_with("<user_instructions>")
+        || trimmed.starts_with("<permissions")
+        || trimmed.starts_with("# AGENTS.md instructions")
+}
+
+/// Derive a fallback session id from a codex rollout filename stem.
+///
+/// Real files are named `rollout-<timestamp>-<uuid>.jsonl` where the timestamp
+/// itself contains hyphens (e.g. `2026-02-15T09-20-58`), so `strip_prefix`
+/// alone leaves the timestamp glued to the uuid. The uuid is the trailing five
+/// hyphen-joined groups shaped `8-4-4-4-12` hex; extract those when present,
+/// otherwise return the stripped stem unchanged (no mangling of non-uuid names).
+fn fallback_session_id(stem: &str) -> String {
+    let rest = stem.strip_prefix("rollout-").unwrap_or(stem);
+    let groups: Vec<&str> = rest.split('-').collect();
+    if groups.len() >= 5 {
+        let tail = &groups[groups.len() - 5..];
+        let is_uuid = [8usize, 4, 4, 4, 12]
+            .iter()
+            .zip(tail.iter())
+            .all(|(&len, g)| g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()));
+        if is_uuid {
+            return tail.join("-");
+        }
+    }
+    rest.to_string()
 }
 
 /// Convert a serde_json::Value to String — strings pass through, others serialize to JSON.
@@ -617,5 +667,84 @@ mod tests {
         assert_eq!(a.role, Role::Assistant);
         assert!(a.content.contains("완료"));
         assert_eq!(a.actions.len(), 1);
+    }
+
+    #[test]
+    fn test_codex_skip_injected_context_user_messages() {
+        // codex는 실제 프롬프트 앞에 AGENTS.md / environment_context /
+        // user_instructions / permissions 를 role:user 로 주입한다. 이 합성
+        // 컨텍스트는 skip 되어 첫 user 턴이 진짜 질문이어야 한다.
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"inj-test"}}"#,
+            r##"{"timestamp":"2026-04-05T10:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /home/u/proj\n\nBe concise."}]}}"##,
+            r#"{"timestamp":"2026-04-05T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n<cwd>/home/u/proj</cwd>\n</environment_context>"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nfollow style\n</user_instructions>"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<permissions instructions>\nnetwork off\n</permissions instructions>"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:04Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"검색 기능 구현해줘"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"네"}]}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+        // 4개의 주입 컨텍스트 user 메시지 skip → 진짜 user + assistant = 2턴
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.turns[0].role, Role::User);
+        assert_eq!(session.turns[0].content, "검색 기능 구현해줘");
+        assert_eq!(session.turns[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn test_codex_keeps_genuine_user_text_with_angle_brackets() {
+        // 보수적 detection: 알려진 주입 prefix 로 "시작"하는 경우에만 skip.
+        // 무관한 태그로 시작하는 진짜 user 메시지는 유지되어야 한다.
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"guard"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<div>왜 안 되나요?</div>"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"확인"}]}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.turns[0].role, Role::User);
+        assert!(session.turns[0].content.contains("왜 안 되나요"));
+    }
+
+    #[test]
+    fn test_fallback_session_id() {
+        // rollout-<timestamp>-<uuid> → 후행 uuid 만 추출 (timestamp 제거)
+        assert_eq!(
+            fallback_session_id("rollout-2026-02-15T09-20-58-019c5eac-081b-7011-a172-049b28bae864"),
+            "019c5eac-081b-7011-a172-049b28bae864"
+        );
+        // bare rollout-<uuid> → uuid 그대로
+        assert_eq!(
+            fallback_session_id("rollout-019c781a-081b-7011-a172-049b28bae864"),
+            "019c781a-081b-7011-a172-049b28bae864"
+        );
+        // uuid 형태가 아니면 stripped stem 그대로 (임의 이름 훼손 방지)
+        assert_eq!(fallback_session_id("rollout-abc"), "abc");
+    }
+
+    #[test]
+    fn test_codex_fallback_session_id_strips_timestamp() {
+        // session_meta.id 가 없을 때(1행 손상/절단) 파일명에서 fallback id 를
+        // 유도한다. 실제 파일은 rollout-<timestamp>-<uuid>.jsonl 이므로 id 는
+        // timestamp+uuid 가 아니라 후행 uuid 여야 한다.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("rollout-2026-02-15T09-20-58-019c5eac-081b-7011-a172-049b28bae864.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        // session_meta 라인 없음 → fallback 경로 사용
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-02-15T09:20:59Z","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"real question"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-02-15T09:21:00Z","type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"answer"}}]}}}}"#
+        )
+        .unwrap();
+        drop(f);
+        let session = parse_codex_jsonl(&path).unwrap();
+        assert_eq!(session.id, "019c5eac-081b-7011-a172-049b28bae864");
     }
 }

@@ -45,7 +45,7 @@ pub fn run(
         let sid = finding
             .session_id
             .as_deref()
-            .map(|s| format!("session {}: ", &s[..s.len().min(8)]))
+            .map(|s| format!("session {}: ", s.chars().take(8).collect::<String>()))
             .unwrap_or_default();
         println!("{} [{sev:5}] {sid}{}", finding.code, finding.message);
         printed += 1;
@@ -140,13 +140,16 @@ fn run_fix_wiki_invocations(
     for session_id in &suspects {
         match db.archive_session(session_id, &vault, tz) {
             Ok(()) => {
-                eprintln!("  archived {}", &session_id[..session_id.len().min(8)]);
+                eprintln!(
+                    "  archived {}",
+                    session_id.chars().take(8).collect::<String>()
+                );
                 archived += 1;
             }
             Err(e) => {
                 eprintln!(
                     "  failed to archive {}: {e}",
-                    &session_id[..session_id.len().min(8)]
+                    session_id.chars().take(8).collect::<String>()
                 );
                 failed += 1;
             }
@@ -176,10 +179,13 @@ fn run_fix(db: &Database, report: &secall_core::ingest::lint::LintReport) -> Res
     );
     for session_id in &stale {
         match db.delete_session_full(session_id) {
-            Ok(()) => eprintln!("  deleted {}", &session_id[..session_id.len().min(8)]),
+            Ok(()) => eprintln!(
+                "  deleted {}",
+                session_id.chars().take(8).collect::<String>()
+            ),
             Err(e) => eprintln!(
                 "  failed to delete {}: {e}",
-                &session_id[..session_id.len().min(8)]
+                session_id.chars().take(8).collect::<String>()
             ),
         }
     }
