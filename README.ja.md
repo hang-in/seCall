@@ -90,7 +90,7 @@ seCallはAIエージェントの会話に特化したローカルファースト
 ### ハイブリッド検索
 
 - **BM25全文検索**: SQLite FTS5 + 韓国語形態素解析 ([Lindera](https://github.com/lindera/lindera) ko-dic / [Kiwi-rs](https://github.com/bab2min/kiwi) 選択可能)
-- **ベクトル意味検索**: [Ollama](https://ollama.com/) BGE-M3エンベディング (1024次元) + **HNSW ANNインデックス** ([usearch](https://github.com/unum-cloud/usearch)) によるO(log n)探索
+- **ベクトル意味検索**: [Ollama](https://ollama.com/) `qwen3-embedding:0.6b` エンベディング (1024次元、デフォルト。ONNX/ort パスは `BAAI/bge-m3`) + **HNSW ANNインデックス** ([usearch](https://github.com/unum-cloud/usearch)) によるO(log n)探索
 - **Reciprocal Rank Fusion (RRF)**: BM25/ベクトル独立実行後に結合 (k=60) + **セッション多様性の強制** (1セッションあたり最大2ターン)
 - **LLMクエリ拡張**: Claude Codeによる自然言語クエリ拡張
 
@@ -778,7 +778,7 @@ Claude Code 設定 (`~/.claude/settings.json`) に追加:
 | データベース        | SQLite + FTS5 (rusqlite, bundled)                                                  |
 | 韓国語 NLP          | Lindera ko-dic + Kiwi-rs 形態素解析                                  |
 | プラットフォーム    | macOS, Windows (x86_64), Linux (CI)                                                |
-| エンベディング      | Ollama BGE-M3 (1024次元) / ONNX Runtime (オプション)                               |
+| エンベディング      | Ollama `qwen3-embedding:0.6b` (1024次元、デフォルト) / ONNX Runtime `BAAI/bge-m3` (オプション) |
 | ANN インデックス    | usearch HNSW (macOS/Linux)                                                         |
 | MCP サーバー        | rmcp (stdio + Streamable HTTP / axum)                                              |
 | ボールト            | Obsidian 互換 Markdown                                                             |

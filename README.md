@@ -71,7 +71,7 @@ seCall은 이 기록을 로컬에 모으고, 원본 transcript를 보존한 뒤,
 | 기능              | 설명                                                           |
 | --------------- | ------------------------------------------------------------ |
 | 멀티 에이전트 수집      | Claude Code, Codex CLI, Gemini CLI, claude.ai, ChatGPT 세션 수집 |
-| 하이브리드 검색        | SQLite FTS5 BM25 + BGE-M3 벡터 검색 + RRF 결합                     |
+| 하이브리드 검색        | SQLite FTS5 BM25 + qwen3-embedding 벡터 검색 + RRF 결합           |
 | Obsidian 볼트     | 원본 세션과 AI 생성 위키를 Markdown으로 저장                               |
 | Knowledge Graph | 세션, 프로젝트, 에이전트, 도구, 토픽 간 관계 추출                               |
 | Web UI          | 검색, 세션 브라우징, 그래프 탐색, 명령 실행                                   |
@@ -240,7 +240,10 @@ Web UI에서 할 수 있는 일:
 | 기능        | 설명                                          |
 | --------- | ------------------------------------------- |
 | 세션 검색     | 키워드 / 시맨틱 검색                                |
+| 세션 목록 탐색  | 달력 · 정렬 · 필터로 세션 목록 탐색                       |
+| 세션 목록 가상화 | 대용량 세션 목록 가상 스크롤                             |
 | 세션 상세 보기  | 원본 transcript Markdown 렌더링                  |
+| 리치 렌더링    | Mermaid / KaTeX / HTML 미리보기 마크다운 렌더링        |
 | Daily 보기  | 날짜별 작업 기록                                   |
 | Wiki 보기   | AI가 정리한 프로젝트 / 토픽 문서                        |
 | Graph 보기  | 세션 간 관계 탐색                                  |
@@ -325,7 +328,7 @@ query
 | --------- | --------------------------------- |
 | BM25      | SQLite FTS5 기반 전문 검색              |
 | 한국어 토크나이저 | Lindera ko-dic 또는 Kiwi-rs         |
-| 벡터 검색     | BGE-M3 임베딩, 1024차원                |
+| 벡터 검색     | 기본 qwen3-embedding:0.6b (Ollama), ONNX/ort는 BAAI/bge-m3, 1024차원 |
 | ANN 인덱스   | usearch HNSW                      |
 | 결합 방식     | Reciprocal Rank Fusion, 기본 `k=60` |
 | 다양성 제한    | 한 세션에서 최대 2개 턴만 노출                |
@@ -717,7 +720,7 @@ interfaces
 | 언어            | Rust 1.75+, 2021 edition        |
 | 데이터베이스        | SQLite + FTS5, rusqlite bundled |
 | 한국어 NLP       | Lindera ko-dic, Kiwi-rs         |
-| 임베딩           | Ollama BGE-M3, ONNX Runtime     |
+| 임베딩           | Ollama qwen3-embedding:0.6b, ONNX Runtime (BAAI/bge-m3) |
 | ANN 인덱스       | usearch HNSW                    |
 | REST API      | axum                            |
 | MCP           | rmcp, stdio, Streamable HTTP    |
