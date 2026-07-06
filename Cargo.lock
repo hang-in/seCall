@@ -3303,7 +3303,7 @@ checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
 
 [[package]]
 name = "secall"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3332,7 +3332,7 @@ dependencies = [
 
 [[package]]
 name = "secall-core"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",

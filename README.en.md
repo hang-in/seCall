@@ -91,7 +91,7 @@ Parse and normalize sessions from multiple AI coding agents into a unified forma
 ### Hybrid Search
 
 - **BM25 full-text search** powered by SQLite FTS5 with Korean morpheme tokenization ([Lindera](https://github.com/lindera/lindera) ko-dic / [Kiwi-rs](https://github.com/bab2min/kiwi) selectable)
-- **Vector semantic search** using [Ollama](https://ollama.com/) BGE-M3 embeddings (1024-dim) + **HNSW ANN index** ([usearch](https://github.com/unum-cloud/usearch)) for O(log n) lookups
+- **Vector semantic search** using [Ollama](https://ollama.com/) `qwen3-embedding:0.6b` embeddings (1024-dim, default; the ONNX/`ort` path uses BAAI/bge-m3) + **HNSW ANN index** ([usearch](https://github.com/unum-cloud/usearch)) for O(log n) lookups
 - **Reciprocal Rank Fusion (RRF)** with independent BM25/vector execution (k=60) + **session-level diversity** (max 2 turns per session)
 - **LLM query expansion** for natural language queries via Claude Code
 
@@ -799,7 +799,7 @@ For auto-sync on session start/end:
 | Database        | SQLite with FTS5 (rusqlite, bundled)                                       |
 | Korean NLP      | Lindera ko-dic + Kiwi-rs morpheme analysis                                 |
 | Platforms       | macOS, Windows (x86_64), Linux (CI)                                        |
-| Embeddings      | Ollama BGE-M3 (1024-dim) / ONNX Runtime (optional)                         |
+| Embeddings      | Ollama qwen3-embedding:0.6b (1024-dim, default) / ONNX Runtime BAAI/bge-m3 (optional) |
 | ANN Index       | usearch HNSW (macOS/Linux)                                                 |
 | MCP Server      | rmcp (stdio + Streamable HTTP via axum)                                    |
 | Vault           | Obsidian-compatible Markdown                                               |

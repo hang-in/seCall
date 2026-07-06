@@ -2,6 +2,37 @@
 
 > NOTE: 전체 버전 · 개발 Phase 이력의 단일 SSOT. (README 의 "버전 히스토리" 표는 2026-07-02 이 파일로 통합됨.)
 
+## v0.7.0 (2026-07-06)
+
+Web UI 대개편(가상화·리치 렌더링·live 그래프·Sessions Linear 톤/반응형 + 달력·정렬·필터) + Knowledge Graph 인사이트 + **ingest 파싱 서브시스템 전면 리뷰**(적대적 코드리뷰 23건 확정 → 21건 반영: 워크플로 정크 세션 차단·토큰 이중계산·병렬 tool 출력 유실·YAML frontmatter drop·비ASCII panic 등) + 벡터/그래프 성능 최적화.
+
+### ✨ Features
+
+- **Sessions 라우트 Linear 톤 + 반응형 + 좌측 패널 고도화** (#137): 3-tier 반응형(모바일 단일컬럼 ↔ md/lg 2-pane), 세션 상세 렌더 개선(빈 redacted-thinking 콜아웃 숨김 + Turn 헤더 토글), 좌측 패널 정렬(date/turns/project/agent)·미니 달력(날짜별 세션 수 배지 + 클릭 필터, 활성 필터 반영)·automated 토글 필터. 병합 전 셀프 코드리뷰로 do_get 회귀 등 11건 수정.
+- **마크다운 리치 렌더링** (#129): Mermaid 다이어그램 · KaTeX 수식 · HTML preview 렌더링.
+- **세션 리스트 DOM 가상화** (#128, `@tanstack/react-virtual`): 대량 세션 목록 스크롤 성능.
+- **그래프 live 시뮬레이션** (#132): 동기 300-tick freeze 제거 + Obsidian 스타일 순차 등장.
+- **Graph Insights** (#126): cross-project surprising connections + knowledge-gap 탐지, 엔티티 필터.
+- **관련 세션 랭킹 Adamic-Adar 관련도** (#124): 공통 이웃 가중 관련도로 교체.
+
+### 🐛 Fixes
+
+- **ingest 파싱 서브시스템 리뷰 반영** (#138 · #139 · #140): (Stage 1) `~/.claude/projects/**/subagents/**` 워크플로 산출물(`journal.jsonl`/`agent-*.jsonl`)을 세션으로 오인 ingest 하던 문제 차단 + claude 파서 `turns.is_empty()` 가드 + codex fast-dedup 정합. (Stage 2) 어시스턴트 토큰 이중계산(message.id 당 1회)·병렬 tool 출력 유실·codex function_call 오귀속·gemini web ZIP 다중대화 유실·frontmatter YAML 무따옴표/제어문자/숫자·날짜로 인한 세션 조용한 drop·비ASCII id byte-slice panic 수정. (Stage 3) codex 주입 컨텍스트 skip·gemini/chatgpt 날짜·토큰·content 파싱 보강·tool 출력 ANSI escape strip·display panic 방지.
+- **세션 상세 tool-use 렌더 복구** (#135): `do_get` 이 vault 루트 미결합으로 항상 DB 폴백해 tool-use 턴이 빈 `## assistant` 로 렌더되던 회귀 → `resolve_session_file` 로 통일.
+- **Windows 에서 kiwi-rs 형태소 분석 활성화** (#133): 선제 제외 철회(Windows CI pass 검증).
+- **세션 삭제 낙관적 처리 + 우측 카드 sticky** (#130), **데일리 노트 timezone 매칭**(#131, 브라우저 tz offset 전달), **위키 검색 모드 config 임베더 경로 정합**(#125, #121 회귀).
+
+### ⚡ Performance
+
+- **BLOB 벡터 스캔 최적화** (#134): query norm 사전계산 + SIMD dot-product + int8 캐시 (무손실).
+- **그래프 hang 완화** (#136): 고립 topic(degree<2) 필터 + alphaMin/alphaDecay 조기 수렴.
+
+### 📝 Docs
+
+- README(ko/en/ja/zh) 기본 임베딩 표기 `bge-m3` → `qwen3-embedding:0.6b` 정정, 문서 스타일가이드·markdownlint CI, 참고문서 정리.
+
+---
+
 ## v0.6.5 (2026-07-03)
 
 검색 품질 대폭 개선(외래어 검색 이식 + qwen 임베딩 전환 + 위키 시맨틱 버그픽스) + zero-turn 세션 healing + 웹 UI 세션 삭제.
