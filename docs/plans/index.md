@@ -4,6 +4,10 @@ Plan document index. Register new plans here.
 
 ## Active
 
+### 운영 자동화
+
+- [자동 sync 스케줄러 계획](schedulerSyncPlan_2026-07-06.md) — draft, 2026-07-06 (경량 자주 + 나이틀리 full, git 포함. 선행: 파싱 subagents fix)
+
 ### seCall MVP — 에이전트 세션 검색 인프라
 
 - [전체 계획서](secall-mvp.md) — draft, v2.0, 2026-04-05

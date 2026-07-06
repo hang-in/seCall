@@ -522,6 +522,21 @@ fn compile_classification_rules(config: &Config) -> Result<Vec<CompiledRule>> {
         .collect()
 }
 
+/// 1:1 파서 fast-dedup 힌트 키.
+///
+/// CodexParser 는 `rollout-<uuid>.jsonl` 파일명에서 `rollout-` prefix 를 벗겨
+/// session id 로 저장한다(secall_core::ingest::codex `parse_codex_jsonl` 참조).
+/// 따라서 dedup 힌트도 동일하게 정규화하지 않으면 stem != stored id 가 되어
+/// codex 세션의 중복/오픈 세션 감지가 조용히 실패하고 매번 재인제스트된다.
+/// `rollout-` prefix 가 없는 다른 1:1 파서 파일명은 그대로 유지된다.
+fn fast_dedup_key(session_path: &Path) -> &str {
+    session_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.strip_prefix("rollout-").unwrap_or(s))
+        .unwrap_or("")
+}
+
 /// 단일 경로의 detect/parse/ingest_single_session 처리.
 ///
 /// ClaudeAi/ChatGpt 는 `parse_all()` 1:N 경로, 그 외는 filename-stem 힌트로
@@ -609,11 +624,9 @@ fn ingest_path(
     }
 
     // 1:1 파서: filename-stem 힌트로 빠른 중복 체크 (--force 시 스킵)
+    // codex 는 `rollout-` prefix 를 벗긴 id 로 저장되므로 힌트도 정규화한다.
     if !force {
-        let session_id_hint = session_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let session_id_hint = fast_dedup_key(session_path);
 
         match db.session_exists(session_id_hint) {
             Ok(true) => {
@@ -1315,6 +1328,21 @@ mod tests {
             apply_classification(&r, "아무 내용", None, "interactive"),
             "interactive"
         );
+    }
+
+    #[test]
+    fn test_fast_dedup_key_strips_codex_rollout_prefix() {
+        // codex 파일명은 `rollout-<uuid>.jsonl`; 저장 id 는 `<uuid>` 이므로
+        // dedup 힌트도 prefix 를 벗겨 stored id 와 일치해야 한다.
+        let p = Path::new("/home/u/.codex/sessions/rollout-abc-123.jsonl");
+        assert_eq!(fast_dedup_key(p), "abc-123");
+    }
+
+    #[test]
+    fn test_fast_dedup_key_keeps_non_codex_stem() {
+        // prefix 가 없는 다른 1:1 파서 파일명은 그대로 유지된다.
+        let p = Path::new("/home/u/sessions/session-xyz.jsonl");
+        assert_eq!(fast_dedup_key(p), "session-xyz");
     }
 
     #[test]

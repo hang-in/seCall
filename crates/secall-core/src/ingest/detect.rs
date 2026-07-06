@@ -135,6 +135,19 @@ pub fn detect_parser(path: &Path) -> Result<Box<dyn SessionParser>> {
     Err(anyhow!("unknown session format: {}", path.display()))
 }
 
+/// Directory names that never hold real top-level session files and whose
+/// subtrees must be pruned during discovery. `subagents` holds tunaFlow
+/// workflow artifacts (journal.jsonl / agent-*.jsonl) that would otherwise be
+/// mis-ingested as spurious sessions; `.git` / `node_modules` are noise.
+fn is_pruned_dir(entry: &walkdir::DirEntry) -> bool {
+    entry.file_type().is_dir()
+        && entry
+            .file_name()
+            .to_str()
+            .map(|n| matches!(n, "subagents" | ".git" | "node_modules"))
+            .unwrap_or(false)
+}
+
 /// Find all Claude Code session files under the given base directory
 pub fn find_claude_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBuf>> {
     let default_base;
@@ -156,6 +169,7 @@ pub fn find_claude_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBu
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
+        .filter_entry(|e| !is_pruned_dir(e))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -187,6 +201,7 @@ pub fn find_codex_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBuf
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
+        .filter_entry(|e| !is_pruned_dir(e))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -218,6 +233,7 @@ pub fn find_gemini_sessions(base: Option<&Path>) -> Result<Vec<std::path::PathBu
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(base)
         .into_iter()
+        .filter_entry(|e| !is_pruned_dir(e))
         .filter_map(|e| e.ok())
     {
         let p = entry.path();
@@ -363,6 +379,35 @@ mod tests {
             chatgpt_parser.agent_kind(),
             super::super::types::AgentKind::ChatGpt
         );
+    }
+
+    #[test]
+    fn test_find_claude_sessions_skips_subagents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects = tmp.path().join(".claude").join("projects");
+        let hash = projects.join("-Users-me-proj");
+        std::fs::create_dir_all(&hash).unwrap();
+
+        // Real top-level session file: <project-hash>/<uuid>.jsonl
+        let real = make_jsonl_file(
+            &hash,
+            "11111111-2222-3333-4444-555555555555.jsonl",
+            &[r#"{"sessionId":"abc","type":"user","message":{}}"#],
+        );
+
+        // Workflow artifacts under <hash>/<uuid>/subagents/workflows/wf_x/ —
+        // must be pruned, not ingested as spurious sessions.
+        let wf = hash
+            .join("11111111-2222-3333-4444-555555555555")
+            .join("subagents")
+            .join("workflows")
+            .join("wf_x");
+        std::fs::create_dir_all(&wf).unwrap();
+        make_jsonl_file(&wf, "journal.jsonl", &[r#"{"foo":"bar"}"#]);
+        make_jsonl_file(&wf, "agent-planner.jsonl", &[r#"{"foo":"bar"}"#]);
+
+        let found = find_claude_sessions(Some(&projects)).unwrap();
+        assert_eq!(found, vec![real]);
     }
 
     #[test]
