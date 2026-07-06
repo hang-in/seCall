@@ -40,12 +40,17 @@ struct EmbedResponse {
     embeddings: Vec<Vec<f32>>,
 }
 
+/// Ollama 백엔드 기본 임베딩 모델. `#120` 에서 `bge-m3` → 이 값으로 전환.
+/// config 의 `embedding.ollama_model` 미설정 시 이 모델이 쓰이며,
+/// 임베딩 모델 불일치 감지(embedding_identity)의 기준이 된다.
+pub const DEFAULT_OLLAMA_EMBED_MODEL: &str = "qwen3-embedding:0.6b";
+
 impl OllamaEmbedder {
     pub fn new(base_url: Option<&str>, model: Option<&str>) -> Self {
         OllamaEmbedder {
             client: Client::new(),
             base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
-            model: model.unwrap_or("qwen3-embedding:0.6b").to_string(),
+            model: model.unwrap_or(DEFAULT_OLLAMA_EMBED_MODEL).to_string(),
             api_key: None,
         }
     }

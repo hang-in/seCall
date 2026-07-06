@@ -63,6 +63,21 @@ pub fn run() -> Result<()> {
     println!("  Sessions:      {}", stats.session_count);
     println!("  Turns:         {}", stats.turn_count);
     println!("  Embedded:      {}", stats.vector_count);
+    // 임베딩 모델 불일치 경고 — 교차모델 벡터는 차원이 같아도 유사도가 무의미해
+    // 시맨틱 검색이 조용히 저하된다.
+    let embed_identity = config.embedding.embedding_identity();
+    match db.get_embedding_model() {
+        Ok(Some(stored)) if stored != embed_identity => {
+            println!("  ⚠ 임베딩 모델 불일치: 기존 벡터={stored} / 현재={embed_identity}");
+            println!("     → `secall embed --all` 로 재임베딩 권장 (BM25 키워드 검색은 무관)");
+        }
+        Ok(None) if stats.vector_count > 0 => {
+            println!(
+                "  ⚠ 임베딩 모델 마커 없음 (v0.7.0 이전 DB 일 수 있음). 벡터가 현재 모델({embed_identity})과 다르면 `secall embed --all` 권장"
+            );
+        }
+        _ => {}
+    }
     println!();
 
     // Vault status
