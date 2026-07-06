@@ -99,3 +99,41 @@ jobs:
       - name: cargo audit
         run: cargo audit
         continue-on-error: true
+
+  # PR #143 follow-up: the core `check` job never exercises the kiwi FFI
+  # (every kiwi runtime test is `#[ignore]`), so a `KiwiAnalyzeOption` ABI
+  # drift would segfault a user's `secall sync` while CI stays green. This
+  # dedicated job runs the real-libkiwi regression against the pinned tag
+  # (KIWI_LIBKIWI_TAG in tokenizer.rs). Split out so libkiwi's runtime
+  # download (network) can't flake the required test matrix.
+  kiwi-ffi:
+    name: kiwi FFI ABI regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo & libkiwi assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ${{ github.workspace }}/.kiwi-cache
+          key: ${{ runner.os }}-kiwiffi-v0.23.2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-kiwiffi-v0.23.2-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run kiwi FFI ABI regression (downloads real libkiwi v0.23.2)
+        env:
+          SECALL_KIWI_FFI_TEST: "1"
+          KIWI_RS_CACHE_DIR: ${{ github.workspace }}/.kiwi-cache
+        run: cargo nextest run -p secall-core --no-fail-fast -E 'test(kiwi_ffi_abi)'
