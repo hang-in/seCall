@@ -1838,9 +1838,7 @@ mod tests {
             .unwrap();
 
         let all = SessionListFilter::default();
-        let days = db
-            .session_calendar_counts(&all, None, None, 540)
-            .unwrap();
+        let days = db.session_calendar_counts(&all, None, None, 540).unwrap();
         let map: std::collections::HashMap<&str, i64> =
             days.iter().map(|d| (d.date.as_str(), d.count)).collect();
         assert_eq!(map.get("2026-05-12"), Some(&2), "KST 05-12 에 a,b 2건");
@@ -2027,7 +2025,10 @@ mod tests {
             ..Default::default()
         };
         let page = db.list_sessions_filtered(&all).unwrap();
-        assert_eq!(page.total, 2, "필터 전부 해제 시 automated+archived 포함 전체");
+        assert_eq!(
+            page.total, 2,
+            "필터 전부 해제 시 automated+archived 포함 전체"
+        );
 
         // 달력도 동일한 빈 WHERE 경로에서 SQL 오류 없이 동작해야 한다.
         let cal_total: i64 = db

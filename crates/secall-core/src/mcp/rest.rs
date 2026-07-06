@@ -455,7 +455,11 @@ impl From<SessionListQuery> for SessionListFilter {
             page_size: q.page_size.unwrap_or(30),
             include_archived: false,
             // 미지정/미인식 값은 enum parse 가 기본값(date/desc)으로 폴백 → 현행 보존.
-            sort: q.sort.as_deref().map(SessionSort::parse).unwrap_or_default(),
+            sort: q
+                .sort
+                .as_deref()
+                .map(SessionSort::parse)
+                .unwrap_or_default(),
             order: q.order.as_deref().map(SortOrder::parse).unwrap_or_default(),
             include_automated: q.include_automated.unwrap_or(false),
         }
