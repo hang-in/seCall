@@ -588,6 +588,14 @@ secall serve --port 8080 --allow-config-edit
 | `wiki.review_backend`    | 위키 리뷰 백엔드            | `wiki.default_backend`    |
 | `log.backend`            | 작업 일기 백엔드            | `graph.semantic_backend`  |
 
+> **⚠️ 업그레이드 안내 (`bge-m3` → `qwen3-embedding`)**
+> v0.6.5부터 기본 임베딩 모델이 `bge-m3` → `qwen3-embedding:0.6b`로 바뀌었습니다. 기존 벡터가 `bge-m3`라면 교차모델 불일치로 시맨틱 검색 정확도가 떨어집니다(차원이 같아 에러는 없지만 유사도가 무의미). 둘 중 하나를 실행하세요:
+>
+> - `secall embed --all` — qwen3-embedding으로 전체 재임베딩 (권장)
+> - `secall config set embedding.ollama_model bge-m3` — 기존 모델 유지
+>
+> BM25 키워드 검색은 영향 없습니다. `secall status`가 불일치를 감지해 안내합니다.
+
 설정 파일 위치:
 
 | OS      | 경로                                                 |

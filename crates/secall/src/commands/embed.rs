@@ -80,8 +80,11 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
     // 이 아니면 경고만 하고 진행한다.
     let embed_identity = config.embedding.embedding_identity();
     let stored_model = db.get_embedding_model()?;
-    let existing_vectors = db.get_stats().map(|s| s.vector_count).unwrap_or(0);
-    if !all {
+    // get_stats() 실패를 0 으로 뭉개면 실제 벡터가 있어도 "최초 embed" 로 오판해
+    // 마커를 잘못 확정할 수 있어 에러를 전파한다(리뷰 반영).
+    let existing_vectors = db.get_stats()?.vector_count;
+    // backend=none 은 임베딩 비활성이라 불일치 경고가 오해만 준다 → skip.
+    if config.embedding.backend != "none" && !all {
         match &stored_model {
             Some(m) if *m != embed_identity => {
                 eprintln!("⚠ 임베딩 모델 불일치: 기존 벡터={m}, 현재={embed_identity}");

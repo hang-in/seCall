@@ -384,12 +384,15 @@ impl EmbeddingConfig {
                     .as_deref()
                     .unwrap_or(DEFAULT_OLLAMA_EMBED_MODEL)
             ),
+            // 경로 전체가 아니라 모델 디렉토리/파일명만 식별자로 쓴다 — 절대경로·OS별
+            // 구분자 차이로 크로스머신 동기화 시 헛불일치가 나는 것을 방지(리뷰 반영).
             "ort" | "openvino" => format!(
                 "{}:{}",
                 self.backend,
                 self.model_path
                     .as_ref()
-                    .map(|p| p.display().to_string())
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "BAAI/bge-m3".to_string())
             ),
             "openai" => format!(
