@@ -186,17 +186,17 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
     // Frontmatter
     out.push_str("---\n");
     out.push_str("type: session\n");
-    out.push_str(&format!("agent: {}\n", session.agent.as_str()));
+    out.push_str(&format!("agent: {}\n", yaml_scalar(session.agent.as_str())));
     if let Some(m) = &session.model {
-        out.push_str(&format!("model: {}\n", m));
+        out.push_str(&format!("model: {}\n", yaml_scalar(m)));
     }
     if let Some(p) = &session.project {
-        out.push_str(&format!("project: {}\n", p));
+        out.push_str(&format!("project: {}\n", yaml_scalar(p)));
     }
     if let Some(c) = &session.cwd {
-        out.push_str(&format!("cwd: {}\n", c.display()));
+        out.push_str(&format!("cwd: {}\n", yaml_scalar(&c.display().to_string())));
     }
-    out.push_str(&format!("session_id: {}\n", session.id));
+    out.push_str(&format!("session_id: {}\n", yaml_scalar(&session.id)));
     out.push_str(&format!(
         "date: {}\n",
         session.start_time.with_timezone(&tz).format("%Y-%m-%d")
@@ -241,14 +241,17 @@ pub fn render_session(session: &Session, tz: chrono_tz::Tz) -> String {
     }
     out.push_str(&format!("tools_used: [{}]\n", tools_used.join(", ")));
     if let Some(host) = &session.host {
-        out.push_str(&format!("host: {host}\n"));
+        out.push_str(&format!("host: {}\n", yaml_scalar(host)));
     }
     if let Some(summary) = extract_summary(session) {
         let escaped = escape_yaml_string(&summary);
         out.push_str(&format!("summary: \"{escaped}\"\n"));
     }
     out.push_str("status: raw\n");
-    out.push_str(&format!("session_type: {}\n", session.session_type));
+    out.push_str(&format!(
+        "session_type: {}\n",
+        yaml_scalar(&session.session_type)
+    ));
     out.push_str("---\n\n");
 
     // Title
@@ -413,16 +416,94 @@ fn session_filename(session: &Session) -> String {
         sanitized
     };
     let project = project.as_str();
-    let id_prefix = if session.id.len() >= 8 {
-        &session.id[..8]
-    } else {
-        &session.id
-    };
+    // char-aware prefix: 멀티바이트 id(예: 파일명 stem "세션백업")를 byte-slice 하면
+    // char boundary 위반으로 panic → ingest hot path 전체 abort. char 단위로 자른다.
+    let id_prefix: String = session.id.chars().take(8).collect();
     format!("{agent}_{project}_{id_prefix}.md")
 }
 
+/// 더블쿼트 YAML 스칼라 내부용 이스케이프. backslash/quote 뿐 아니라 제어문자
+/// (개행/탭/ESC 등 C0 및 DEL/C1)도 이스케이프하여 serde_yaml 이 거부하지 않는
+/// 유효한 double-quoted scalar 를 만든다.
 fn escape_yaml_string(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            // 기타 제어문자(ESC/0x1b 포함 C0, DEL, C1)는 \xNN 로 이스케이프.
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// 문자열을 안전한 YAML 스칼라로 렌더링한다. 평범한 값은 그대로 두어 기존 vault
+/// 포맷을 유지하고, YAML 메타문자/제어문자가 있으면 double-quote + 이스케이프하여
+/// 항상 유효한 YAML 을 보장한다 (frontmatter 왕복 파싱 실패로 인한 silent session
+/// drop 방지 — 예: `[archive]`, `@work`, ANSI/제어 바이트 포함 summary).
+fn yaml_scalar(s: &str) -> String {
+    if is_safe_plain_scalar(s) {
+        s.to_string()
+    } else {
+        format!("\"{}\"", escape_yaml_string(s))
+    }
+}
+
+/// unquoted(plain) YAML 스칼라로 안전하게 쓸 수 있는지 보수적으로 판정.
+/// 안전하지 않으면 호출측에서 double-quote 로 감싼다.
+fn is_safe_plain_scalar(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // 제어문자가 있으면 plain 불가.
+    if s.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    let first = s.chars().next().unwrap();
+    // 첫 글자가 YAML indicator 면 flow/anchor/tag 등으로 오해될 수 있음.
+    if matches!(
+        first,
+        '-' | '?'
+            | ':'
+            | ','
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '#'
+            | '&'
+            | '*'
+            | '!'
+            | '|'
+            | '>'
+            | '\''
+            | '"'
+            | '%'
+            | '@'
+            | '`'
+            | ' '
+    ) {
+        return false;
+    }
+    // 끝 공백, ": "(mapping), " #"(comment), 끝의 ':' 는 plain 에서 위험.
+    if s.ends_with(' ') || s.ends_with(':') || s.contains(": ") || s.contains(" #") {
+        return false;
+    }
+    // bool/null 로 오파싱될 수 있는 값은 quote.
+    let lower = s.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "null" | "~" | "true" | "false" | "yes" | "no" | "on" | "off"
+    ) {
+        return false;
+    }
+    true
 }
 
 /// 세션의 첫 User 턴에서 비어있지 않은 첫 줄을 80자로 truncate하여 반환.
@@ -879,6 +960,56 @@ mod tests {
         let fm = parse_session_frontmatter(content).unwrap();
         assert_eq!(fm.archived, None);
         assert_eq!(fm.archived_at, None);
+    }
+
+    // #7 ─ YAML frontmatter injection / silent session drop 회귀 테스트.
+    // project `[archive]`(flow seq 로 오파싱), host `@work`(reserved indicator),
+    // summary 내 제어문자(ESC) 가 unquoted/미이스케이프되면 serde_yaml 이 frontmatter
+    // 전체 파싱에 실패해 세션이 조용히 드랍된다. 렌더 → parse 왕복이 성공해야 한다.
+    #[test]
+    fn test_frontmatter_roundtrip_adversarial_values() {
+        let mut session = make_session(vec![make_turn(Role::User, "hello: world \u{1b}[0m done")]);
+        session.project = Some("[archive]".to_string());
+        session.host = Some("@work".to_string());
+        session.session_type = "type: weird".to_string();
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+
+        // 렌더 결과가 다시 파싱되어야 한다 (silent drop 방지).
+        let fm = parse_session_frontmatter(&md).expect("adversarial frontmatter must parse");
+        assert_eq!(fm.project.as_deref(), Some("[archive]"));
+        assert_eq!(fm.host.as_deref(), Some("@work"));
+        assert_eq!(fm.session_type.as_deref(), Some("type: weird"));
+        // summary 의 콜론과 ESC 제어문자가 그대로 복원되어야 한다.
+        assert_eq!(fm.summary.as_deref(), Some("hello: world \u{1b}[0m done"));
+    }
+
+    #[test]
+    fn test_escape_yaml_string_escapes_control_chars() {
+        // ESC(0x1b) 및 개행/탭이 유효한 double-quoted escape 로 변환되어야 한다.
+        let escaped = escape_yaml_string("a\u{1b}b\nc\td");
+        assert_eq!(escaped, "a\\x1bb\\nc\\td");
+        // 왕복: double-quote 로 감싸 serde_yaml 로 파싱하면 원본 복원.
+        let yaml = format!("v: \"{}\"", escaped);
+        let val: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(val["v"].as_str(), Some("a\u{1b}b\nc\td"));
+    }
+
+    // #16 ─ 멀티바이트 id(예: 파일명 stem "세션백업메모1234") 를 byte-slice 하면
+    // char boundary 위반으로 panic 하여 ingest 전체가 abort 된다. char-aware prefix
+    // 는 panic 없이 앞 8 char 를 취해야 한다.
+    #[test]
+    fn test_session_filename_multibyte_id_no_panic() {
+        let mut session = make_session(vec![]);
+        // 10 chars(각 한글 3바이트) → byte index 8 은 char boundary 아님.
+        session.id = "세션백업메모1234".to_string();
+        let path = session_vault_path(&session, chrono_tz::Tz::UTC);
+        let s = path.to_string_lossy();
+        // 앞 8 char prefix: "세션백업메모12"
+        assert!(
+            s.contains("세션백업메모12"),
+            "filename must contain char-aware 8-char id prefix: {s}"
+        );
+        assert!(s.ends_with(".md"));
     }
 
     // P49 ─ 같은 role 연속 turn 헤더 강등 (h2 → h3) 회귀 테스트

@@ -537,10 +537,31 @@ fn fast_dedup_key(session_path: &Path) -> &str {
         .unwrap_or("")
 }
 
+/// 세션 ID 의 앞 8자를 char 경계 안전하게 잘라 반환한다.
+///
+/// `&id[..8.min(id.len())]` 슬라이싱은 len<8 만 방어할 뿐 byte offset 8 이
+/// UTF-8 char 경계가 아닐 때(비-ASCII/멀티바이트 ID) panic 한다. 로그·진행
+/// 출력용 짧은 식별자이므로 char 단위로 앞 8자를 취해 절대 panic 하지 않게 한다.
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+/// 단일 파일/아카이브에 여러 대화를 담을 수 있어 반드시 `parse_all()` 1:N
+/// 경로로 인제스트해야 하는 agent 종류인지 판정한다.
+///
+/// GeminiWeb ZIP 은 대화 N개를 담을 수 있으므로 `parse()` 1:1 경로로 라우팅되면
+/// 첫 대화만 남고 나머지 N-1개가 조용히 유실된다(#6). ClaudeAi/ChatGpt export 도 동일.
+fn uses_multi_session_path(kind: AgentKind) -> bool {
+    matches!(
+        kind,
+        AgentKind::ClaudeAi | AgentKind::ChatGpt | AgentKind::GeminiWeb
+    )
+}
+
 /// 단일 경로의 detect/parse/ingest_single_session 처리.
 ///
-/// ClaudeAi/ChatGpt 는 `parse_all()` 1:N 경로, 그 외는 filename-stem 힌트로
-/// 중복 체크 후 `parse()` 1:1 경로. 카운터/에러 누적 모두 `&mut` 로 받음.
+/// ClaudeAi/ChatGpt/GeminiWeb 는 `parse_all()` 1:N 경로, 그 외는 filename-stem
+/// 힌트로 중복 체크 후 `parse()` 1:1 경로. 카운터/에러 누적 모두 `&mut` 로 받음.
 #[allow(clippy::too_many_arguments)]
 fn ingest_path(
     config: &Config,
@@ -577,9 +598,10 @@ fn ingest_path(
         }
     };
 
-    // ClaudeAiParser는 항상 parse_all() 경로 (1:N)
+    // ClaudeAi/ChatGpt/GeminiWeb 는 항상 parse_all() 경로 (1:N)
     // agent_kind()로 판단하여 포맷·인코딩 방식과 무관하게 정확히 라우팅
-    if parser.agent_kind() == AgentKind::ClaudeAi || parser.agent_kind() == AgentKind::ChatGpt {
+    // (GeminiWeb ZIP 은 N개 대화를 담을 수 있어 parse() 1:1 경로면 첫 대화만 남고 나머지 유실됨)
+    if uses_multi_session_path(parser.agent_kind()) {
         match parser.parse_all(session_path) {
             Ok(sessions) => {
                 eprintln!(
@@ -733,14 +755,14 @@ async fn embed_vector_tasks(
                 return true;
             }
         }
-        let short = &session.id[..8.min(session.id.len())];
+        let short = short_id(&session.id);
         eprintln!(
             "  [{}/{total}] {short} ({} turns)",
             i + 1,
             session.turns.len()
         );
         if let Err(e) = engine.index_session_vectors(db, session, tz).await {
-            tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "vector embedding failed");
+            tracing::warn!(session = short.as_str(), error = %e, "vector embedding failed");
             error_details.push(IngestError {
                 path: String::new(),
                 session_id: Some(session.id.clone()),
@@ -783,7 +805,8 @@ async fn extract_semantic_edges_batch(
                 return true;
             }
         }
-        let short = &session_id[..8.min(session_id.len())];
+        let short_owned = short_id(session_id);
+        let short = short_owned.as_str();
         // P37 Task 01: 단일 세션 helper 로 추출 (rebuild 경로와 동일 helper).
         // 동작 변경 없음 — 기존 tracing::warn/debug 메시지 그대로 보존.
         match extract_one_session_semantic(db, config, session_id).await {
@@ -850,7 +873,8 @@ pub async fn extract_one_session_semantic(
     config: &Config,
     session_id: &str,
 ) -> ExtractOneResult {
-    let short = &session_id[..8.min(session_id.len())];
+    let short_owned = short_id(session_id);
+    let short = short_owned.as_str();
 
     let vault_path_opt = match db.get_session_vault_path(session_id) {
         Ok(vp) => vp,
@@ -1155,7 +1179,8 @@ fn ingest_single_session(
     new_session_ids.push(session.id.clone());
 
     if let Err(e) = run_post_ingest_hook(config, &session, &abs_path, tz) {
-        tracing::warn!(session = &session.id[..8.min(session.id.len())], error = %e, "post-ingest hook failed");
+        let short = short_id(&session.id);
+        tracing::warn!(session = short.as_str(), error = %e, "post-ingest hook failed");
         *hook_failures += 1;
     }
 
@@ -1359,5 +1384,48 @@ mod tests {
             apply_classification(&r, "일반 내용", Some("macbook"), "interactive"),
             "automated"
         );
+    }
+
+    #[test]
+    fn test_short_id_ascii() {
+        assert_eq!(short_id("22836c74f2ebe4cc"), "22836c74");
+    }
+
+    #[test]
+    fn test_short_id_shorter_than_eight() {
+        // 8자 미만 입력은 통째로 반환 (패닉/잘림 없음)
+        assert_eq!(short_id("abc"), "abc");
+        assert_eq!(short_id(""), "");
+    }
+
+    #[test]
+    fn test_short_id_multibyte_no_panic() {
+        // #16 회귀: byte offset 8 이 char 경계가 아닌 비-ASCII id 도 패닉하지 않고
+        // char 단위 앞 8자를 반환해야 한다 (`&id[..8]` 는 여기서 패닉했다).
+        let id = "한글아이디테스트값"; // 각 char 3바이트 → byte 8 은 char 경계 아님
+        let short = short_id(id);
+        assert_eq!(short.chars().count(), 8);
+        assert_eq!(short, "한글아이디테스트");
+    }
+
+    #[test]
+    fn test_short_id_emoji_no_panic() {
+        // 4바이트 char(이모지) 혼합 id 도 패닉 없이 앞 8 char 반환
+        let short = short_id("😀😀😀😀😀😀😀😀😀😀");
+        assert_eq!(short.chars().count(), 8);
+    }
+
+    #[test]
+    fn test_multi_session_routing_includes_gemini_web() {
+        // #6 회귀: GeminiWeb 은 반드시 parse_all() 1:N 경로로 라우팅되어야
+        // ZIP 내 N개 대화가 모두 인제스트된다.
+        assert!(uses_multi_session_path(AgentKind::GeminiWeb));
+        assert!(uses_multi_session_path(AgentKind::ClaudeAi));
+        assert!(uses_multi_session_path(AgentKind::ChatGpt));
+        // 1:1 파서는 기존대로 parse() 경로 유지
+        assert!(!uses_multi_session_path(AgentKind::Codex));
+        assert!(!uses_multi_session_path(AgentKind::ClaudeCode));
+        assert!(!uses_multi_session_path(AgentKind::GeminiCli));
+        assert!(!uses_multi_session_path(AgentKind::OpenCode));
     }
 }

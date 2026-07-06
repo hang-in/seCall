@@ -155,6 +155,22 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
                             .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
                             .map(|dt| dt.with_timezone(&Utc));
 
+                        // codex는 assistant 응답의 텍스트를 reasoning/function_call
+                        // 뒤(응답 끝)에 emit한다. 앞선 reasoning/function_call이 이미
+                        // 열어둔 (아직 텍스트가 없는) assistant 턴이 있으면 새 턴을
+                        // 만들지 않고 이 텍스트를 그 턴에 접는다.
+                        if role == Role::Assistant {
+                            if let Some(last) = turns.last_mut() {
+                                if last.role == Role::Assistant && last.content.is_empty() {
+                                    last.content = content;
+                                    if last.timestamp.is_none() {
+                                        last.timestamp = ts;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+
                         turns.push(Turn {
                             index: turn_idx,
                             role,
@@ -171,18 +187,24 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
                         let name = rp.name.unwrap_or_else(|| "unknown".to_string());
                         let call_id = rp.call_id.unwrap_or_default();
                         let arguments = value_to_string(rp.arguments);
+                        let ts = jl
+                            .timestamp
+                            .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
+                            .map(|dt| dt.with_timezone(&Utc));
 
-                        if let Some(last) = turns.last_mut() {
-                            let action_idx = last.actions.len();
-                            last.actions.push(Action::ToolUse {
-                                name,
-                                input_summary: arguments,
-                                output_summary: String::new(),
-                                tool_use_id: Some(call_id.clone()),
-                            });
-                            if !call_id.is_empty() {
-                                pending_calls.insert(call_id, (turns.len() - 1, action_idx));
-                            }
+                        // codex는 assistant 텍스트 없이 곧바로 tool을 호출할 수 있다.
+                        // 이때 turns.last()는 직전 user 턴이므로, ToolUse가 user 턴에
+                        // 잘못 붙지 않도록 assistant 턴을 확보해 거기에 붙인다.
+                        let turn_pos = ensure_assistant_turn(&mut turns, &mut turn_idx, ts);
+                        let action_idx = turns[turn_pos].actions.len();
+                        turns[turn_pos].actions.push(Action::ToolUse {
+                            name,
+                            input_summary: arguments,
+                            output_summary: String::new(),
+                            tool_use_id: Some(call_id.clone()),
+                        });
+                        if !call_id.is_empty() {
+                            pending_calls.insert(call_id, (turn_pos, action_idx));
                         }
                     }
                     "function_call_output" => {
@@ -199,7 +221,17 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
                             }
                         }
                     }
-                    // "reasoning" 등 → skip
+                    "reasoning" => {
+                        // reasoning은 assistant 응답의 시작 신호다. 뒤따르는
+                        // function_call / assistant message가 붙을 assistant 턴을
+                        // 미리 연다 (last가 이미 assistant면 no-op).
+                        let ts = jl
+                            .timestamp
+                            .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
+                            .map(|dt| dt.with_timezone(&Utc));
+                        ensure_assistant_turn(&mut turns, &mut turn_idx, ts);
+                    }
+                    // 그 외 아이템 → skip
                     _ => {}
                 }
             }
@@ -244,6 +276,35 @@ pub fn parse_codex_jsonl(path: &Path) -> Result<Session> {
         archived: false,
         archived_at: None,
     })
+}
+
+/// Return the index of the assistant turn that the current codex response is
+/// building. Codex emits reasoning / function_call items before (or entirely
+/// without) the assistant message text, so if the most recent turn is not an
+/// assistant turn we open a fresh (empty) one — otherwise tool calls would be
+/// misattributed to the preceding user turn.
+fn ensure_assistant_turn(
+    turns: &mut Vec<Turn>,
+    turn_idx: &mut u32,
+    ts: Option<DateTime<Utc>>,
+) -> usize {
+    if let Some(last) = turns.last() {
+        if last.role == Role::Assistant {
+            return turns.len() - 1;
+        }
+    }
+    turns.push(Turn {
+        index: *turn_idx,
+        role: Role::Assistant,
+        timestamp: ts,
+        content: String::new(),
+        actions: Vec::new(),
+        tokens: None,
+        thinking: None,
+        is_sidechain: false,
+    });
+    *turn_idx += 1;
+    turns.len() - 1
 }
 
 /// Convert a serde_json::Value to String — strings pass through, others serialize to JSON.
@@ -456,5 +517,105 @@ mod tests {
             }
             _ => panic!("expected ToolUse"),
         }
+    }
+
+    #[test]
+    fn test_codex_tool_call_attaches_to_assistant_not_user() {
+        // 실제 codex: leading assistant message 없이
+        // reasoning -> function_call -> function_call_output 로 tool을 호출.
+        // ToolUse는 반드시 assistant 턴에 붙어야 하고, 직전 user 턴에 새면 안 된다.
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"tool-first"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ls 실행"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:02Z","type":"response_item","payload":{"type":"reasoning","content":null,"summary":[]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"call-1","arguments":"{\"command\":\"ls\"}"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"file1.rs\nfile2.rs"}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+
+        // user 턴에는 tool action이 전혀 없어야 한다 (오귀속 방지)
+        let user = session.turns.iter().find(|t| t.role == Role::User).unwrap();
+        assert!(
+            user.actions.is_empty(),
+            "tool call leaked onto the user turn"
+        );
+
+        // assistant 턴이 존재하고 ToolUse(+resolved output)를 보유해야 한다
+        let assistant = session
+            .turns
+            .iter()
+            .find(|t| t.role == Role::Assistant)
+            .unwrap();
+        assert_eq!(assistant.actions.len(), 1);
+        match &assistant.actions[0] {
+            Action::ToolUse {
+                name,
+                output_summary,
+                ..
+            } => {
+                assert_eq!(name, "shell");
+                assert!(output_summary.contains("file1.rs"));
+            }
+            _ => panic!("expected ToolUse"),
+        }
+    }
+
+    #[test]
+    fn test_codex_normal_message_first_response() {
+        // assistant가 텍스트를 먼저 emit한 뒤 tool을 호출하는 정상 응답.
+        // 텍스트와 ToolUse가 하나의 assistant 턴에 담겨야 하고,
+        // 빈 중복 assistant 턴이 생기면 안 된다.
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"msg-first"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"검색"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"실행합니다"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"call-2","arguments":"{\"command\":\"ls\"}"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-2","output":"ok"}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+        let assistant_turns: Vec<_> = session
+            .turns
+            .iter()
+            .filter(|t| t.role == Role::Assistant)
+            .collect();
+        assert_eq!(
+            assistant_turns.len(),
+            1,
+            "should not create duplicate assistant turns"
+        );
+        let a = assistant_turns[0];
+        assert!(a.content.contains("실행합니다"));
+        assert_eq!(a.actions.len(), 1);
+        match &a.actions[0] {
+            Action::ToolUse {
+                name,
+                output_summary,
+                ..
+            } => {
+                assert_eq!(name, "shell");
+                assert_eq!(output_summary, "ok");
+            }
+            _ => panic!("expected ToolUse"),
+        }
+    }
+
+    #[test]
+    fn test_codex_tool_first_then_trailing_message() {
+        // reasoning -> function_call -> output -> assistant message(text) 순서에서
+        // 마지막 텍스트가 같은 assistant 턴에 접혀야 한다.
+        let f = make_codex_file(&[
+            r#"{"type":"session_meta","payload":{"id":"trailing"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:02Z","type":"response_item","payload":{"type":"reasoning","content":null,"summary":[]}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:03Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c1","arguments":"{}"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:04Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"done"}}"#,
+            r#"{"timestamp":"2026-04-05T10:00:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"완료했습니다"}]}}"#,
+        ]);
+        let session = parse_codex_jsonl(f.path()).unwrap();
+        assert_eq!(session.turns.len(), 2, "user + one folded assistant turn");
+        let a = &session.turns[1];
+        assert_eq!(a.role, Role::Assistant);
+        assert!(a.content.contains("완료"));
+        assert_eq!(a.actions.len(), 1);
     }
 }
