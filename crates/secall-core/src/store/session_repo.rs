@@ -1080,7 +1080,9 @@ impl Database {
         to: Option<&str>,
         tz_offset_min: i64, // 로컬 - UTC (분). 한국=540.
     ) -> Result<Vec<CalendarDayCount>> {
-        let modifier = format!("{} minutes", tz_offset_min);
+        // SQLite DATE modifier 는 `±NNN minutes` 형태를 기대하므로 부호를 명시한다
+        // (`{:+}` → "+540"/"-720"). 부호 없는 양수도 대개 동작하나 호환성 위해 명시(리뷰 반영).
+        let modifier = format!("{:+} minutes", tz_offset_min);
 
         // `?` 순서에 맞춰 params 를 lockstep 으로 구성한다. SELECT 의 DATE(start_time, ?)
         // 가 첫 ? 이므로 modifier 를 먼저 bind한 뒤, 리스트와 동일한 필터 술어(공유 헬퍼)를

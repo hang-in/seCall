@@ -22,16 +22,27 @@ export default function SessionDetailRoute() {
   const { data, isLoading, error } = useSession(id, true);
 
   // R2 — "턴 구분 표시" 토글. 기본 OFF, localStorage 에 저장해 세션 이동해도 유지.
-  const [showTurnHeaders, setShowTurnHeaders] = useState<boolean>(
-    () =>
-      typeof window !== "undefined" &&
-      window.localStorage.getItem("secall.showTurnHeaders") === "1",
-  );
+  // Safari "모든 쿠키 차단"/프라이빗 모드 등에서는 localStorage 접근 자체가
+  // SecurityError 를 던지므로 try-catch 로 감싸 렌더 크래시를 막는다(리뷰 반영).
+  const [showTurnHeaders, setShowTurnHeaders] = useState<boolean>(() => {
+    try {
+      return (
+        typeof window !== "undefined" &&
+        window.localStorage.getItem("secall.showTurnHeaders") === "1"
+      );
+    } catch {
+      return false;
+    }
+  });
   useEffect(() => {
-    window.localStorage.setItem(
-      "secall.showTurnHeaders",
-      showTurnHeaders ? "1" : "0",
-    );
+    try {
+      window.localStorage.setItem(
+        "secall.showTurnHeaders",
+        showTurnHeaders ? "1" : "0",
+      );
+    } catch {
+      // 저장소 접근 차단 환경 — 무시 (토글은 세션 내에서만 유지).
+    }
   }, [showTurnHeaders]);
 
   if (isLoading) {
