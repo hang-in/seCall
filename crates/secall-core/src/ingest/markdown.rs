@@ -503,7 +503,31 @@ fn is_safe_plain_scalar(s: &str) -> bool {
     ) {
         return false;
     }
+    // 숫자(정수/실수/16·8·2진수)나 날짜(YYYY-MM-DD)로 오파싱될 수 있는 값은 quote.
+    // 예: project "7" → `project: 7` → serde_yaml 이 정수로 파싱 → String 역직렬화
+    // 실패 → 세션 조용히 drop (리뷰 반영). 과잉 인용은 무해(YAML 파싱 동일).
+    if s.parse::<i64>().is_ok()
+        || s.parse::<u64>().is_ok()
+        || s.parse::<f64>().is_ok()
+        || s.starts_with("0x")
+        || s.starts_with("0o")
+        || s.starts_with("0b")
+        || is_yaml_date_like(s)
+    {
+        return false;
+    }
     true
+}
+
+/// YAML 이 날짜(예: "2026-04-05")로 오파싱할 수 있는 형태인지 (보수적: YYYY-MM-DD).
+fn is_yaml_date_like(s: &str) -> bool {
+    let b = s.as_bytes();
+    s.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[..4].iter().all(|c| c.is_ascii_digit())
+        && b[5..7].iter().all(|c| c.is_ascii_digit())
+        && b[8..10].iter().all(|c| c.is_ascii_digit())
 }
 
 /// 세션의 첫 User 턴에서 비어있지 않은 첫 줄을 80자로 truncate하여 반환.
@@ -981,6 +1005,22 @@ mod tests {
         assert_eq!(fm.session_type.as_deref(), Some("type: weird"));
         // summary 의 콜론과 ESC 제어문자가 그대로 복원되어야 한다.
         assert_eq!(fm.summary.as_deref(), Some("hello: world \u{1b}[0m done"));
+    }
+
+    #[test]
+    fn test_frontmatter_numeric_and_date_values_quoted() {
+        // 숫자/날짜형 문자열 값은 quote 되어야 serde_yaml 이 String 으로 복원한다.
+        // 미인용 시 `project: 7` → int, `2026-04-05` → date 로 파싱되어 String
+        // 역직렬화가 실패하고 세션이 조용히 drop 된다.
+        let mut session = make_session(vec![]);
+        session.project = Some("7".to_string()); // 순수 숫자 (인덱스에 실존하는 project)
+        session.host = Some("2026-04-05".to_string()); // 날짜형
+        session.session_type = "42".to_string(); // 숫자
+        let md = render_session(&session, chrono_tz::Tz::UTC);
+        let fm = parse_session_frontmatter(&md).expect("numeric/date frontmatter must parse");
+        assert_eq!(fm.project.as_deref(), Some("7"));
+        assert_eq!(fm.host.as_deref(), Some("2026-04-05"));
+        assert_eq!(fm.session_type.as_deref(), Some("42"));
     }
 
     #[test]
