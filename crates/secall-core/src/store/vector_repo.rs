@@ -74,7 +74,8 @@ impl VectorRepo for Database {
             }
         }
 
-        let bytes = floats_to_bytes(embedding);
+        // ② 저장 시 L2 정규화 → 검색에서 dot only (schema v11). 이미 unit 이면 무변.
+        let bytes = floats_to_bytes(&l2_normalize(embedding));
         self.conn().execute(
             "INSERT INTO turn_vectors(session_id, turn_index, chunk_seq, model, embedded_at, embedding)
              VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5)",
@@ -127,12 +128,13 @@ impl VectorRepo for Database {
         };
 
         // query norm 은 벡터마다 불변 → 루프 밖 1회 계산 (기존엔 행마다 재계산했다).
-        let query_norm: f32 = query_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        // ② query 도 정규화 → 저장된 unit 벡터와 dot 만으로 코사인 (norm 계산 제거).
+        let query_unit = l2_normalize(query_embedding);
         let mut scored: Vec<(f32, VectorRow)> = rows
             .into_iter()
             .map(|(id, session_id, turn_index, chunk_seq, bytes)| {
                 let embedding = bytes_to_floats(&bytes);
-                let distance = cosine_distance_pre(query_embedding, query_norm, &embedding);
+                let distance = cosine_distance_unit(&query_unit, &embedding);
                 (
                     distance,
                     VectorRow {
@@ -204,37 +206,33 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     1.0 - (dot / (norm_a * norm_b))
 }
 
-/// query norm 을 미리 받아 벡터별 재계산을 피하는 코사인 거리 (대량 스캔용).
-/// dot 과 벡터 norm² 을 한 pass 로 함께 누적해 캐시 효율을 높인다.
-/// query_norm 은 호출자가 `query.map(x*x).sum().sqrt()` 로 1회 계산해 전달한다.
-pub(crate) fn cosine_distance_pre(query: &[f32], query_norm: f32, vec: &[f32]) -> f32 {
-    if query.len() != vec.len() || vec.is_empty() {
+/// L2 정규화 (unit 벡터). 0 벡터는 그대로 반환.
+pub(crate) fn l2_normalize(v: &[f32]) -> Vec<f32> {
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm == 0.0 {
+        return v.to_vec();
+    }
+    v.iter().map(|x| x / norm).collect()
+}
+
+/// 정규화된(unit) 벡터 전제 코사인 거리 = 1 - dot. norm 계산 없이 dot 만 SIMD.
+/// 저장 시 정규화 + query 정규화 전제 (schema v11 마이그레이션 이후 모든 벡터가 unit).
+pub(crate) fn cosine_distance_unit(query_unit: &[f32], vec_unit: &[f32]) -> f32 {
+    if query_unit.len() != vec_unit.len() || vec_unit.is_empty() {
         return 1.0;
     }
-    // 8-wide SIMD 로 dot 과 벡터 norm² 을 동시 누적 (wide crate, 크로스플랫폼).
     use wide::f32x8;
     let mut dot_v = f32x8::ZERO;
-    let mut nsq_v = f32x8::ZERO;
-    let mut q_chunks = query.chunks_exact(8);
-    let mut v_chunks = vec.chunks_exact(8);
-    for (q, v) in q_chunks.by_ref().zip(v_chunks.by_ref()) {
-        let qv = f32x8::new(q.try_into().unwrap());
-        let vv = f32x8::new(v.try_into().unwrap());
-        dot_v += qv * vv;
-        nsq_v += vv * vv;
+    let mut q = query_unit.chunks_exact(8);
+    let mut v = vec_unit.chunks_exact(8);
+    for (qc, vc) in q.by_ref().zip(v.by_ref()) {
+        dot_v += f32x8::new(qc.try_into().unwrap()) * f32x8::new(vc.try_into().unwrap());
     }
     let mut dot = dot_v.reduce_add();
-    let mut vec_norm_sq = nsq_v.reduce_add();
-    // 8 배수가 아닌 나머지 (임베딩 차원이 8 배수면 없음).
-    for (&q, &v) in q_chunks.remainder().iter().zip(v_chunks.remainder()) {
-        dot += q * v;
-        vec_norm_sq += v * v;
+    for (&a, &b) in q.remainder().iter().zip(v.remainder()) {
+        dot += a * b;
     }
-    let vec_norm = vec_norm_sq.sqrt();
-    if query_norm == 0.0 || vec_norm == 0.0 {
-        return 1.0;
-    }
-    1.0 - (dot / (query_norm * vec_norm))
+    1.0 - dot
 }
 
 // ─── Additional Database methods (vector domain) ─────────────────────────────
