@@ -15,6 +15,8 @@ import type {
   SearchMode,
   SessionFilterState,
   SessionListItem as Session,
+  SessionSort,
+  SortOrder,
 } from "@/lib/types";
 
 interface Props {
@@ -25,6 +27,10 @@ interface Props {
   pageSize?: number;
   /** keyword 리스트 가상화용 스크롤 컨테이너(SessionsRoute 소유). */
   scrollParentRef: RefObject<HTMLDivElement | null>;
+  /** Phase 1 — 정렬 기준. 미지정 시 서버 기본(date). keyword 경로에만 적용. */
+  sort?: SessionSort;
+  /** Phase 1 — 정렬 방향. 미지정 시 서버 기본(desc). */
+  order?: SortOrder;
 }
 
 /**
@@ -65,6 +71,8 @@ export function SessionList({
   filters,
   pageSize = 100,
   scrollParentRef,
+  sort,
+  order,
 }: Props) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -92,6 +100,9 @@ export function SessionList({
     {
       q: trimmed === "" ? undefined : trimmed,
       ...filters,
+      // 정렬은 keyword 경로에만 적용 (semantic 은 score 정렬). 미지정 시 서버 기본.
+      sort,
+      order,
     },
     pageSize,
   );

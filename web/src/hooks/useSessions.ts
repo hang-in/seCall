@@ -50,6 +50,27 @@ export function useInfiniteSessions(
   });
 }
 
+/**
+ * Phase 3 — 달력 뷰 날짜별 세션 수 (`/api/sessions/calendar`).
+ *
+ * `from`/`to` 는 표시 중인 월의 로컬 날짜 경계. `enabled`(기본 true)로 달력이
+ * 접혀 있을 때 호출을 막을 수 있다. query key 에 인자가 포함돼 월 이동 시 자동 refetch.
+ */
+export function useSessionCalendar(
+  from: string,
+  to: string,
+  tzOffset: number,
+  opts: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: ["sessions", "calendar", from, to, tzOffset],
+    queryFn: () => api.sessionsCalendar({ from, to, tzOffset }),
+    enabled: opts.enabled ?? true,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
 /** 세션 상세 (`/api/get`). full=true면 마크다운 본문(`content`) 포함. */
 export function useSession(id: string | undefined, full = false) {
   return useQuery({

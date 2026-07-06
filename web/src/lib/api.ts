@@ -1,4 +1,5 @@
 import type {
+  CalendarDay,
   GraphRebuildArgs,
   IngestArgs,
   JobStartResponse,
@@ -7,6 +8,8 @@ import type {
   RecallResponse,
   SessionDetail,
   SessionListPage,
+  SessionSort,
+  SortOrder,
   SyncArgs,
   TagsResponse,
   WikiPage,
@@ -117,6 +120,12 @@ export const api = {
       tags: string[];
       favorite: boolean;
       q: string;
+      /** Phase 1 — 정렬 기준(date|turns|project|agent). 미지정 시 서버 기본 date. */
+      sort: SessionSort;
+      /** Phase 1 — 정렬 방향(asc|desc). 미지정 시 서버 기본 desc. */
+      order: SortOrder;
+      /** Phase 2 — true 면 automated 세션 포함. 미지정 시 기본 제외. */
+      include_automated: boolean;
     }>,
   ) => {
     const qs = new URLSearchParams();
@@ -129,6 +138,23 @@ export const api = {
       }
     });
     return jfetch<SessionListPage>(`/api/sessions?${qs}`);
+  },
+
+  /**
+   * Phase 3 — 날짜별 세션 수 (달력 배지용).
+   * `from`/`to` 는 로컬 날짜(YYYY-MM-DD), `tzOffset` 은 로컬-UTC(분).
+   */
+  sessionsCalendar: (opts: {
+    from?: string;
+    to?: string;
+    tzOffset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set("from", opts.from);
+    if (opts.to) qs.set("to", opts.to);
+    if (typeof opts.tzOffset === "number")
+      qs.set("tz_offset", String(opts.tzOffset));
+    return jfetch<CalendarDay[]>(`/api/sessions/calendar?${qs}`);
   },
 
   listProjects: () => jfetch<{ projects: string[] }>("/api/projects"),

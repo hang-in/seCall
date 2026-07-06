@@ -902,10 +902,12 @@ impl Database {
         &self,
         f: &SessionListFilter,
     ) -> crate::error::Result<SessionListPage> {
-        let mut conditions: Vec<String> = vec![
-            // automated session_type은 기본 제외 — recall과 일관성
-            "session_type != 'automated'".to_string(),
-        ];
+        let mut conditions: Vec<String> = Vec::new();
+        // automated session_type은 기본 제외 — recall과 일관성.
+        // P?? Phase 2: include_automated 토글 시에만 포함 (기본 false → 현행 동작 보존).
+        if !f.include_automated {
+            conditions.push("session_type != 'automated'".to_string());
+        }
         if !f.include_archived {
             conditions.push("is_archived = 0".to_string());
         }
@@ -951,7 +953,24 @@ impl Database {
             params.push(Box::new(pat));
         }
 
-        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        // include_automated + include_archived 가 모두 true 이고 다른 필터가 없으면
+        // conditions 가 비어 `WHERE ` 만 남는 것을 방지 (기본 경로는 항상 ≥1 조건).
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // ORDER BY — 화이트리스트 컬럼/방향만 (SQL 인젝션 방지). 사용자 입력은
+        // enum(SessionSort/SortOrder)으로만 들어오고, 여기서 고정 문자열로 매핑된다.
+        let (sort_col, needs_tiebreak) = f.sort.order_column();
+        let dir = f.order.sql_keyword();
+        let order_clause = if needs_tiebreak {
+            // project/agent/turns 는 동률이 흔해 start_time DESC 로 페이지네이션 안정화.
+            format!("ORDER BY {sort_col} {dir}, start_time DESC")
+        } else {
+            format!("ORDER BY {sort_col} {dir}")
+        };
 
         let page = f.page.max(1);
         let page_size = f.page_size.clamp(1, 100);
@@ -969,7 +988,7 @@ impl Database {
         let sql = format!(
             "SELECT id, agent, project, model, start_time, turn_count, summary, tags, is_favorite, session_type, vault_path, notes, is_archived, archived_at
              FROM sessions {where_clause}
-             ORDER BY start_time DESC
+             {order_clause}
              LIMIT ? OFFSET ?"
         );
         let mut stmt = self.conn().prepare(&sql)?;
@@ -1030,6 +1049,51 @@ impl Database {
             page,
             page_size,
         })
+    }
+
+    /// Phase 3 — 달력 뷰용 날짜별 세션 수.
+    ///
+    /// `DATE(start_time, tz)` 로 UTC start_time 을 요청자 로컬 날짜로 이동한 뒤
+    /// 그 로컬 날짜(YYYY-MM-DD)로 GROUP BY 한다 (#131 데일리와 동일 tz offset 방식).
+    /// automated/archived 는 리스트 기본 동작과 동일하게 제외.
+    ///
+    /// `from`/`to`(YYYY-MM-DD, 로컬 날짜)가 주어지면 그 로컬 날짜 범위로 제한한다.
+    pub fn session_calendar_counts(
+        &self,
+        from: Option<&str>,
+        to: Option<&str>,
+        tz_offset_min: i64, // 로컬 - UTC (분). 한국=540.
+    ) -> Result<Vec<CalendarDayCount>> {
+        let modifier = format!("{} minutes", tz_offset_min);
+
+        // `?` 순서에 맞춰 params 를 lockstep 으로 구성.
+        let mut sql = String::from(
+            "SELECT DATE(start_time, ?) AS d, COUNT(*) AS c FROM sessions \
+             WHERE session_type != 'automated' AND is_archived = 0",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(modifier.clone())];
+        if let Some(f) = from {
+            sql.push_str(" AND DATE(start_time, ?) >= ?");
+            params.push(Box::new(modifier.clone()));
+            params.push(Box::new(f.to_string()));
+        }
+        if let Some(t) = to {
+            sql.push_str(" AND DATE(start_time, ?) <= ?");
+            params.push(Box::new(modifier.clone()));
+            params.push(Box::new(t.to_string()));
+        }
+        sql.push_str(" GROUP BY d ORDER BY d");
+
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
+            Ok(CalendarDayCount {
+                date: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     /// 세션 태그 갱신. 정규화 후 반환된 태그를 응답에 사용.
@@ -1324,6 +1388,85 @@ pub struct SessionListFilter {
     pub page_size: usize,
     /// P45 — true 면 archived 세션 포함. 기본 false (제외).
     pub include_archived: bool,
+    /// Phase 1 — 정렬 기준. 기본 `Date`(= 기존 start_time 정렬).
+    pub sort: SessionSort,
+    /// Phase 1 — 정렬 방향. 기본 `Desc`(= 기존 최신순).
+    pub order: SortOrder,
+    /// Phase 2 — true 면 automated 세션 포함. 기본 false (현행 동작 보존).
+    pub include_automated: bool,
+}
+
+/// Phase 1 — 세션 리스트 정렬 기준. 컬럼명은 `order_column()`에서 화이트리스트
+/// 고정 문자열로만 매핑되어 SQL 인젝션이 불가능하다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionSort {
+    /// start_time (기본)
+    #[default]
+    Date,
+    /// turn_count
+    Turns,
+    /// project
+    Project,
+    /// agent
+    Agent,
+}
+
+impl SessionSort {
+    /// 쿼리스트링 값 → enum. 미인식 값은 기본값(Date)으로 폴백해 항상 안전.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "turns" | "turn_count" => Self::Turns,
+            "project" => Self::Project,
+            "agent" => Self::Agent,
+            _ => Self::Date,
+        }
+    }
+
+    /// (정렬 컬럼, start_time 2차 정렬 필요 여부). 컬럼은 고정 문자열(화이트리스트).
+    pub fn order_column(self) -> (&'static str, bool) {
+        match self {
+            Self::Date => ("start_time", false),
+            Self::Turns => ("turn_count", true),
+            Self::Project => ("project", true),
+            Self::Agent => ("agent", true),
+        }
+    }
+}
+
+/// Phase 1 — 정렬 방향. `sql_keyword()`가 고정 문자열만 반환.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    Asc,
+    /// 기본 — 최신/큰 값 우선 (기존 동작 보존)
+    #[default]
+    Desc,
+}
+
+impl SortOrder {
+    /// 쿼리스트링 값 → enum. 미인식 값은 기본값(Desc)으로 폴백.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "asc" => Self::Asc,
+            _ => Self::Desc,
+        }
+    }
+
+    fn sql_keyword(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+/// Phase 3 — 달력 뷰용 날짜별 세션 수. `DATE(start_time, tz)` 로컬 날짜 기준 그룹.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CalendarDayCount {
+    /// "YYYY-MM-DD" (요청자 로컬 날짜)
+    pub date: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1394,7 +1537,7 @@ pub struct GraphRebuildFilter {
 mod tests {
     use crate::ingest::markdown::SessionFrontmatter;
     use crate::store::db::Database;
-    use crate::store::session_repo::SessionListFilter;
+    use crate::store::session_repo::{SessionListFilter, SessionSort, SortOrder};
 
     fn make_fm(session_id: &str, archived: Option<bool>) -> SessionFrontmatter {
         SessionFrontmatter {
@@ -1597,6 +1740,89 @@ mod tests {
             )
             .unwrap();
         assert_eq!(is_archived_after, 1);
+    }
+
+    // Phase 1 — sort/order 화이트리스트 정렬. 기본은 date desc(현행 보존).
+    #[test]
+    fn test_list_sessions_sort_by_turns_and_default() {
+        let db = Database::open_memory().unwrap();
+        let mut lo = make_fm("s-turns-lo", None);
+        lo.turns = Some(2);
+        lo.start_time = "2026-05-11T10:00:00+00:00".to_string();
+        let mut hi = make_fm("s-turns-hi", None);
+        hi.turns = Some(9);
+        hi.start_time = "2026-05-10T10:00:00+00:00".to_string(); // 더 과거
+        db.insert_session_from_vault(&lo, "body", "raw/sessions/lo.md")
+            .unwrap();
+        db.insert_session_from_vault(&hi, "body", "raw/sessions/hi.md")
+            .unwrap();
+
+        // 기본값(date desc) — 최신 start_time(lo=05-11) 먼저.
+        let def = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            ..Default::default()
+        };
+        let p = db.list_sessions_filtered(&def).unwrap();
+        assert_eq!(p.items[0].id, "s-turns-lo", "기본 정렬은 date desc 여야 함");
+
+        // turns asc — 낮은 turn_count(2) 먼저.
+        let asc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Turns,
+            order: SortOrder::Asc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&asc).unwrap().items[0].id,
+            "s-turns-lo"
+        );
+
+        // turns desc — 높은 turn_count(9) 먼저.
+        let desc = SessionListFilter {
+            page: 1,
+            page_size: 100,
+            sort: SessionSort::Turns,
+            order: SortOrder::Desc,
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_sessions_filtered(&desc).unwrap().items[0].id,
+            "s-turns-hi"
+        );
+    }
+
+    // Phase 3 — 달력 날짜별 세션 수, tz offset 로컬 날짜 GROUP BY.
+    #[test]
+    fn test_session_calendar_counts_groups_by_local_date() {
+        let db = Database::open_memory().unwrap();
+        let mut a = make_fm("cal-a", None);
+        a.start_time = "2026-05-12T10:00:00+00:00".to_string(); // KST 05-12 19:00
+        let mut b = make_fm("cal-b", None);
+        b.start_time = "2026-05-11T20:00:00+00:00".to_string(); // KST 05-12 05:00
+        let mut c = make_fm("cal-c", None);
+        c.start_time = "2026-05-12T16:00:00+00:00".to_string(); // KST 05-13 01:00
+        db.insert_session_from_vault(&a, "body", "raw/sessions/ca.md")
+            .unwrap();
+        db.insert_session_from_vault(&b, "body", "raw/sessions/cb.md")
+            .unwrap();
+        db.insert_session_from_vault(&c, "body", "raw/sessions/cc.md")
+            .unwrap();
+
+        let days = db.session_calendar_counts(None, None, 540).unwrap();
+        let map: std::collections::HashMap<&str, i64> =
+            days.iter().map(|d| (d.date.as_str(), d.count)).collect();
+        assert_eq!(map.get("2026-05-12"), Some(&2), "KST 05-12 에 a,b 2건");
+        assert_eq!(map.get("2026-05-13"), Some(&1), "KST 05-13 에 c 1건");
+
+        // from/to 범위 제한 — 05-13 만.
+        let ranged = db
+            .session_calendar_counts(Some("2026-05-13"), Some("2026-05-13"), 540)
+            .unwrap();
+        assert_eq!(ranged.len(), 1);
+        assert_eq!(ranged[0].date, "2026-05-13");
+        assert_eq!(ranged[0].count, 1);
     }
 
     // P89 (#100, Gemini PR #101): 재인덱싱 시 turn_count 가 frontmatter 값으로

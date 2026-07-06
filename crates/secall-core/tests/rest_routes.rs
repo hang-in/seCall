@@ -467,6 +467,50 @@ async fn test_list_sessions_filter_by_since() {
     assert_eq!(body_past["total"], 1, "past since filter must yield all");
 }
 
+/// Phase 1 — `?sort=turns&order=asc` 정렬 파라미터가 라우트를 통해 파싱/적용되는지.
+/// 미인식/미지정 값은 기본(date desc)로 폴백하므로 여기선 200 + items 배열 형태만 회귀.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_sessions_sort_query_param() {
+    let env = make_test_env().await;
+    {
+        let db = env.db.lock().unwrap();
+        insert_minimal_session(&db, "sess-sort-1");
+    }
+
+    let (status, body) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions?sort=turns&order=asc",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body={body}");
+    assert!(body["items"].is_array(), "items must be array: {body}");
+    assert_eq!(body["total"], 1);
+}
+
+/// Phase 3 — `GET /api/sessions/calendar` 라우트 회귀. 빈 DB → 빈 배열.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sessions_calendar_route_returns_array() {
+    let env = make_test_env().await;
+
+    let (status, body) = send_request(
+        &env.router,
+        Method::GET,
+        "/api/sessions/calendar?tz_offset=540",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body={body}");
+    assert!(
+        body.is_array(),
+        "calendar response must be a JSON array: {body}"
+    );
+    assert_eq!(body.as_array().unwrap().len(), 0, "empty DB → no days");
+}
+
 // ── 1.9 GET /api/projects ────────────────────────────────────────────────────
 
 /// 빈 DB → projects 빈 배열.

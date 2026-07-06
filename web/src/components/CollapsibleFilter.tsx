@@ -69,5 +69,6 @@ function countActive(f: SessionFilterState): number {
   if (f.tags && f.tags.length > 0) n += f.tags.length;
   if (f.favorite) n++;
   if (f.tag) n++;
+  if (f.include_automated) n++;
   return n;
 }

@@ -255,12 +255,33 @@ export interface SessionFilterState {
   /** P34 Task 03: 다중 태그 AND 매칭. */
   tags?: string[];
   favorite?: boolean;
+  /** Phase 2 — true 면 automated 세션 포함. 미지정/false 면 기본 제외(현행). */
+  include_automated?: boolean;
 }
+
+/** Phase 1 — 정렬 기준. 백엔드 `SessionSort` enum 과 1:1 (lowercase). */
+export type SessionSort = "date" | "turns" | "project" | "agent";
+/** Phase 1 — 정렬 방향. 백엔드 `SortOrder` enum 과 1:1. */
+export type SortOrder = "asc" | "desc";
 
 export interface SessionsListParams extends SessionFilterState {
   q?: string;
   page?: number;
   page_size?: number;
+  /** 미지정 시 백엔드 기본 date. */
+  sort?: SessionSort;
+  /** 미지정 시 백엔드 기본 desc(현행 최신순). */
+  order?: SortOrder;
+}
+
+/**
+ * `GET /api/sessions/calendar` 응답 한 항목 (Phase 3).
+ * 백엔드 `CalendarDayCount` 직렬화 형태 — 로컬 날짜 기준 세션 수.
+ */
+export interface CalendarDay {
+  /** "YYYY-MM-DD" (요청자 로컬 날짜) */
+  date: string;
+  count: number;
 }
 
 /**
