@@ -255,6 +255,13 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
         return Err(anyhow!("empty session file"));
     }
 
+    if turns.is_empty() {
+        return Err(anyhow!(
+            "claude session has no parseable turns: {}",
+            path.display()
+        ));
+    }
+
     let id = session_id
         .or_else(|| {
             // Derive from filename if not in content
@@ -449,6 +456,20 @@ mod tests {
     #[test]
     fn test_empty_file_returns_err() {
         let f = write_jsonl(&[]);
+        let result = parse_claude_jsonl(f.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_no_parseable_turns_returns_err() {
+        // File has valid JSON lines, but none are user/assistant turns
+        // (e.g. workflow journal / summary event records). Must not
+        // produce a junk Session with empty turns.
+        let lines = &[
+            r#"{"type":"summary","summary":"Some session summary","leafUuid":"abc-123"}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-04-05T10:00:01Z"}"#,
+        ];
+        let f = write_jsonl(lines);
         let result = parse_claude_jsonl(f.path());
         assert!(result.is_err());
     }
