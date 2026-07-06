@@ -1832,8 +1832,7 @@ dependencies = [
 [[package]]
 name = "kiwi-rs"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc9b6b1cf30362df090420a0f4bd4d6cf961fdf9667a6b9846923a2be09017a8"
+source = "git+https://github.com/yeonsh/kiwi-rs?rev=668a7c024f516496be027926c66c7d45d3b799ba#668a7c024f516496be027926c66c7d45d3b799ba"
 dependencies = [
  "regex",
 ]
