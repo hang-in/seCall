@@ -508,13 +508,12 @@ secall embed --concurrency 4 --batch-size 32
 
 > To use ONNX Runtime instead: `secall config set embedding.backend ort` then `secall model download`.
 
-> **⚠️ Upgrade note (`bge-m3` → `qwen3-embedding`)**
-> Since v0.6.5 the default embedding model changed from `bge-m3` to `qwen3-embedding:0.6b`. If your existing vectors were built with `bge-m3`, a cross-model mismatch degrades semantic search quality (no error — both are 1024-dim — but similarity becomes meaningless). Run one of:
->
-> - `secall embed --all` — re-embed everything with qwen3-embedding (recommended)
-> - `secall config set embedding.ollama_model bge-m3` — keep the old model
->
-> BM25 keyword search is unaffected. `secall status` detects and warns about the mismatch.
+**⚠️ Upgrade note (`bge-m3` → `qwen3-embedding`)** — Since v0.6.5 the default embedding model changed from `bge-m3` to `qwen3-embedding:0.6b`. If your existing vectors were built with `bge-m3`, a cross-model mismatch degrades semantic search quality (no error — both are 1024-dim — but similarity becomes meaningless). Run one of:
+
+- `secall embed --all` — re-embed everything with qwen3-embedding (recommended)
+- `secall config set embedding.ollama_model bge-m3` — keep the old model
+
+BM25 keyword search is unaffected. `secall status` detects and warns about the mismatch.
 
 ### Session Classification
 
