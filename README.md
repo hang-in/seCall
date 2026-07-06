@@ -71,7 +71,7 @@ seCall은 이 기록을 로컬에 모으고, 원본 transcript를 보존한 뒤,
 | 기능              | 설명                                                           |
 | --------------- | ------------------------------------------------------------ |
 | 멀티 에이전트 수집      | Claude Code, Codex CLI, Gemini CLI, claude.ai, ChatGPT 세션 수집 |
-| 하이브리드 검색        | SQLite FTS5 BM25 + qwen3-embedding 벡터 검색 + RRF 결합           |
+| 하이브리드 검색        | SQLite FTS5 BM25 + qwen3-embedding:0.6b 벡터 검색 + RRF 결합      |
 | Obsidian 볼트     | 원본 세션과 AI 생성 위키를 Markdown으로 저장                               |
 | Knowledge Graph | 세션, 프로젝트, 에이전트, 도구, 토픽 간 관계 추출                               |
 | Web UI          | 검색, 세션 브라우징, 그래프 탐색, 명령 실행                                   |
