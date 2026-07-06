@@ -634,7 +634,9 @@ fn default_model_path() -> std::path::PathBuf {
 mod tests {
     use super::*;
     use crate::store::db::Database;
-    use crate::store::vector_repo::{bytes_to_floats, cosine_distance};
+    use crate::store::vector_repo::{
+        bytes_to_floats, cosine_distance, cosine_distance_unit, dot_i8, l2_normalize, quantize_i8,
+    };
 
     #[test]
     fn test_vector_indexer_with_trait_object() {
@@ -746,6 +748,34 @@ mod tests {
 
         let c = vec![0.0, 1.0];
         assert!((cosine_distance(&a, &c) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cosine_distance_unit_matches_original() {
+        // ② 최적화: 정규화된 벡터 dot-only 가 원본 cosine_distance 와 동일 결과(무손실)인지 검증.
+        // len 20 = SIMD 8-wide chunk 2개(누적) + remainder 4개 경로 커버.
+        let a: Vec<f32> = (1..=20).map(|i| i as f32 * 0.3).collect();
+        let b: Vec<f32> = (1..=20).map(|i| (21 - i) as f32 * 0.17).collect();
+        let au = l2_normalize(&a);
+        let bu = l2_normalize(&b);
+        assert!((cosine_distance(&a, &b) - cosine_distance_unit(&au, &bu)).abs() < 1e-5);
+        // edge: 빈/길이 불일치 → 1.0
+        assert_eq!(cosine_distance_unit(&au, &[]), 1.0);
+    }
+
+    #[test]
+    fn test_int8_cosine_approximates_f32() {
+        // ⑤ int8 양자화 코사인이 f32 원본과 근사(recall 손실 작음)한지 검증.
+        let a: Vec<f32> = (1..=16).map(|i| i as f32).collect();
+        let b: Vec<f32> = (1..=16).map(|i| (17 - i) as f32).collect();
+        let au = l2_normalize(&a);
+        let bu = l2_normalize(&b);
+        let f32_cos = 1.0 - cosine_distance(&a, &b);
+        let i8_cos = dot_i8(&quantize_i8(&au), &quantize_i8(&bu)) as f32 / (127.0 * 127.0);
+        assert!(
+            (f32_cos - i8_cos).abs() < 0.02,
+            "int8 양자화 오차 초과: f32={f32_cos} i8={i8_cos}"
+        );
     }
 
     fn make_meta(is_archived: bool) -> SessionMeta {

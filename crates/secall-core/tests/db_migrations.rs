@@ -40,9 +40,9 @@ fn migrate_v8_to_v9() {
         )
         .expect("wiki_vectors exists");
 
-    // v8 → v9 → v10 마이그레이션 체인 — P45 가 v10 까지 추가했으므로
-    // Database::open 후 schema_version 은 최신값(10)이어야 한다.
-    // wiki_vectors 테이블은 v9 에서 도입된 후 v10 에서도 유지된다.
-    assert_eq!(schema_version, "10");
+    // v8 → v9 → v10 → v11 마이그레이션 체인 — v11 이 벡터 L2 정규화(② dot-only)를
+    // 추가했으므로 Database::open 후 schema_version 은 최신값(11)이어야 한다.
+    // wiki_vectors 테이블은 v9 에서 도입된 후 유지된다.
+    assert_eq!(schema_version, "11");
     assert_eq!(wiki_vectors_exists, 1);
 }

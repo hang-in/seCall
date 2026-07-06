@@ -14,6 +14,8 @@ use super::schema::{
 
 pub struct Database {
     conn: Connection,
+    /// ⑤ int8 벡터 캐시 (상주 프로세스에서 매 검색 BLOB 재로드/역직렬화 방지). lazy 로드.
+    pub(crate) vector_cache: std::sync::Mutex<Option<crate::store::vector_repo::Int8Cache>>,
 }
 
 impl Database {
@@ -25,7 +27,10 @@ impl Database {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
         )?;
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            vector_cache: std::sync::Mutex::new(None),
+        };
         db.migrate()?;
         Ok(db)
     }
@@ -33,7 +38,10 @@ impl Database {
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            vector_cache: std::sync::Mutex::new(None),
+        };
         db.migrate()?;
         Ok(db)
     }
@@ -42,7 +50,10 @@ impl Database {
     /// 마이그레이션 동작 자체를 검증하는 테스트에서 v4 등 임의 스키마를 직접 만든 뒤 사용.
     #[cfg(test)]
     pub(crate) fn from_connection(conn: Connection) -> Self {
-        Self { conn }
+        Self {
+            conn,
+            vector_cache: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn migrate(&self) -> Result<()> {
@@ -143,6 +154,10 @@ impl Database {
                  ON sessions(is_archived) WHERE is_archived = 1;",
             )?;
         }
+        if current < 11 {
+            // ② 벡터 dot-only 최적화: 기존 embedding 을 L2 정규화 (idempotent, 재실행 무해).
+            self.normalize_existing_vectors()?;
+        }
         if current < CURRENT_SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO config(key, value) VALUES ('schema_version', ?1)",
@@ -153,6 +168,39 @@ impl Database {
         // Non-versioned additions: always apply (CREATE IF NOT EXISTS)
         self.conn.execute_batch(CREATE_QUERY_CACHE)?;
 
+        Ok(())
+    }
+
+    /// ② 최적화: 기존 turn_vectors embedding 을 L2 정규화 (dot-only 검색 전제).
+    /// idempotent — 이미 unit 인 벡터를 다시 정규화해도 값이 변하지 않는다.
+    fn normalize_existing_vectors(&self) -> Result<()> {
+        use crate::store::vector_repo::{bytes_to_floats, floats_to_bytes, l2_normalize};
+        let exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='turn_vectors'",
+            [],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            return Ok(());
+        }
+        let rows: Vec<(i64, Vec<u8>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, embedding FROM turn_vectors")?;
+            let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        self.conn.execute_batch("BEGIN")?;
+        {
+            let mut upd = self
+                .conn
+                .prepare("UPDATE turn_vectors SET embedding = ?1 WHERE id = ?2")?;
+            for (id, bytes) in rows {
+                let normed = floats_to_bytes(&l2_normalize(&bytes_to_floats(&bytes)));
+                upd.execute(rusqlite::params![normed, id])?;
+            }
+        }
+        self.conn.execute_batch("COMMIT")?;
         Ok(())
     }
 

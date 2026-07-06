@@ -74,7 +74,8 @@ impl VectorRepo for Database {
             }
         }
 
-        let bytes = floats_to_bytes(embedding);
+        // ② 저장 시 L2 정규화 → 검색에서 dot only (schema v11). 이미 unit 이면 무변.
+        let bytes = floats_to_bytes(&l2_normalize(embedding));
         self.conn().execute(
             "INSERT INTO turn_vectors(session_id, turn_index, chunk_seq, model, embedded_at, embedding)
              VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5)",
@@ -99,7 +100,10 @@ impl VectorRepo for Database {
             ))
         };
 
-        let rows: Vec<(i64, String, u32, u32, Vec<u8>)> = if let Some(ids) = session_ids {
+        let query_unit = l2_normalize(query_embedding);
+
+        // session 필터 경로: 후보가 작으니 SQLite 직접 (int8 캐시 미사용).
+        if let Some(ids) = session_ids {
             if ids.is_empty() {
                 return Ok(Vec::new());
             }
@@ -110,43 +114,63 @@ impl VectorRepo for Database {
                 placeholders.join(",")
             );
             let mut stmt = self.conn().prepare(&sql)?;
-            let collected: Vec<_> = stmt
+            let rows: Vec<(i64, String, u32, u32, Vec<u8>)> = stmt
                 .query_map(rusqlite::params_from_iter(ids.iter()), row_mapper)?
                 .filter_map(|r| r.ok())
                 .collect();
-            collected
-        } else {
-            let mut stmt = self.conn().prepare(
-                "SELECT id, session_id, turn_index, chunk_seq, embedding FROM turn_vectors",
-            )?;
-            let collected: Vec<_> = stmt
-                .query_map([], row_mapper)?
-                .filter_map(|r| r.ok())
+            let mut scored: Vec<(f32, VectorRow)> = rows
+                .into_iter()
+                .map(|(id, session_id, turn_index, chunk_seq, bytes)| {
+                    let distance = cosine_distance_unit(&query_unit, &bytes_to_floats(&bytes));
+                    (
+                        distance,
+                        VectorRow {
+                            rowid: id,
+                            distance,
+                            session_id,
+                            turn_index,
+                            chunk_seq,
+                        },
+                    )
+                })
                 .collect();
-            collected
-        };
+            scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(limit);
+            return Ok(scored.into_iter().map(|(_, row)| row).collect());
+        }
 
-        let mut scored: Vec<(f32, VectorRow)> = rows
-            .into_iter()
-            .map(|(id, session_id, turn_index, chunk_seq, bytes)| {
-                let embedding = bytes_to_floats(&bytes);
-                let distance = cosine_distance(query_embedding, &embedding);
+        // ⑤ 전체 스캔: int8 인메모리 캐시. 상주 프로세스에서 매 검색 BLOB(1.4GB) 재로드/
+        // 역직렬화를 없앤다. loaded_count 로 stale 감지 후 재로드 (embed/삭제 반영).
+        let count = self.count_vectors()? as i64;
+        let query_i8 = quantize_i8(&query_unit);
+        let mut guard = self
+            .vector_cache
+            .lock()
+            .expect("vector cache mutex poisoned");
+        if guard.as_ref().map_or(true, |c| c.loaded_count != count) {
+            *guard = Some(load_int8_cache(self.conn(), count)?);
+        }
+        let cache = guard.as_ref().unwrap();
+        let mut scored: Vec<(f32, VectorRow)> = cache
+            .entries
+            .iter()
+            .map(|e| {
+                // int8 내적 / 127² → 코사인 (unit 전제). 거리 = 1 - cos.
+                let distance = 1.0 - (dot_i8(&query_i8, &e.q) as f32 / (127.0 * 127.0));
                 (
                     distance,
                     VectorRow {
-                        rowid: id,
+                        rowid: e.rowid,
                         distance,
-                        session_id,
-                        turn_index,
-                        chunk_seq,
+                        session_id: e.session_id.clone(),
+                        turn_index: e.turn_index,
+                        chunk_seq: e.chunk_seq,
                     },
                 )
             })
             .collect();
-
         scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);
-
         Ok(scored.into_iter().map(|(_, row)| row).collect())
     }
 
@@ -200,6 +224,92 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         return 1.0;
     }
     1.0 - (dot / (norm_a * norm_b))
+}
+
+/// L2 정규화 (unit 벡터). 0 벡터는 그대로 반환.
+pub(crate) fn l2_normalize(v: &[f32]) -> Vec<f32> {
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm == 0.0 {
+        return v.to_vec();
+    }
+    v.iter().map(|x| x / norm).collect()
+}
+
+/// 정규화된(unit) 벡터 전제 코사인 거리 = 1 - dot. norm 계산 없이 dot 만 SIMD.
+/// 저장 시 정규화 + query 정규화 전제 (schema v11 마이그레이션 이후 모든 벡터가 unit).
+pub(crate) fn cosine_distance_unit(query_unit: &[f32], vec_unit: &[f32]) -> f32 {
+    if query_unit.len() != vec_unit.len() || vec_unit.is_empty() {
+        return 1.0;
+    }
+    use wide::f32x8;
+    let mut dot_v = f32x8::ZERO;
+    let mut q = query_unit.chunks_exact(8);
+    let mut v = vec_unit.chunks_exact(8);
+    for (qc, vc) in q.by_ref().zip(v.by_ref()) {
+        dot_v += f32x8::new(qc.try_into().unwrap()) * f32x8::new(vc.try_into().unwrap());
+    }
+    let mut dot = dot_v.reduce_add();
+    for (&a, &b) in q.remainder().iter().zip(v.remainder()) {
+        dot += a * b;
+    }
+    1.0 - dot
+}
+
+/// ⑤ int8 캐시 엔트리 — unit 벡터(② 이후)를 int8 로 양자화해 보관.
+pub struct Int8Entry {
+    pub rowid: i64,
+    pub session_id: String,
+    pub turn_index: u32,
+    pub chunk_seq: u32,
+    /// unit 성분 × 127 (dot 후 127² 로 나눠 코사인 복원).
+    pub q: Vec<i8>,
+}
+
+/// int8 양자화된 전체 벡터 캐시. loaded_count 로 stale 감지 후 재로드.
+pub struct Int8Cache {
+    pub loaded_count: i64,
+    pub entries: Vec<Int8Entry>,
+}
+
+/// unit f32 성분 → int8 (× 127, [-127,127] clamp).
+pub(crate) fn quantize_i8(unit: &[f32]) -> Vec<i8> {
+    unit.iter()
+        .map(|&x| (x * 127.0).round().clamp(-127.0, 127.0) as i8)
+        .collect()
+}
+
+/// int8 내적 (i32 누적).
+pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| x as i32 * y as i32)
+        .sum()
+}
+
+/// turn_vectors 전체를 읽어 int8 캐시 구성 (저장 벡터는 ② 로 이미 unit).
+pub(crate) fn load_int8_cache(
+    conn: &rusqlite::Connection,
+    count: i64,
+) -> crate::error::Result<Int8Cache> {
+    let mut stmt =
+        conn.prepare("SELECT id, session_id, turn_index, chunk_seq, embedding FROM turn_vectors")?;
+    let entries: Vec<Int8Entry> = stmt
+        .query_map([], |row| {
+            let bytes: Vec<u8> = row.get(4)?;
+            Ok(Int8Entry {
+                rowid: row.get(0)?,
+                session_id: row.get(1)?,
+                turn_index: row.get::<_, i64>(2)? as u32,
+                chunk_seq: row.get::<_, i64>(3)? as u32,
+                q: quantize_i8(&bytes_to_floats(&bytes)),
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(Int8Cache {
+        loaded_count: count,
+        entries,
+    })
 }
 
 // ─── Additional Database methods (vector domain) ─────────────────────────────
