@@ -58,3 +58,10 @@ rust-embed = "8"
 mime_guess = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 sysinfo = "0.34"
+
+# kiwi-rs 0.1.4 is ABI-incompatible with libkiwi >= 0.23.0 (kiwi_analyze_option_t
+# gained typo_transformer/typo_threshold; by-value struct → segfault in kiwi_analyze).
+# Remove once upstream releases a fixed version (> 0.1.4).
+[patch.crates-io]
+# (branch: fix/analyze-option-abi-kiwi-0.23 — rev-pinned for reproducible builds)
+kiwi-rs = { git = "https://github.com/yeonsh/kiwi-rs", rev = "668a7c024f516496be027926c66c7d45d3b799ba" }
