@@ -106,6 +106,21 @@ impl Tokenizer for LinderaKoTokenizer {
 mod kiwi_impl {
     use super::*;
 
+    /// libkiwi release tag pinned for kiwi-rs's auto-download fallback. This is
+    /// the version VERIFIED to work with the pinned kiwi-rs fork's FFI binding.
+    ///
+    /// WARNING: do NOT bump to v0.23.x. libkiwi >= 0.23 currently SIGSEGVs in
+    /// `Kiwi::new()` (the kiwi builder/init path) with this binding, even though
+    /// the standalone `kiwi-cli` 0.23.x tokenizes fine with the same lib+model.
+    /// PR #143 fixed the analyze-path `KiwiAnalyzeOption` ABI, but a separate
+    /// init-path 0.23 incompatibility remains and needs upstream kiwi-rs work.
+    /// Verified empirically: 0.22.2 tokenizes; 0.23.2 crashes in init.
+    ///
+    /// Only affects the auto-download fallback. An already-installed libkiwi
+    /// found via `KIWI_LIBRARY_PATH` or default discovery is used as-is by
+    /// `Kiwi::new()`, so a user who manually installed 0.23.x can still crash.
+    pub(super) const KIWI_LIBKIWI_TAG: &str = "v0.22.2";
+
     /// Newtype wrapper so we can impl Send without Sync.
     /// kiwi_rs::Kiwi contains *mut c_void + RefCell internals — not Sync.
     pub(super) struct KiwiWrapper(pub(super) kiwi_rs::Kiwi);
@@ -115,7 +130,7 @@ mod kiwi_impl {
     unsafe impl Send for KiwiWrapper {}
 
     /// Korean morphological tokenizer backed by kiwi-rs.
-    /// On first use, `Kiwi::init()` downloads the model (~50MB) to ~/.cache/kiwi/.
+    /// On first use, kiwi-rs downloads the pinned libkiwi/model (~50MB) to ~/.cache/kiwi/.
     /// Thread safety is provided by `Mutex<KiwiWrapper>`.
     pub struct KiwiTokenizer {
         pub(super) kiwi: std::sync::Mutex<KiwiWrapper>,
@@ -125,8 +140,8 @@ mod kiwi_impl {
 
     impl KiwiTokenizer {
         pub fn new() -> Result<Self> {
-            let kiwi =
-                kiwi_rs::Kiwi::init().map_err(|e| anyhow::anyhow!("kiwi-rs init failed: {e}"))?;
+            let kiwi = kiwi_rs::Kiwi::init_with_version(KIWI_LIBKIWI_TAG)
+                .map_err(|e| anyhow::anyhow!("kiwi-rs init failed: {e}"))?;
             Ok(Self {
                 kiwi: std::sync::Mutex::new(KiwiWrapper(kiwi)),
             })
@@ -337,6 +352,34 @@ mod tests {
         // Manual: requires kiwi model download
         let tok = create_tokenizer("kiwi");
         assert!(tok.is_ok());
+    }
+
+    /// Real-FFI ABI regression: exercises `kiwi_analyze` end-to-end against the
+    /// actual libkiwi binary. Guards the by-value `KiwiAnalyzeOption` ABI (PR
+    /// #143): a struct-layout drift (e.g. a future libkiwi appending fields)
+    /// would SIGSEGV here or return garbage morphemes — turning CI red instead
+    /// of a user's `secall sync`. Unlike the `#[ignore]` tests above this is a
+    /// normal test, but it self-skips unless opted in (first run downloads
+    /// ~50MB libkiwi+model): set `SECALL_KIWI_FFI_TEST=1`. CI runs it in a
+    /// dedicated step with the libkiwi assets cached (see ci.yml).
+    #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+    #[test]
+    fn test_kiwi_ffi_abi_smoke() {
+        if std::env::var_os("SECALL_KIWI_FFI_TEST").is_none() {
+            eprintln!(
+                "skipping test_kiwi_ffi_abi_smoke (set SECALL_KIWI_FFI_TEST=1 to run the real FFI check)"
+            );
+            return;
+        }
+        let tok = KiwiTokenizer::new().expect("kiwi init (real libkiwi)");
+        // 표준 Kiwi 분석 문장: 아버지/NNG 가/JKS 방/NNG 에/JKB 들어가/VV 시/EP ㄴ다/EF.
+        // 필터(NNG/NNP/NNB/VV/VA/SL, len>1) 후 '아버지'·'들어가' 가 남아야 한다.
+        let tokens = tok.tokenize("아버지가방에들어가신다");
+        assert!(
+            tokens.iter().any(|t| t == "아버지"),
+            "real kiwi analysis expected the '아버지' morpheme, got {tokens:?} \
+             (empty/garbage/whole-word ⇒ ABI drift or silent fallback — see PR #143)"
+        );
     }
 
     // ─── fts_query: OR + prefix + 외래어 음역 alias ────────────────────────────

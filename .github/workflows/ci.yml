@@ -99,3 +99,66 @@ jobs:
       - name: cargo audit
         run: cargo audit
         continue-on-error: true
+
+  # PR #143 follow-up: the core `check` job never exercises the kiwi FFI
+  # (every kiwi runtime test is `#[ignore]`), so a `KiwiAnalyzeOption` ABI
+  # drift would segfault a user's `secall sync` while CI stays green. This
+  # dedicated job runs the real-libkiwi regression against the pinned tag
+  # (KIWI_LIBKIWI_TAG in tokenizer.rs). Split out so libkiwi provisioning
+  # (network) can't flake the required test matrix.
+  #
+  # libkiwi/model are provisioned explicitly via authenticated `gh release
+  # download` and handed to kiwi-rs through KIWI_LIBRARY_PATH / KIWI_MODEL_PATH
+  # so `Kiwi::new()` loads them directly, NOT via kiwi-rs's own runtime
+  # auto-download, which hits the unauthenticated GitHub API (rate-limited)
+  # and, in the pinned fork, mis-parses the release JSON (find_asset_url
+  # brace-matching breaks on the nested `uploader` object). See PR #143 notes.
+  # Tag is v0.22.x on purpose: libkiwi >= 0.23 crashes this binding in init
+  # (see KIWI_LIBKIWI_TAG in tokenizer.rs for the details).
+  kiwi-ffi:
+    name: kiwi FFI ABI regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo & libkiwi assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ${{ github.workspace }}/.kiwi-cache
+          key: ${{ runner.os }}-kiwiffi-v0.22.2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-kiwiffi-v0.22.2-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Provision libkiwi + model (v0.22.2, authenticated download)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KROOT="${{ github.workspace }}/.kiwi-cache"
+          mkdir -p "$KROOT"
+          gh release download v0.22.2 -R bab2min/Kiwi \
+            -p 'kiwi_lnx_x86_64_v0.22.2.tgz' -p 'kiwi_model_v0.22.2_base.tgz' \
+            -D "$KROOT" --skip-existing
+          tar -xzf "$KROOT/kiwi_lnx_x86_64_v0.22.2.tgz" -C "$KROOT"
+          tar -xzf "$KROOT/kiwi_model_v0.22.2_base.tgz" -C "$KROOT"
+          test -f "$KROOT/lib/libkiwi.so"
+          test -f "$KROOT/models/cong/base/sj.morph"
+          echo "KIWI_LIBRARY_PATH=$KROOT/lib/libkiwi.so" >> "$GITHUB_ENV"
+          echo "KIWI_MODEL_PATH=$KROOT/models/cong/base" >> "$GITHUB_ENV"
+
+      - name: Run kiwi FFI ABI regression (real libkiwi v0.22.2)
+        env:
+          SECALL_KIWI_FFI_TEST: "1"
+        run: cargo nextest run -p secall-core --no-fail-fast -E 'test(kiwi_ffi_abi)'
