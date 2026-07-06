@@ -177,9 +177,10 @@ pub fn parse_gemini_json(path: &Path) -> Result<Session> {
 
                 // tokens — 턴별 사용량을 세션 total_tokens 에 누적 (claude.rs 미러)
                 let tokens = msg.tokens.as_ref().map(|t| {
-                    total_tokens.input += t.input;
-                    total_tokens.output += t.output;
-                    total_tokens.cached += t.cached;
+                    // saturating: 비현실적 대용량 합에서 overflow wrap/panic 방지(리뷰 반영).
+                    total_tokens.input = total_tokens.input.saturating_add(t.input);
+                    total_tokens.output = total_tokens.output.saturating_add(t.output);
+                    total_tokens.cached = total_tokens.cached.saturating_add(t.cached);
                     TokenUsage {
                         input: t.input,
                         output: t.output,

@@ -341,7 +341,10 @@ fn is_injected_context(content: &str) -> bool {
 /// alone leaves the timestamp glued to the uuid. The uuid is the trailing five
 /// hyphen-joined groups shaped `8-4-4-4-12` hex; extract those when present,
 /// otherwise return the stripped stem unchanged (no mangling of non-uuid names).
-fn fallback_session_id(stem: &str) -> String {
+/// 파일명 stem 에서 codex session id 를 도출. `rollout-<timestamp>-<uuid>` 에서
+/// 후행 uuid(8-4-4-4-12) 만 취한다. ingest 의 fast-dedup 힌트(`fast_dedup_key`)가
+/// 저장 id 와 동일 규칙을 쓰도록 pub.
+pub fn fallback_session_id(stem: &str) -> String {
     let rest = stem.strip_prefix("rollout-").unwrap_or(stem);
     let groups: Vec<&str> = rest.split('-').collect();
     if groups.len() >= 5 {
