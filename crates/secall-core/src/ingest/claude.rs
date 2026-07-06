@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
@@ -46,8 +46,15 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut total_tokens = TokenUsage::default();
 
-    // Pending tool_use entries keyed by tool_use_id waiting for tool_result
-    let mut pending_tool_uses: HashMap<String, usize> = HashMap::new(); // tool_use_id -> action index in last assistant turn
+    // Pending tool_use entries keyed by tool_use_id waiting for tool_result.
+    // Value is (turn_index, action_index) so parallel tool calls spread across
+    // multiple assistant lines are each attributed to the correct owning action.
+    let mut pending_tool_uses: HashMap<String, (usize, usize)> = HashMap::new();
+
+    // Assistant message ids already counted for tokens. claude-code splits one
+    // assistant message (same message.id, identical usage object) across many
+    // JSONL lines; count usage only the first time an id is seen.
+    let mut seen_message_ids: HashSet<String> = HashSet::new();
 
     let mut line_count = 0;
 
@@ -111,7 +118,10 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                         .any(|item| item["type"].as_str() == Some("tool_result"));
 
                     if has_tool_result {
-                        // Attach tool results to the last assistant turn
+                        // Attach tool results to the owning assistant turn/action,
+                        // located by tool_use_id. Parallel tool calls each emit their
+                        // own result (often in separate user messages); remove only the
+                        // matched id so the other pending outputs still resolve.
                         for item in items {
                             if item["type"].as_str() == Some("tool_result") {
                                 let tool_use_id =
@@ -119,10 +129,12 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                                 let output = extract_tool_result_content(&item["content"]);
                                 let truncated = truncate_str(&output, TOOL_OUTPUT_MAX_CHARS);
 
-                                // Find the corresponding action in the last assistant turn
-                                if let Some(&action_idx) = pending_tool_uses.get(&tool_use_id) {
+                                // Locate the owning action by tool_use_id
+                                if let Some((turn_idx, action_idx)) =
+                                    pending_tool_uses.remove(&tool_use_id)
+                                {
                                     if let Some(Action::ToolUse { output_summary, .. }) = turns
-                                        .last_mut()
+                                        .get_mut(turn_idx)
                                         .and_then(|turn| turn.actions.get_mut(action_idx))
                                     {
                                         *output_summary = truncated;
@@ -130,7 +142,6 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                                 }
                             }
                         }
-                        pending_tool_uses.clear();
                         continue;
                     }
                 }
@@ -164,9 +175,18 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
 
                 let is_sidechain = value["isSidechain"].as_bool().unwrap_or(false);
 
+                // De-duplicate token accounting by message.id: claude-code splits one
+                // assistant message (same id, identical usage object) across many JSONL
+                // lines (thinking, text, one per tool_use). Count usage and set the Turn
+                // tokens only the first time a given message id is seen.
+                let first_seen = match message["id"].as_str() {
+                    Some(id) => seen_message_ids.insert(id.to_string()),
+                    None => true, // no id: treat each line as its own message
+                };
+
                 // Parse usage
                 let usage = &message["usage"];
-                let tokens = if !usage.is_null() {
+                let tokens = if first_seen && !usage.is_null() {
                     let input = usage["input_tokens"].as_u64().unwrap_or(0);
                     let output = usage["output_tokens"].as_u64().unwrap_or(0);
                     let cached = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
@@ -186,7 +206,7 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                 let mut text_parts: Vec<String> = Vec::new();
                 let mut actions: Vec<Action> = Vec::new();
                 let mut thinking_parts: Vec<String> = Vec::new();
-                let mut new_pending: HashMap<String, usize> = HashMap::new();
+                let turn_index = turns.len();
 
                 if let Some(content_arr) = message["content"].as_array() {
                     for item in content_arr {
@@ -208,7 +228,10 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
 
                                 let action_idx = actions.len();
                                 if !tool_use_id.is_empty() {
-                                    new_pending.insert(tool_use_id.clone(), action_idx);
+                                    // Accumulate across lines of the same assistant
+                                    // message; do NOT overwrite earlier parallel entries.
+                                    pending_tool_uses
+                                        .insert(tool_use_id.clone(), (turn_index, action_idx));
                                 }
 
                                 actions.push(Action::ToolUse {
@@ -222,8 +245,6 @@ pub fn parse_claude_jsonl(path: &Path) -> Result<Session> {
                         }
                     }
                 }
-
-                pending_tool_uses = new_pending;
 
                 let content = text_parts.join("\n\n");
                 let thinking = if thinking_parts.is_empty() {
@@ -485,5 +506,80 @@ mod tests {
         assert_eq!(session.total_tokens.input, 100);
         assert_eq!(session.total_tokens.output, 50);
         assert_eq!(session.total_tokens.cached, 200);
+    }
+
+    #[test]
+    fn test_split_assistant_message_counts_tokens_once() {
+        // Real claude-code splits ONE assistant message (same message.id, an
+        // identical usage object repeated on each line) across many JSONL lines:
+        // a thinking line, a text line, one line per tool_use. Usage must be
+        // counted ONCE, not once per line.
+        let lines = &[
+            r#"{"type":"user","message":{"role":"user","content":"Q"},"timestamp":"2026-04-05T10:00:00Z","sessionId":"dedup1","cwd":"/tmp","gitBranch":"main","version":"1.0"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_dup","model":"claude","content":[{"type":"thinking","thinking":"hmm"}],"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":10}},"timestamp":"2026-04-05T10:00:01Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_dup","model":"claude","content":[{"type":"text","text":"answer"}],"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":10}},"timestamp":"2026-04-05T10:00:02Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_dup","model":"claude","content":[{"type":"tool_use","id":"toolu_x","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":100,"output_tokens":200,"cache_read_input_tokens":10}},"timestamp":"2026-04-05T10:00:03Z"}"#,
+        ];
+        let f = write_jsonl(lines);
+        let session = parse_claude_jsonl(f.path()).unwrap();
+        // Counted once, not 3x (would be 300 / 600 / 30 before the fix).
+        assert_eq!(session.total_tokens.input, 100);
+        assert_eq!(session.total_tokens.output, 200);
+        assert_eq!(session.total_tokens.cached, 10);
+        // Only the first line of the split message carries the Turn tokens.
+        let with_tokens = session
+            .turns
+            .iter()
+            .filter(|t| t.role == Role::Assistant && t.tokens.is_some())
+            .count();
+        assert_eq!(with_tokens, 1);
+    }
+
+    #[test]
+    fn test_parallel_tool_outputs_all_captured() {
+        // Two parallel tool calls — here split across two lines of the same
+        // assistant message.id, as real claude-code emits them — with their
+        // results delivered in separate user messages. Both outputs must be
+        // captured and attributed to the correct action; none silently dropped.
+        let lines = &[
+            r#"{"type":"user","message":{"role":"user","content":"Do two things"},"timestamp":"2026-04-05T10:00:00Z","sessionId":"par1","cwd":"/tmp","gitBranch":"main","version":"1.0"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_par","model":"claude","content":[{"type":"tool_use","id":"toolu_a","name":"Bash","input":{"command":"echo a"}}],"usage":{"input_tokens":5,"output_tokens":3}},"timestamp":"2026-04-05T10:00:01Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","id":"msg_par","model":"claude","content":[{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"echo b"}}],"usage":{"input_tokens":5,"output_tokens":3}},"timestamp":"2026-04-05T10:00:02Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"output AAA","is_error":false}]},"timestamp":"2026-04-05T10:00:03Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b","content":"output BBB","is_error":false}]},"timestamp":"2026-04-05T10:00:04Z"}"#,
+        ];
+        let f = write_jsonl(lines);
+        let session = parse_claude_jsonl(f.path()).unwrap();
+
+        // Collect each ToolUse output by its input command, across all turns.
+        let mut out_a: Option<String> = None;
+        let mut out_b: Option<String> = None;
+        for turn in &session.turns {
+            for action in &turn.actions {
+                if let Action::ToolUse {
+                    input_summary,
+                    output_summary,
+                    ..
+                } = action
+                {
+                    match input_summary.as_str() {
+                        "echo a" => out_a = Some(output_summary.clone()),
+                        "echo b" => out_b = Some(output_summary.clone()),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let out_a = out_a.expect("tool_use a should exist");
+        let out_b = out_b.expect("tool_use b should exist");
+        // Both outputs captured and attributed to the right action.
+        assert!(
+            out_a.contains("AAA"),
+            "expected AAA in a's output, got {out_a:?}"
+        );
+        assert!(
+            out_b.contains("BBB"),
+            "expected BBB in b's output, got {out_b:?}"
+        );
     }
 }
