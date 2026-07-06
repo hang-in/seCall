@@ -246,8 +246,33 @@ impl SeCallMcpServer {
                 );
             }
             if params.full.unwrap_or(false) {
-                let content = if let Some(vault_path) = &meta.vault_path {
-                    std::fs::read_to_string(vault_path).ok()
+                let content = if let Some(rel) = &meta.vault_path {
+                    // vault_path 는 vault 루트 기준 상대경로. resolve_session_file 로 해석해야
+                    // `\`/`/` 혼재나 legacy(raw/sessions) 경로도 통일 처리된다(CodeRabbit 반영).
+                    // (기존엔 상대경로를 직접 읽어 항상 실패 → 조용히 DB 폴백 → tool-use 턴이
+                    //  빈 "## assistant" 헤더로만 렌더됐다.)
+                    match crate::vault::resolve_session_file(&self.vault_path, rel, &session_id) {
+                        Ok(abs) => match std::fs::read_to_string(&abs) {
+                            Ok(c) => Some(c),
+                            Err(e) => {
+                                tracing::warn!(
+                                    session = %session_id,
+                                    path = %abs.display(),
+                                    error = %e,
+                                    "vault md read 실패 → DB turns 폴백"
+                                );
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(
+                                session = %session_id,
+                                error = %e,
+                                "세션 md 경로 해석 실패 → DB turns 폴백"
+                            );
+                            None
+                        }
+                    }
                 } else {
                     None
                 };
