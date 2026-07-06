@@ -75,6 +75,32 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
     let db_path = get_default_db_path();
     let db = Database::open(&db_path)?;
 
+    // 임베딩 모델 불일치 감지: 기존 벡터가 다른 모델로 생성됐으면 교차모델 유사도가
+    // 무의미해 시맨틱 검색이 조용히 저하된다(차원이 같아 에러는 안 남). 재임베딩(--all)
+    // 이 아니면 경고만 하고 진행한다.
+    let embed_identity = config.embedding.embedding_identity();
+    let stored_model = db.get_embedding_model()?;
+    // get_stats() 실패를 0 으로 뭉개면 실제 벡터가 있어도 "최초 embed" 로 오판해
+    // 마커를 잘못 확정할 수 있어 에러를 전파한다(리뷰 반영).
+    let existing_vectors = db.get_stats()?.vector_count;
+    // backend=none 은 임베딩 비활성이라 불일치 경고가 오해만 준다 → skip.
+    if config.embedding.backend != "none" && !all {
+        match &stored_model {
+            Some(m) if *m != embed_identity => {
+                eprintln!("⚠ 임베딩 모델 불일치: 기존 벡터={m}, 현재={embed_identity}");
+                eprintln!(
+                    "  섞이면 시맨틱 검색 정확도가 떨어집니다. `secall embed --all` 로 전체 재임베딩을 권장합니다."
+                );
+            }
+            None if existing_vectors > 0 => {
+                eprintln!(
+                    "⚠ 임베딩 모델 마커가 없습니다 (v0.7.0 이전 DB 일 수 있음). 기존 벡터가 현재 모델({embed_identity})과 다르면 `secall embed --all` 을 권장합니다."
+                );
+            }
+            _ => {}
+        }
+    }
+
     let vector_indexer = secall_core::search::vector::create_vector_indexer(&config).await;
     let Some(indexer) = vector_indexer else {
         eprintln!("No embedding backend available.");
@@ -223,6 +249,15 @@ pub async fn run(all: bool, batch_size: Option<usize>, concurrency: usize) -> Re
     // 모든 세션 완료 후 ANN 인덱스 1회 저장
     if let Err(e) = indexer.save_ann_if_present() {
         eprintln!("Warning: ANN index save failed: {e}");
+    }
+
+    // 임베딩 모델 마커 갱신 — 전체 재임베딩(--all)이거나 최초 embed(기존 벡터 0 +
+    // 마커 없음)일 때만 현재 모델로 확정한다. (기존 벡터가 있는데 마커만 없는
+    // incremental 은 마커를 두지 않아 다음 실행에서도 경고가 유지된다.)
+    if all || (stored_model.is_none() && existing_vectors == 0) {
+        if let Err(e) = db.set_embedding_model(&embed_identity) {
+            eprintln!("Warning: 임베딩 모델 마커 저장 실패: {e}");
+        }
     }
 
     let elapsed = start.elapsed();

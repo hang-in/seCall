@@ -307,6 +307,29 @@ impl Database {
             .map_err(|e: std::num::ParseIntError| SecallError::Other(e.into()))
     }
 
+    /// 현재 벡터가 생성된 임베딩 모델 식별자(`EmbeddingConfig::embedding_identity`).
+    /// 미설정(None)이면 마커 없음 — v0.7.0 이전 DB 이거나 아직 벡터 생성 전.
+    pub fn get_embedding_model(&self) -> Result<Option<String>> {
+        match self.conn.query_row(
+            "SELECT value FROM config WHERE key = 'embedding_model'",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// 벡터를 (재)생성한 모델 식별자를 마커로 저장. `embed --all` / 최초 embed 후 호출.
+    pub fn set_embedding_model(&self, identity: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO config(key, value) VALUES ('embedding_model', ?1)",
+            rusqlite::params![identity],
+        )?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn table_exists(&self, name: &str) -> Result<bool> {
         let count: i64 = self.conn.query_row(
@@ -385,6 +408,26 @@ mod tests {
             archived: false,
             archived_at: None,
         }
+    }
+
+    #[test]
+    fn test_embedding_model_marker_roundtrip() {
+        let db = Database::open_memory().unwrap();
+        // 초기엔 마커 없음.
+        assert_eq!(db.get_embedding_model().unwrap(), None);
+        // 설정 후 조회.
+        db.set_embedding_model("ollama:qwen3-embedding:0.6b")
+            .unwrap();
+        assert_eq!(
+            db.get_embedding_model().unwrap(),
+            Some("ollama:qwen3-embedding:0.6b".to_string())
+        );
+        // 덮어쓰기(모델 변경) 반영.
+        db.set_embedding_model("ollama:bge-m3").unwrap();
+        assert_eq!(
+            db.get_embedding_model().unwrap(),
+            Some("ollama:bge-m3".to_string())
+        );
     }
 
     #[test]

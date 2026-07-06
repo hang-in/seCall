@@ -364,6 +364,48 @@ impl Default for EmbeddingConfig {
     }
 }
 
+impl EmbeddingConfig {
+    /// 벡터 생성에 실제로 쓰이는 임베딩 모델의 정규화 식별자(`backend:model`).
+    /// 모델/백엔드가 바뀌면 값이 달라지므로, DB 에 저장된 마커
+    /// (`Database::get_embedding_model`)와 비교해 기존 벡터와의 불일치를 감지한다.
+    /// (교차모델 임베딩은 차원이 같아도 유사도가 무의미해 검색이 조용히 저하됨)
+    pub fn embedding_identity(&self) -> String {
+        use crate::search::embedding::DEFAULT_OLLAMA_EMBED_MODEL;
+        match self.backend.as_str() {
+            "ollama" => format!(
+                "ollama:{}",
+                self.ollama_model
+                    .as_deref()
+                    .unwrap_or(DEFAULT_OLLAMA_EMBED_MODEL)
+            ),
+            "ollama_cloud" => format!(
+                "ollama_cloud:{}",
+                self.cloud_model
+                    .as_deref()
+                    .unwrap_or(DEFAULT_OLLAMA_EMBED_MODEL)
+            ),
+            // 경로 전체가 아니라 모델 디렉토리/파일명만 식별자로 쓴다 — 절대경로·OS별
+            // 구분자 차이로 크로스머신 동기화 시 헛불일치가 나는 것을 방지(리뷰 반영).
+            "ort" | "openvino" => format!(
+                "{}:{}",
+                self.backend,
+                self.model_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "BAAI/bge-m3".to_string())
+            ),
+            "openai" => format!(
+                "openai:{}",
+                self.openai_model
+                    .as_deref()
+                    .unwrap_or("text-embedding-3-large")
+            ),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl Default for VaultConfig {
     fn default() -> Self {
         VaultConfig {
@@ -627,6 +669,20 @@ pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_embedding_identity() {
+        // 기본(ollama, model 미설정) → 기본 모델 식별자.
+        let mut c = EmbeddingConfig::default();
+        assert_eq!(c.embedding_identity(), "ollama:qwen3-embedding:0.6b");
+        // 명시 모델 → 그 값. (bge-m3 로 고정한 기존 사용자)
+        c.ollama_model = Some("bge-m3".to_string());
+        assert_eq!(c.embedding_identity(), "ollama:bge-m3");
+        // 백엔드 변경도 식별자에 반영.
+        c.backend = "ort".to_string();
+        c.model_path = None;
+        assert_eq!(c.embedding_identity(), "ort:BAAI/bge-m3");
+    }
 
     #[test]
     fn test_timezone_default_is_utc() {

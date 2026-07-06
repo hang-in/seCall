@@ -314,6 +314,8 @@ impl SeCallMcpServer {
             .lock()
             .map_err(|e| anyhow::anyhow!("DB lock: {e}"))?;
         let stats = db.get_stats()?;
+        // 벡터가 생성된 임베딩 모델 마커 (없으면 null — v0.7.0 이전 DB 이거나 벡터 없음).
+        let embedding_model = db.get_embedding_model().ok().flatten();
         Ok(serde_json::json!({
             // P62: web TopNav 의 version 표시를 server 의 빌드 시점 버전으로
             // 통합 (이전엔 web 측 hardcode 가 v0.4.2 로 고정돼 있었음).
@@ -323,6 +325,7 @@ impl SeCallMcpServer {
             "sessions": stats.session_count,
             "turns": stats.turn_count,
             "vectors": stats.vector_count,
+            "embedding_model": embedding_model,
             "recent_ingests": stats.recent_ingests.len(),
         }))
     }
