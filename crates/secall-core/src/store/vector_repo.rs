@@ -280,7 +280,10 @@ pub(crate) fn quantize_i8(unit: &[f32]) -> Vec<i8> {
 
 /// int8 내적 (i32 누적).
 pub(crate) fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
-    a.iter().zip(b.iter()).map(|(&x, &y)| x as i32 * y as i32).sum()
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| x as i32 * y as i32)
+        .sum()
 }
 
 /// turn_vectors 전체를 읽어 int8 캐시 구성 (저장 벡터는 ② 로 이미 unit).

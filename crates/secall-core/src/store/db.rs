@@ -184,7 +184,9 @@ impl Database {
             return Ok(());
         }
         let rows: Vec<(i64, Vec<u8>)> = {
-            let mut stmt = self.conn.prepare("SELECT id, embedding FROM turn_vectors")?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, embedding FROM turn_vectors")?;
             let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             mapped.filter_map(|r| r.ok()).collect()
         };
